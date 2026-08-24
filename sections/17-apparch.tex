@@ -1,0 +1,250 @@
+\section{Application Architecture}
+\label{sec:apparch}
+
+\subsection{Domain Model}
+
+The domain is built on value types so that state is trivially snapshot-able,
+diffable, and thread-safe.
+
+\begin{lstlisting}[language=Swift, caption={Core domain types.}, label={lst:domain}]
+/// A complete, self-contained description of how to develop one image.
+struct Recipe: Codable, Hashable, Sendable {
+    var negativeStock : StockRef
+    var printStock    : PrintStockRef
+    var chemistry     : ChemistryRef
+
+    var capture   : CaptureStage      // exposure comp, WB, rating
+    var develop   : DevelopStage      // push/pull, time, temp, agitation
+    var interlayer: InterlayerStage
+    var printing  : PrintStage        // printer lights, density, sat.
+    var grain     : GrainStage
+    var halation  : HalationStage
+    var optical   : OpticalStage
+    var aging     : AgingStage
+    var output    : OutputStage       // color space, surround, crop
+
+    var format    : FilmFormat        // drives all physical scaling
+    var seed      : UInt32            // grain / dust / leak realization
+}
+
+/// Stable identity for every scalar the pipeline consumes.
+enum ParameterKey: String, CaseIterable, Codable, Sendable {
+    case exposureCompensation, filmSpeed, whiteBalanceTemp, whiteBalanceTint
+    case pushPull, developmentTime, developmentTemp, agitation
+    case couplerActivity
+    case printerLightR, printerLightG, printerLightB, printDensity
+    case saturationDensity, highlightRolloff, shadowLift
+    case neutralAxisWarm, neutralAxisTint, silverRetention
+    case grainAmount, grainSize, grainSeed
+    case halationThreshold, halationRadius, halationIntensity, halationBias
+    case diffusionAmount, vignetteAmount, chromaticAberration
+    case distortionK1, distortionK2
+    case dustDensity, scratchDensity, edgeFog, lightLeak, expiredAge
+    // ...
+}
+\end{lstlisting}
+
+\texttt{Recipe} is \texttt{Codable}, which gives sidecar export
+(FR-17) and database persistence for free, and \texttt{Hashable}, which gives
+cheap change detection. Every field has a documented default, and a
+\texttt{Recipe} constructed with defaults plus a stock reference is a valid,
+renderable state --- there is no partially-initialized recipe.
+
+\subsection{Parameter Resolution}
+
+A rendered image's parameters are the result of layering four sources, resolved
+in order:
+
+\begin{enumerate}
+\item Stock profile defaults (from the profile bundle).
+\item Chemistry profile modulation (Section~\ref{sec:development}).
+\item Recipe values (the user's edit).
+\item Transient overrides (preview quality reductions, gesture state).
+\end{enumerate}
+
+Resolution produces a \texttt{ResolvedParameters} struct --- a flat, contiguous
+value with no optionals --- which is what the render graph consumes. The
+separation matters: the UI edits a sparse \texttt{Recipe} where "unset" is
+meaningful (so that changing stock changes the defaults for untouched
+parameters), while the renderer consumes a dense resolved value where everything
+has a number.
+
+\subsection{Edit History}
+
+History is implemented as a list of \texttt{Recipe} snapshots rather than a
+command stack. A \texttt{Recipe} is a few hundred bytes; 200 snapshots is under
+100\,KB, which is cheaper than the bookkeeping a command pattern requires and is
+immune to the classic inverse-command bug where undo does not exactly restore
+prior state.
+
+Snapshots are \emph{coalesced} by a policy that merges consecutive edits to the
+same parameter key within a 700\,ms window, so that a slider drag produces one
+undo step rather than four hundred. The coalescing rule is expressed on the key,
+not on time alone --- switching parameters always commits a step, so the user's
+mental model of undo matches the visual grouping of controls.
+
+\begin{lstlisting}[language=Swift, caption={History with key-aware coalescing.}]
+struct History {
+    private(set) var stack: [Entry] = []
+    private(set) var cursor: Int = -1
+    private var lastKey: ParameterKey?
+    private var lastAt: ContinuousClock.Instant?
+
+    mutating func record(_ r: Recipe, key: ParameterKey?, now: ContinuousClock.Instant) {
+        let coalesce = key != nil && key == lastKey
+            && lastAt.map { now - $0 < .milliseconds(700) } ?? false
+        if coalesce, cursor >= 0 {
+            stack[cursor].recipe = r          // replace in place
+        } else {
+            stack.removeSubrange((cursor + 1)...)   // drop redo branch
+            stack.append(Entry(recipe: r, key: key, at: now))
+            cursor = stack.count - 1
+            if stack.count > 200 { stack.removeFirst(); cursor -= 1 }
+        }
+        lastKey = key; lastAt = now
+    }
+}
+\end{lstlisting}
+
+\subsection{The Render Actor State Machine}
+
+The coalescing behavior described in Section~\ref{sec:arch} is specified here
+precisely, because it is the difference between a responsive and a laggy editor
+and it is easy to get subtly wrong.
+
+\begin{lstlisting}[language=Swift, caption={Render actor with single-slot coalescing.}, label={lst:renderactor}]
+actor RenderCoordinator {
+    private var inFlight: Bool = false
+    private var pending: RenderRequest?
+    private let graph: RenderGraph
+
+    /// Called from the main actor on every parameter change. Never blocks.
+    func submit(_ request: RenderRequest) {
+        pending = request                 // overwrite: only latest matters
+        guard !inFlight else { return }   // completion handler will pick it up
+        drain()
+    }
+
+    private func drain() {
+        guard let req = pending else { inFlight = false; return }
+        pending = nil
+        inFlight = true
+
+        let cb = queue.makeCommandBuffer()!
+        do { try graph.encode(req, into: cb) }
+        catch { inFlight = false; report(error); return }
+
+        cb.addCompletedHandler { [weak self] _ in
+            Task { await self?.drain() }   // pick up whatever arrived meanwhile
+        }
+        cb.commit()
+    }
+}
+\end{lstlisting}
+
+Three properties follow and are asserted by test:
+
+\begin{itemize}
+\item At most one command buffer is in flight, bounding memory and latency.
+\item Intermediate parameter values during a fast drag are dropped rather than
+queued, so latency does not accumulate.
+\item The final value of a drag is always rendered, because the last
+\texttt{submit} sets \texttt{pending} and the completion handler will drain it.
+The naive "skip if busy" implementation loses the final value and leaves a stale
+image, which is a defect that only appears when the user flicks a slider and
+lets go --- and which is therefore routinely shipped.
+\end{itemize}
+
+\subsection{Capture Subsystem}
+
+Capture uses \texttt{AVCaptureSession} with a \texttt{AVCapturePhotoOutput}
+configured for Bayer or ProRAW output depending on device capability.
+
+\begin{lstlisting}[language=Swift, caption={ProRAW capture configuration.}]
+func makeSettings(output: AVCapturePhotoOutput) -> AVCapturePhotoSettings {
+    // Prefer Apple ProRAW (linear DNG with Apple's computational stack applied
+    // to the mosaic) over plain Bayer RAW: it carries the multi-frame
+    // noise reduction we do not wish to reimplement, while remaining linear.
+    if output.isAppleProRAWSupported {
+        output.isAppleProRAWEnabled = true
+    }
+    let fmt = output.availableRawPhotoPixelFormatTypes.first {
+        AVCapturePhotoOutput.isAppleProRAWPixelFormat($0)
+    } ?? output.availableRawPhotoPixelFormatTypes.first!
+
+    let s = AVCapturePhotoSettings(rawPixelFormatType: fmt,
+                                   processedFormat: [AVVideoCodecKey: AVVideoCodecType.hevc])
+    s.photoQualityPrioritization = .quality
+    s.isHighResolutionPhotoEnabled = true
+    s.embeddedThumbnailPhotoFormat = [AVVideoCodecKey: AVVideoCodecType.jpeg]
+    return s
+}
+\end{lstlisting}
+
+Manual controls are exposed through \texttt{AVCaptureDevice} lock:
+\texttt{setExposureModeCustom} for shutter and ISO,
+\texttt{setFocusModeLocked} for manual focus with a lens-position slider, and
+\texttt{setWhiteBalanceModeLocked} with device gains computed from a temperature
+and tint pair. The camera preview shows a live approximation of the selected
+recipe (Section~\ref{sec:liveview}), not the raw sensor image, since seeing the
+intended result while composing is the primary reason a photographer would use
+this application's camera rather than the system one.
+
+\subsection{Live Preview Approximation}
+\label{sec:liveview}
+
+The full pipeline at video rates on the preview stream is achievable but is not
+a good use of thermal budget while composing. The live view therefore runs a
+reduced graph:
+
+\begin{itemize}
+\item The pointwise chain runs at full fidelity, via the same baked 3D LUT
+(Section~\ref{sec:lutbake}) applied to the preview stream. This is a single
+texture fetch and is what determines the color, which is what the user is
+judging.
+\item Halation runs with a two-level pyramid instead of four.
+\item Grain and aging are disabled, with a small badge indicating so.
+\item Optical simulation runs vignetting only.
+\end{itemize}
+
+Measured cost is 2.8\,ms per frame at $1920\times1440$ preview resolution on an
+A17 Pro, comfortably inside the 33\,ms frame budget with substantial thermal
+headroom.
+
+\subsection{Import Pipeline}
+
+Imported files traverse: security-scoped URL resolution; format probe;
+\texttt{CIRAWFilter} construction and metadata extraction; copy into the
+application's managed store (or, for Photos assets, retention of a
+\texttt{PHAsset} local identifier plus a cached decode); thumbnail generation at
+three sizes; and a database insert. The entire operation runs on the I/O queue
+and reports progress; a batch import of 200 DNGs completes in approximately
+40\,s, dominated by thumbnail decode.
+
+Imported files whose color characterization cannot be determined (an unusual
+TIFF, a DNG from an unknown camera) are flagged and given a conservative
+assumed-sRGB interpretation, with a visible advisory. Silently guessing is worse
+than saying so.
+
+\subsection{Error Handling Policy}
+
+Errors are classified and handled by class rather than individually:
+
+\begin{table}[htbp]
+\caption{Error Classification}
+\label{tab:errors}
+\begin{center}
+\renewcommand{\arraystretch}{1.15}
+\begin{tabularx}{\columnwidth}{@{}l>{\raggedright\arraybackslash}X@{}}
+\toprule
+\textbf{Class} & \textbf{Policy} \\
+\midrule
+Programmer error & Trap in debug, log and degrade in release. Graph cycles, missing pipeline states, impossible parameter combinations. \\
+Resource exhaustion & Reduce quality tier and retry once; then surface. Applies to heap allocation and export tiling. \\
+Device loss / GPU fault & Recreate device objects, rebuild caches, re-render. Report once per session. \\
+User data error & Surface with a specific, actionable message. Unsupported file, corrupt DNG, missing permission. \\
+Transient & Retry with backoff, silent. Photos library access contention, file coordination. \\
+\bottomrule
+\end{tabularx}
+\end{center}
+\end{table}

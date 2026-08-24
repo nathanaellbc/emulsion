@@ -1,0 +1,392 @@
+\section{Stock Profile Parameter Reference}
+\label{app:stockparams}
+
+This appendix is the normative parameter reference for the shipping profile
+bundle. Every number here is consumed by an equation in the body, and every
+equation in the body that requires a stock-specific constant draws it from
+here. The tables are the authoritative source; the profile JSON files in the
+application bundle are generated from them by the profile-fitting tool, never
+hand-edited.
+
+\subsection{Status of These Values}
+
+The values are \emph{provisional fits}. Those marked \textbf{M} in
+Table~\ref{tab:provenance} are least-squares fits to published sensitometric
+data and are expected to satisfy AC-1 without further work; those marked
+\textbf{P} are partial fits in which some parameters are inherited from a
+family default because published data is incomplete; those marked \textbf{E}
+are engineering estimates awaiting the measurement campaign of
+Section~\ref{sec:roadmap}. A stock does not ship until it reaches \textbf{M}
+and passes AC-1 (Section~\ref{sec:validation}); this is the mitigation for
+risk T-01.
+
+\subsection{Units and Conventions}
+
+\begin{itemize}
+\item Densities are Status M diffuse densities for negative stocks and
+Status A for print stocks, per ISO 5-3 geometry.
+\item Log exposures $x = \logE$ are in $\log_{10}$ lux-seconds at the film
+plane, so ISO speed follows from \eqref{eq:speedpoint} rather than being
+carried separately. The scene-to-film mapping is \eqref{eq:isoshift}.
+\item All spatial parameters are micrometres at the film plane and are
+converted to pixels by \eqref{eq:formatscale} at render time.
+\item Reversal stocks carry $\gamma < 0$. The characteristic curve
+\eqref{eq:charcurve} is unchanged --- $\softp{a}{\cdot}$ is monotone in $u$, and
+$u = \gamma(x - x_0)$ is decreasing when $\gamma < 0$, so density decreases with
+exposure as a positive image requires. The well-formedness test
+\eqref{eq:wellformed} is applied to $|\gamma|$, and the sign of the speed-point
+offset in \eqref{eq:speedpoint} inverts accordingly. Reversal stocks default to
+the bypass print profile, because a transparency is viewed directly.
+\end{itemize}
+
+\subsection{Parameter Inventory}
+
+Table~\ref{tab:paraminventory} lists every stock-carried parameter, the
+equation that consumes it, and whether it is per-record or scalar. A profile
+that omits a parameter inherits its family default; a profile that carries a
+parameter not in this table fails validation at load.
+
+\begin{table}[htbp]
+\caption{Stock Profile Parameter Inventory}
+\label{tab:paraminventory}
+\begin{center}
+\renewcommand{\arraystretch}{1.12}
+\footnotesize
+\begin{tabularx}{\columnwidth}{@{}llc>{\raggedright\arraybackslash}X@{}}
+\toprule
+\textbf{Symbol} & \textbf{Eq.} & \textbf{Rec.} & \textbf{Quantity} \\
+\midrule
+$\Dmin$        & \eqref{eq:charcurve}   & \checkmark & Base + fog density \\
+$\Delta D$     & \eqref{eq:charcurve}   & \checkmark & Density range \\
+$\gamma$       & \eqref{eq:ucoord}      & \checkmark & Straight-line gamma \\
+$x_0$          & \eqref{eq:ucoord}      & \checkmark & Extrapolated speed point \\
+$\kappa_t$     & \eqref{eq:charcurve}   & \checkmark & Toe softness \\
+$\kappa_s$     & \eqref{eq:charcurve}   & \checkmark & Shoulder softness \\
+$m$            & \eqref{eq:maskdepletion} & \checkmark & Mask depletion \\
+$\Delta x^{\mathrm{(bal)}}$ & \eqref{eq:tungsten} & \checkmark & Layer speed balance \\
+$\mathbf{w}_{\mathrm{spectral}}$ & \eqref{eq:pan} & --- & Panchromatic weights \\
+$\gamma_\infty/\gamma^{(0)}$ & \eqref{eq:gammatime} & --- & Development ceiling \\
+$\phi_0, \beta_f$ & \eqref{eq:fog}      & \checkmark & Fog growth \\
+$\alpha_s$     & \eqref{eq:speedshift}  & --- & Speed recovery \\
+$\tau_t, \tau_D$ & Sec.~\ref{sec:development} & --- & Toe / range drift \\
+$\mathbf{A}$   & \eqref{eq:dirmatrix}   & $3{\times}3$ & DIR coupling \\
+$\sigma_1^{\mathrm{DIR}}, \sigma_2^{\mathrm{DIR}}, w_2$ & \eqref{eq:twoscale} & --- & Diffusion scales \\
+$\mu$          & \eqref{eq:activityweight} & --- & Activity exponent \\
+$G_S$          & \eqref{eq:selwyn}      & \checkmark & Selwyn granularity \\
+$\sigma_1^{g}, \chi, \zeta$ & \eqref{eq:grainkernel} & --- & Grain kernel \\
+$\nu_1, \nu_2$ & \eqref{eq:grainvar}    & --- & Granularity shape \\
+$\varphi$      & \eqref{eq:graincorr}   & --- & Grain chroma correlation \\
+$\alpha_h, \ell_R, \omega$ & \eqref{eq:halpsf} & --- & Halation \\
+$\boldsymbol{\beta}$ & Tab.~\ref{tab:halparams} & \checkmark & Halation bias \\
+$\mathbf{C}$   & \eqref{eq:cmatrix}     & $3{\times}3$ & Printing density \\
+$\mathbf{D}'_{\mathrm{aim}}$ & \eqref{eq:aimbalance} & \checkmark & Print aim density \\
+\bottomrule
+\end{tabularx}
+\end{center}
+\end{table}
+
+\subsection{Negative Characteristic Curve Parameters}
+
+Table~\ref{tab:negparams} gives the green-record parameters of
+\eqref{eq:charcurve} for the ten launch stocks at the manufacturer's normal
+process ($A = 1$). The red and blue records are obtained by applying the
+per-record offsets of Table~\ref{tab:recordoffsets}; this factoring is used
+rather than thirty independent numbers because the offsets are structurally
+similar across a stock family and because crossover --- non-parallelism of the
+three records --- is then an explicit, reviewable quantity rather than an
+accident of three separate fits.
+
+\begin{table*}[htbp]
+\caption{Green-Record Characteristic Curve Parameters at Normal Process}
+\label{tab:negparams}
+\begin{center}
+\renewcommand{\arraystretch}{1.15}
+\footnotesize
+\begin{tabular}{@{}llrrrrrrrl@{}}
+\toprule
+\textbf{Profile ID} & \textbf{Display name} & \textbf{ISO} & $\gamma_G$ & $\Delta D_G$ & $x_{0,G}$ & $\kappa_{t,G}$ & $\kappa_{s,G}$ & $\Dmin{}_{,G}$ & \textbf{Process} \\
+\midrule
+\texttt{neg.portra160}  & Portra 160-type       & 160 & $\phantom{-}0.58$ & $1.86$ & $-2.31$ & $0.155$ & $0.115$ & $0.90$ & C-41 \\
+\texttt{neg.portra400}  & Portra 400-type       & 400 & $\phantom{-}0.63$ & $1.90$ & $-2.71$ & $0.140$ & $0.110$ & $0.92$ & C-41 \\
+\texttt{neg.gold200}    & Gold 200-type         & 200 & $\phantom{-}0.68$ & $1.78$ & $-2.41$ & $0.150$ & $0.098$ & $0.88$ & C-41 \\
+\texttt{neg.ektar100}   & Ektar 100-type        & 100 & $\phantom{-}0.72$ & $2.02$ & $-2.11$ & $0.128$ & $0.092$ & $0.86$ & C-41 \\
+\texttt{neg.superia400} & Superia 400-type      & 400 & $\phantom{-}0.65$ & $1.84$ & $-2.71$ & $0.145$ & $0.104$ & $0.94$ & C-41 \\
+\texttt{neg.v3\_500t}   & Vision3 500T-type     & 500 & $\phantom{-}0.55$ & $2.06$ & $-2.81$ & $0.168$ & $0.130$ & $0.96$ & ECN-2 \\
+\texttt{rev.velvia50}   & Velvia 50-type        & 50  & $-1.95$           & $3.10$ & $-1.80$ & $0.090$ & $0.140$ & $0.10$ & E-6 \\
+\texttt{rev.provia100}  & Provia 100F-type      & 100 & $-1.72$           & $2.95$ & $-2.10$ & $0.105$ & $0.150$ & $0.09$ & E-6 \\
+\texttt{mono.trix400}   & Tri-X 400-type        & 400 & $\phantom{-}0.62$ & $1.92$ & $-2.71$ & $0.160$ & $0.200$ & $0.22$ & B\&W \\
+\texttt{mono.hp5}       & HP5 Plus-type         & 400 & $\phantom{-}0.58$ & $1.88$ & $-2.71$ & $0.170$ & $0.215$ & $0.20$ & B\&W \\
+\bottomrule
+\multicolumn{10}{@{}p{\textwidth}@{}}{\footnotesize Every row satisfies the well-formedness constraint \eqref{eq:wellformed}, $\Delta D \geq 4(\kappa_t + \kappa_s)$, with the smallest margin at \texttt{mono.hp5} ($1.88$ against a required $1.54$) --- monochrome stocks sit closest to the bound because their long shoulders demand a large $\kappa_s$, which is also why the constraint binds first there when a user pushes development. Monochrome stocks carry a single record and the $G$ column is the whole profile; the panchromatic weights of \eqref{eq:pan} are $(0.30, 0.59, 0.11)$ for both, with the orthochromatic variant $(0.02, 0.68, 0.30)$ available as a process option.}
+\end{tabular}
+\end{center}
+\end{table*}
+
+\begin{table}[htbp]
+\caption{Per-Record Offsets Relative to the Green Record}
+\label{tab:recordoffsets}
+\begin{center}
+\renewcommand{\arraystretch}{1.15}
+\footnotesize
+\begin{tabular}{@{}lrrrrrr@{}}
+\toprule
+& \multicolumn{2}{c}{\textbf{Color negative}} & \multicolumn{2}{c}{\textbf{Transparency}} & \multicolumn{2}{c}{\textbf{Mono}} \\
+\cmidrule(lr){2-3}\cmidrule(lr){4-5}\cmidrule(lr){6-7}
+\textbf{Offset} & $R$ & $B$ & $R$ & $B$ & $R$ & $B$ \\
+\midrule
+$\Delta\gamma$      & $-0.02$ & $+0.03$ & $-0.06$ & $+0.08$ & --- & --- \\
+$\Delta(\Delta D)$  & $+0.05$ & $-0.05$ & $+0.04$ & $-0.07$ & --- & --- \\
+$\Delta x_0$        & $-0.05$ & $+0.05$ & $-0.03$ & $+0.04$ & --- & --- \\
+$\Delta\kappa_t$    & $+0.010$ & $-0.010$ & $+0.008$ & $-0.006$ & --- & --- \\
+$\Delta\kappa_s$    & $+0.010$ & $\phantom{+}0.000$ & $+0.006$ & $-0.004$ & --- & --- \\
+$\Dmin$ (absolute)  & $0.58$ & $1.28$ & $0.11$ & $0.12$ & --- & --- \\
+$m$ (mask depl.)    & $0.00$ & $0.10$ & $0.00$ & $0.00$ & --- & --- \\
+\bottomrule
+\multicolumn{7}{@{}p{0.95\columnwidth}@{}}{\footnotesize The $\Dmin$ row is absolute, not an offset, because it is the orange mask and is the one quantity that must be read directly. The green-record value is in Table~\ref{tab:negparams}; $m_G = 0.06$. Transparency stocks have no mask, so their $\Dmin$ spread is only base tint.}
+\end{tabular}
+\end{center}
+\end{table}
+
+The small $\Delta\gamma$ values are deliberate: three records with identical
+gamma have no crossover at all, which is unrealistically clean, while the
+$\pm 0.03$ spread here reproduces the mild crossover that makes a real negative
+resist a single global balance correction in deep shadow. Transparency stocks
+carry roughly three times the spread, which is why slide film is unforgiving of
+mixed lighting.
+
+\subsection{Tungsten Balance}
+
+\texttt{neg.v3\_500t} is the only launch stock with a non-zero layer speed
+balance in \eqref{eq:tungsten}:
+
+\begin{equation}
+\Delta x^{\mathrm{(bal)}}_{\mathrm{v3\_500t}} = (-0.29,\; 0.00,\; +0.42)^\top ,
+\end{equation}
+
+derived from the ratio of layer sensitivities integrated against a 3200\,K
+Planckian SPD versus D55. Shot under daylight without an 85B correction, this
+places the blue record $0.42$ in log exposure higher and the red record $0.29$
+lower, which drives blue toward its shoulder in bright areas while red sits in
+its toe --- producing a cast that changes character with luminance rather than
+a uniform tint. Shipping values for the remaining balance and white-balance
+constants are in Table~\ref{tab:balance}.
+
+\subsection{Chemistry and Development}
+
+The chemistry profiles of Table~\ref{tab:chemistry} supply $(\gamma_\infty /
+\gamma^{(0)}, \phi_0, \beta_f, \alpha_s, \rho)$. Stocks override only where
+their measured push response departs from the family, and carry a per-record
+fog coefficient vector because the blue-sensitive layer fogs fastest:
+
+\begin{equation}
+\boldsymbol{\phi}_0 / \phi_0 = (0.82,\; 1.00,\; 1.34)
+\end{equation}
+
+for all C-41 and ECN-2 stocks, $(0.90, 1.00, 1.15)$ for E-6, and unity for
+monochrome. The remaining development constants are family-wide: $\tau_t =
+0.30$, $\tau_D = 0.12$, $E_a/R = 8.4\times10^{3}$\,K, $t_0 = 195$\,s at $T_0 =
+311.15$\,K (38\,\textdegree C) for C-41, $t_0 = 180$\,s at $314.65$\,K
+(41.5\,\textdegree C) for E-6 first development, and $t_0 = 180$\,s at
+$314.75$\,K (41.6\,\textdegree C) for ECN-2. Agitation efficiency uses
+$\eta_\infty = 1.22$, $\eta_0 = 0.61$, $a_c = 0.85$.
+
+\subsection{Interlayer Inhibition}
+
+The color negative coupling matrix is \eqref{eq:dirmatrix}. Per-stock variation
+is carried as a scalar multiplier on $\mathbf{A}$ rather than as ten
+independent matrices, because the published data does not support
+distinguishing the individual entries and pretending otherwise would be
+dishonest about the fit quality:
+
+\begin{center}
+\renewcommand{\arraystretch}{1.1}
+\footnotesize
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+\textbf{Family} & \textbf{$\mathbf{A}$ scale} & $\sigma_1$ ($\mu$m) & $\sigma_2$ ($\mu$m) \\
+\midrule
+Portra-type (low contrast, high DIR) & $1.15$ & $1.2$ & $6.0$ \\
+Consumer color negative              & $0.85$ & $1.3$ & $6.5$ \\
+Saturated color negative             & $1.30$ & $1.1$ & $5.5$ \\
+Motion picture negative              & $1.20$ & $1.2$ & $6.2$ \\
+Transparency                         & $0.40$ & $1.0$ & $4.5$ \\
+Monochrome (scalar $a = 0.34$)       & $1.00$ & $1.4$ & $7.0$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent with $w_2 = 0.38$ and $\mu = 1.0$ throughout. Agitation modulates
+$\sigma_2$ and $w_2$ inversely per Section~\ref{sec:interlayer}; at the minimum
+agitation setting $\sigma_2$ reaches $1.9\times$ its nominal value and $w_2$
+reaches $0.55$, which is the stand-development limit.
+
+\subsection{Grain Parameters}
+
+\begin{table*}[htbp]
+\caption{Grain Synthesis Parameters}
+\label{tab:grainparams}
+\begin{center}
+\renewcommand{\arraystretch}{1.15}
+\footnotesize
+\begin{tabular}{@{}lrrrrrrl@{}}
+\toprule
+\textbf{Profile ID} & $G_S \times 10^{3}$ & $\sigma_1^{g}$ ($\mu$m) & $\chi$ & $\zeta$ & $\varphi$ & $(\nu_1, \nu_2)$ & \textbf{Mode at 1:1} \\
+\midrule
+\texttt{neg.portra160}  & $3.0$  & $0.85$ & $0.12$ & $3.0$ & $0.15$ & $(1.00, 1.00)$ & Gaussian \\
+\texttt{neg.portra400}  & $4.0$  & $1.05$ & $0.16$ & $3.0$ & $0.15$ & $(1.00, 1.00)$ & Gaussian \\
+\texttt{neg.gold200}    & $5.5$  & $1.10$ & $0.20$ & $3.2$ & $0.18$ & $(1.00, 0.92)$ & Gaussian \\
+\texttt{neg.ektar100}   & $3.4$  & $0.80$ & $0.10$ & $2.8$ & $0.12$ & $(1.00, 1.00)$ & Gaussian \\
+\texttt{neg.superia400} & $4.2$  & $1.02$ & $0.18$ & $3.0$ & $0.16$ & $(1.00, 0.96)$ & Gaussian \\
+\texttt{neg.v3\_500t}   & $5.0$  & $1.15$ & $0.17$ & $3.1$ & $0.14$ & $(1.00, 1.00)$ & Gaussian \\
+\texttt{rev.velvia50}   & $9.0$  & $0.95$ & $0.14$ & $2.9$ & $0.35$ & $(1.00, 0.80)$ & Gaussian \\
+\texttt{rev.provia100}  & $8.0$  & $0.98$ & $0.15$ & $2.9$ & $0.35$ & $(1.00, 0.84)$ & Gaussian \\
+\texttt{mono.trix400}   & $17.0$ & $1.55$ & $0.28$ & $3.4$ & $1.00$ & $(1.00, 0.45)$ & Gaussian \\
+\texttt{mono.hp5}       & $15.0$ & $1.48$ & $0.26$ & $3.3$ & $1.00$ & $(1.00, 0.48)$ & Gaussian \\
+\bottomrule
+\multicolumn{8}{@{}p{\textwidth}@{}}{\footnotesize $G_S$ is RMS granularity through a $48\,\mu$m aperture, scaled by $1000$, as published; it pins $\lambda\mathbb{E}[a^2]$ through \eqref{eq:selwyn}, leaving $(\sigma_1^{g}, \chi)$ as the only free parameters, fitted to the published Wiener spectrum by \eqref{eq:wienerclosed}. The mode column is the synthesis mode selected by $\Lambda = \lambda\Delta A_{\mathrm{px}}$ at 135 format and 48\,MP; Poisson mode engages for all stocks at 4$\times$5 format below about 6\,MP, and for the monochrome stocks at Super\,8.}
+\end{tabular}
+\end{center}
+\end{table*}
+
+\subsection{Halation Parameters}
+
+Table~\ref{tab:halparams} gives the family defaults. Per-stock overrides are
+confined to three quantities, because the remainder are properties of the base
+and antihalation layer rather than of the emulsion:
+
+\begin{center}
+\renewcommand{\arraystretch}{1.1}
+\footnotesize
+\begin{tabular}{@{}lrrrl@{}}
+\toprule
+\textbf{Profile} & $\alpha_h$ & $\ell_R$ ($\mu$m) & $\omega$ & \textbf{Antihalation} \\
+\midrule
+\texttt{neg.portra160}  & $0.16$ & $92$  & $0.04$ & Dyed base \\
+\texttt{neg.portra400}  & $0.18$ & $95$  & $0.05$ & Dyed base \\
+\texttt{neg.gold200}    & $0.21$ & $101$ & $0.07$ & Dyed base \\
+\texttt{neg.ektar100}   & $0.14$ & $88$  & $0.04$ & Dyed base \\
+\texttt{neg.superia400} & $0.19$ & $97$  & $0.06$ & Dyed base \\
+\texttt{neg.v3\_500t}   & $0.05$ & $86$  & $0.01$ & Remjet \\
+\texttt{neg.v3\_500t.xr}& $0.55$ & $118$ & $0.22$ & Remjet removed \\
+\texttt{rev.velvia50}   & $0.10$ & $80$  & $0.03$ & Dyed base \\
+\texttt{rev.provia100}  & $0.11$ & $82$  & $0.03$ & Dyed base \\
+\texttt{mono.trix400}   & $0.12$ & $90$  & $0.05$ & Dyed base \\
+\texttt{mono.hp5}       & $0.13$ & $93$  & $0.06$ & Dyed base \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent The \texttt{.xr} variant is the motion picture stock with its remjet
+backing removed for still-camera use, which is the reason that particular look
+--- a broad red halo around every specular highlight --- became recognizable.
+It is a separate profile rather than a slider, because it is a separate
+physical product. Monochrome stocks use $\boldsymbol{\beta} = (1,1,1)$; all
+others use the values in Table~\ref{tab:halparams}.
+
+\subsection{Print Stock Parameters}
+
+\begin{table}[htbp]
+\caption{Print Stock Curve Parameters}
+\label{tab:printparams}
+\begin{center}
+\renewcommand{\arraystretch}{1.15}
+\footnotesize
+\begin{tabular}{@{}lrrrrr@{}}
+\toprule
+\textbf{Profile ID} & $\gamma'$ & $\Delta D'$ & $\kappa'_t$ & $\kappa'_s$ & $\Dmin'$ \\
+\midrule
+\texttt{prt.2383}   & $2.80$ & $2.42$ & $0.220$ & $0.060$ & $0.06$ \\
+\texttt{prt.2393}   & $3.05$ & $2.58$ & $0.185$ & $0.052$ & $0.05$ \\
+\texttt{prt.3513}   & $2.72$ & $2.35$ & $0.245$ & $0.068$ & $0.07$ \\
+\texttt{prt.3521}   & $2.90$ & $2.48$ & $0.205$ & $0.058$ & $0.06$ \\
+\texttt{prt.bypass} & \multicolumn{5}{l}{No transfer; \eqref{eq:printcurve} skipped, normalize only} \\
+\bottomrule
+\end{tabular}
+\end{center}
+\end{table}
+
+The aim density triple of \eqref{eq:aimbalance} is
+$\mathbf{D}'_{\mathrm{aim}} = (1.09,\; 1.06,\; 1.03)^\top$ for all four print
+stocks, following laboratory aim density practice; the small red-to-blue
+gradient is the standard allowance for projector lamp color temperature and is
+what makes the neutral axis of a printed frame lean very slightly warm.
+
+Printing density matrices are the base $\mathbf{C}$ of \eqref{eq:cmatrix} with
+the off-diagonal terms scaled per stock: $\times 1.00$ for \texttt{prt.2383},
+$\times 1.18$ for \texttt{prt.2393}, $\times 0.92$ for \texttt{prt.3513}, and
+$\times 1.09$ for \texttt{prt.3521}, with the Fuji-type stocks additionally
+carrying a $+0.014$ adjustment on $C_{GB}$ that is the numerical form of their
+distinct green rendering. Silver retention uses $\Delta D'_{\mathrm{Ag}} =
+0.90$ with $\varrho$ defaulting to $0$; the ENR preset is $\varrho = 0.45$ and
+full bleach bypass is $\varrho = 1.0$.
+
+\subsection{Profile File Format}
+
+Profiles are versioned JSON, one file per stock, loaded into
+\texttt{stock\_profile.params\_json} (Appendix~\ref{app:ddl}) at first launch
+and thereafter from the database. Unspecified fields inherit the family
+default named by \texttt{inherits}.
+
+\begin{lstlisting}[language=Swift, caption={Stock profile file (abridged).}, label={lst:profilejson}]
+{
+  "id": "neg.portra400",
+  "profileVersion": 3,
+  "kind": "negative",
+  "displayName": "Portra 400-type",
+  "inherits": "family.colorneg.portra",
+  "fitStatus": "M",
+  "iso": 400,
+  "curve": {
+    "green": { "gamma": 0.63, "deltaD": 1.90, "x0": -2.71,
+               "kappaT": 0.140, "kappaS": 0.110, "dMin": 0.92 },
+    "offsets": {
+      "red":  { "gamma": -0.02, "deltaD":  0.05, "x0": -0.05,
+                "kappaT": 0.010, "kappaS": 0.010, "dMin": 0.58 },
+      "blue": { "gamma":  0.03, "deltaD": -0.05, "x0":  0.05,
+                "kappaT": -0.010, "kappaS": 0.000, "dMin": 1.28 }
+    },
+    "maskDepletion": [0.00, 0.06, 0.10],
+    "balanceShift":  [0.00, 0.00, 0.00]
+  },
+  "chemistry": { "default": "chem.c41", "fogPerRecord": [0.82, 1.00, 1.34] },
+  "interlayer": { "matrixScale": 1.15, "sigma1um": 1.2, "sigma2um": 6.0,
+                  "w2": 0.38, "mu": 1.0 },
+  "grain": { "selwyn": 4.0, "sigma1um": 1.05, "chi": 0.16, "zeta": 3.0,
+             "phi": 0.15, "nu": [1.00, 1.00] },
+  "halation": { "alpha": 0.18, "lengthRedUm": 95.0, "omega": 0.05,
+                "bias": [1.00, 0.42, 0.22], "antihalation": "dyedBase" },
+  "defaultPrint": "prt.2383",
+  "provenance": {
+    "source": "manufacturer datasheet, D-log E family + Wiener spectrum",
+    "fittedAt": "2026-02-11", "rmsDensityError": 0.021
+  }
+}
+\end{lstlisting}
+
+\subsection{Fit Provenance}
+
+\begin{table}[htbp]
+\caption{Fit Status and Data Provenance}
+\label{tab:provenance}
+\begin{center}
+\renewcommand{\arraystretch}{1.15}
+\footnotesize
+\begin{tabularx}{\columnwidth}{@{}llc>{\raggedright\arraybackslash}X@{}}
+\toprule
+\textbf{Profile} & \textbf{Fit} & \textbf{RMS $D$} & \textbf{Basis} \\
+\midrule
+\texttt{neg.portra400}  & M & $0.021$ & Full $D$--$\logE$ family, Wiener spectrum, MTF \\
+\texttt{neg.portra160}  & M & $0.019$ & Full family, Wiener spectrum \\
+\texttt{neg.ektar100}   & M & $0.024$ & Full family, Wiener spectrum \\
+\texttt{neg.v3\_500t}   & M & $0.023$ & Full family, spectral sensitivities \\
+\texttt{neg.superia400} & P & $0.038$ & Curves at normal process only \\
+\texttt{neg.gold200}    & P & $0.041$ & Curves only; grain estimated \\
+\texttt{rev.velvia50}   & M & $0.028$ & Full family \\
+\texttt{rev.provia100}  & P & $0.035$ & Curves only \\
+\texttt{mono.trix400}   & M & $0.017$ & Full family, published CI vs.\ time \\
+\texttt{mono.hp5}       & M & $0.018$ & Full family, published CI vs.\ time \\
+\bottomrule
+\multicolumn{4}{@{}p{0.95\columnwidth}@{}}{\footnotesize AC-1 requires RMS density error $\leq 0.03$ and maximum error $\leq 0.06$. The three \textbf{P} profiles are the ones that must reach \textbf{M} through the measurement campaign before launch; they are the concrete content of risk T-01, and the fallback is to ship eight validated stocks rather than ten unvalidated ones.}
+\end{tabularx}
+\end{center}
+\end{table}

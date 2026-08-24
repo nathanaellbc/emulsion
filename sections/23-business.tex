@@ -1,0 +1,168 @@
+\section{Product Strategy and Commercial Model}
+\label{sec:business}
+
+\noindent\emph{Note on figures.} The quantities in this section are modelling
+assumptions with stated bases, not measured market research. They are included
+because a design document without a commercial frame cannot be evaluated for
+proportionality --- an engineering programme costing \$4.4\,M must be justified
+against a plausible return. Every assumption is labelled and each should be
+replaced with measured data before it is used for a funding decision.
+
+\subsection{Positioning}
+
+\EM{} occupies a position that is currently empty: professional-grade imaging
+science delivered through a consumer mobile interface. The two adjacent
+positions are both crowded.
+
+\begin{itemize}
+\item \textbf{Below}: consumer film-look camera applications. Large audience,
+low price, minimal technical differentiation, high churn, competition on
+aesthetics and marketing rather than capability.
+\item \textbf{Above}: desktop film emulation plugins. Small audience, high
+price, deep technical differentiation, low churn, competition on fidelity.
+\end{itemize}
+
+The wager is that a meaningful population sits between them: people who care
+enough about image quality to notice the difference and who do not have, or do
+not want to use, a desktop workflow for phone captures. This population is the
+P1 and P3 personas of Section~\ref{sec:requirements}.
+
+The defensibility argument is that the gap has persisted not because it is
+uninteresting but because closing it requires a combination of skills ---
+sensitometry, GPU engineering, and consumer product design --- that rarely
+co-occurs, and because the work does not decompose into a weekend project. That
+same difficulty is the moat.
+
+\subsection{Differentiation That Survives Copying}
+
+Features can be copied; the following cannot easily be:
+
+\begin{enumerate}
+\item \textbf{The fitted profile library.} A stock profile is the output of
+acquiring physical film, exposing calibrated wedges, processing, measuring, and
+fitting. That pipeline is a capital and time investment, and it compounds: each
+additional stock is cheaper than the last because the tooling amortizes.
+\item \textbf{The validation apparatus.} The test suite of
+Section~\ref{sec:validation} is what allows the model to be changed safely. A
+competitor who copies the equations without the validation cannot iterate on
+them.
+\item \textbf{Architectural performance.} The $1.9\times$ from LUT baking and
+tile fusion (Table~\ref{tab:optlog}) is architectural. A competitor building on
+a filter-chain framework cannot reach it without rewriting.
+\item \textbf{Vocabulary credibility.} If the printer lights behave like printer
+lights, professionals notice and say so. That credibility is earned slowly and
+is difficult to fake, because the people who would be fooled are not the people
+whose opinion moves the market.
+\end{enumerate}
+
+\subsection{Commercial Model}
+
+A hybrid model is proposed:
+
+\begin{table}[htbp]
+\caption{Proposed Pricing Structure}
+\label{tab:pricing}
+\begin{center}
+\renewcommand{\arraystretch}{1.15}
+\begin{tabularx}{\columnwidth}{@{}l l >{\raggedright\arraybackslash}X@{}}
+\toprule
+\textbf{Tier} & \textbf{Price} & \textbf{Contents} \\
+\midrule
+Free & --- & Capture, develop, export at reduced resolution. Three negative stocks, one print stock. Full pipeline, not a crippled one. \\
+Pro & \$5.99/mo or \$39.99/yr & Full stock library, full resolution export, recipes, batch, sidecar interchange, all future stocks. \\
+Lifetime & \$129.99 & Pro, permanently. Offered for the first twelve months only. \\
+\bottomrule
+\end{tabularx}
+\end{center}
+\end{table}
+
+The free tier deliberately includes the \emph{complete} pipeline rather than a
+reduced one. The product's argument is that physical simulation is
+perceptibly better; a free tier that removes halation or grain removes the
+argument. What the free tier limits is breadth (stocks) and output (resolution),
+which are the dimensions a serious user needs and a casual user does not.
+
+The lifetime option exists because a meaningful fraction of the P1/P2 population
+actively resents subscriptions for creative tools, and because early lifetime
+revenue funds the expensive Phase 4 profile work. Its twelve-month window
+prevents it from becoming a permanent drag on recurring revenue.
+
+\subsection{Unit Economics Model}
+
+\begin{table}[htbp]
+\caption{Illustrative Year-2 Model}
+\label{tab:unitecon}
+\begin{center}
+\renewcommand{\arraystretch}{1.15}
+\begin{tabularx}{\columnwidth}{@{}>{\raggedright\arraybackslash}X r l@{}}
+\toprule
+\textbf{Quantity} & \textbf{Value} & \textbf{Basis} \\
+\midrule
+Downloads, year 2 & 850{,}000 & Assumption \\
+Free-to-paid conversion & 3.2\% & Assumption; category range 1--6\% \\
+Paying users acquired & 27{,}200 & Derived \\
+Annual-plan share & 62\% & Assumption \\
+Blended first-year ARPU & \$34.10 & Derived \\
+Gross revenue, year 2 & \$927{,}000 & Derived \\
+App Store commission & 15\% & Small business programme \\
+Net revenue, year 2 & \$788{,}000 & Derived \\
+Year-2 cost & \$2{,}498{,}000 & Table~\ref{tab:cost} \\
+\midrule
+Year-2 net & $-$\$1{,}710{,}000 & Derived \\
+\bottomrule
+\end{tabularx}
+\end{center}
+\end{table}
+
+The model does not reach breakeven in year two, and presenting it otherwise
+would be dishonest. Breakeven under these assumptions occurs in year four at
+approximately 78{,}000 paying users with retention above 65\%. The sensitivity
+is dominated by conversion rate: a move from 3.2\% to 4.5\% pulls breakeven
+forward by roughly fourteen months, while a move to 2.0\% pushes it beyond the
+model's horizon.
+
+Consequently the highest-leverage commercial activity is not acquisition volume
+but conversion, and the highest-leverage conversion mechanism is the live stock
+dial of Section~\ref{sec:ui} --- the moment a user sees their own image
+transform under a stock they cannot access. This is a case where a product
+decision and a business decision coincide exactly, and it should be instrumented
+and optimized accordingly.
+
+\subsection{Go-To-Market}
+
+Three sequenced motions:
+
+\paragraph{Credibility first (pre-launch, months 19--24)} Seed the product with
+the professional community: colorists, cinematographers, film photographers with
+audiences. The objective is not reach but verdict. If people who know what
+printer lights are say the printer lights are right, that assessment propagates
+through the enthusiast tier with far more force than advertising.
+
+\paragraph{Education as marketing (launch onward)} The explanation content built
+for FR-20 and the long-press affordances is genuinely useful standalone material.
+Published as short articles and videos --- what a characteristic curve is, why
+pushing film does not recover shadows, what halation actually is --- it
+functions simultaneously as marketing, as onboarding, and as a demonstration
+that the team knows the subject. This is a durable channel that does not decay
+like paid acquisition.
+
+\paragraph{Comparison content (post-launch)} Side-by-side renders against real
+film scans, published with the source files. This is only available to a product
+confident in its fidelity, which is precisely why it is persuasive.
+
+\subsection{Risks to the Commercial Thesis}
+
+The commercial risks are distinct from the engineering risks of
+Section~\ref{sec:risks} and are enumerated there alongside them. The dominant
+one is stated here because it shapes strategy: \textbf{the population that can
+perceive the difference may be smaller than assumed}. If most users cannot
+distinguish a physically simulated render from a good LUT at phone viewing size,
+the product's entire investment thesis is mispriced.
+
+The mitigation is measurement, early. The perceptual evaluation of
+Section~\ref{sec:validation} should be extended during Phase 1 to include a
+non-expert cohort, testing not whether they can identify real film but whether
+they \emph{prefer} the physically simulated render to a strong LUT baseline. A
+preference rate near chance among non-experts would be a signal to reposition
+toward the professional tier and price accordingly, and it is far better to
+learn that in month seven than in month twenty-four.

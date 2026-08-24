@@ -1,0 +1,160 @@
+\section{Future Directions}
+\label{sec:future}
+
+This section specifies deferred capabilities at architectural depth --- enough
+to confirm that the v1.0 design does not foreclose them, and to identify the
+specific v1.0 decisions that were made to keep them open.
+
+\subsection{Video and Real-Time Emulation}
+
+\paragraph{What changes} The pipeline becomes a per-frame operation at 24, 25,
+or 30\,fps, with a hard budget of 33\,ms shared with capture, encode, and audio.
+The pointwise chain is already a single LUT fetch and is essentially free. The
+binding costs are halation (0.44\,ms at preview resolution on A17, but video is
+captured at higher resolution) and grain.
+
+\paragraph{The hard problem} Temporal grain coherence. Grain must be
+\emph{uncorrelated} between frames --- real grain is a new realization each
+frame --- but the underlying image is correlated, so naive per-frame
+regeneration produces the correct result. The genuine difficulty is that video
+codecs allocate bits to changing regions, and uncorrelated full-frame noise
+consumes the entire bitrate. Professional practice is to grade with grain and
+deliver at a bitrate sufficient to carry it; on a phone this is a real
+constraint.
+
+The specified approach is to record the grain \emph{parameters} in the container
+alongside a clean encode, and synthesize grain at playback within the
+application, with a baked-in option for export. This is architecturally
+identical to the film grain synthesis facility standardized in AV1, and the v1.0
+decision that makes it possible is that grain is fully determined by
+(seed, parameters, film coordinate) --- Section~\ref{sec:grain} --- so it can be
+regenerated exactly from a handful of bytes.
+
+\paragraph{v1.0 decisions that preserve this} Resolution-independent,
+seed-deterministic grain; physical-unit specification of all spatial phenomena;
+the render graph's resolution-relative descriptors.
+
+\subsection{Log Input and Professional Interchange}
+
+Apple Log and Blackmagic Log inputs require only an additional input transform:
+a log-to-linear decode followed by the existing $\mathbf{M}_{\mathrm{in}}$. The
+pipeline is already scene-referred, which is the property that makes this a
+small change rather than a redesign.
+
+Export of the baked pointwise chain as a \texttt{.cube} 3D LUT is likewise
+nearly free --- the LUT already exists (Section~\ref{sec:lutbake}) and needs
+only serialization plus a documented shaper. This is a high-value, low-cost
+feature for the P2 persona: it lets a colorist take an \EM{} grade into
+Resolve directly. It is scheduled for 1.2.
+
+The honest caveat, which must be surfaced in the UI when exporting a LUT: the
+spatial and stochastic stages cannot be baked. A \texttt{.cube} export carries
+the color science and none of the halation, grain, or interlayer effects, and
+telling the user so is more valuable than a silently incomplete export.
+
+\subsection{ACES Integration}
+
+The working space is already ACEScg. Full ACES integration adds: IDT selection
+for non-Apple sources, an ACES container output (OpenEXR with the appropriate
+metadata), and --- the substantive part --- a decision about where the film
+model sits relative to the ACES viewing transform.
+
+The correct answer is that \EM{}'s negative-plus-print chain \emph{is} an
+output transform: it takes scene-referred data to display-referred, which is
+exactly the RRT+ODT's role. \EM{} therefore replaces the ACES output transform
+rather than composing with it, and an ACES-integrated build must expose that
+choice explicitly rather than silently double-transforming. This is stated here
+because it is the mistake that ACES integrations most commonly make.
+
+\subsection{Node-Based Pipeline Editing}
+
+The render graph is already a DAG with declared reads, writes, and parameter
+dependencies (Section~\ref{sec:rendergraph}). Node-based editing requires: a
+serialized graph topology in the recipe rather than a fixed chain; a UI for
+constructing it; validation that user-constructed graphs are acyclic and
+domain-consistent (a pass consuming density must not be fed linear exposure);
+and a defined behavior for graphs whose stages appear in a physically impossible
+order.
+
+That last item is the interesting design problem, and it is a direct conflict
+with the parameter-honesty principle. The proposed resolution is that arbitrary
+ordering is permitted but non-physical orderings are marked in the interface,
+with an explanation of what the physical ordering would be. Freedom with
+labelling, rather than prohibition or silence.
+
+\subsection{User-Authored and Community Profiles}
+
+The stock profile format is already a versioned JSON parameter block
+(Section~\ref{sec:schema}). Opening it requires: a profile editor exposing the
+parameters that are currently profile-only ($\mathbf{A}$, $\mathbf{C}$, grain
+$\sigma_1$/$\chi$, halation $\ell$ and $\boldsymbol{\beta}$); a validator
+enforcing the well-formedness condition \eqref{eq:wellformed} and the
+monotonicity requirement AC-6; and a distribution mechanism.
+
+The genuinely valuable version of this feature is not authoring by eye but
+\emph{fitting from measurement}: a user photographs a step wedge on their own
+film, scans it, and the application fits $\theta$. That is a substantially more
+defensible feature and it aligns with the product's identity. It requires a
+guided capture flow and a robust fitter, and it is the correct 3.0 headline
+feature.
+
+\subsection{Machine Learning: Where It Helps and Where It Does Not}
+
+The original proposal contemplates machine learning for exposure recommendation
+and for estimating spectral film responses from scanned negatives. These are
+very different propositions and should be evaluated separately.
+
+\paragraph{Estimating model parameters from scans --- promising} Fitting
+$\theta$, $\mathbf{A}$, $\mathbf{C}$, and the grain parameters from a set of
+scanned reference images is a well-posed inverse problem. Because the forward
+model of Sections~\ref{sec:negative}--\ref{sec:grain} is differentiable by
+construction (this is why the softplus formulation was chosen over a spline),
+gradient-based optimization applies directly, and the "learning" is parameter
+estimation within a physical model rather than a black box. The result remains
+interpretable, editable, and validatable against AC-1. This is the right use.
+
+\paragraph{End-to-end learned film emulation --- rejected} A network mapping
+RAW to film-look output would discard every property the product is built on:
+interpretability, parameter honesty, controllability, and the ability to
+validate. It would also be immediately commoditized. This direction is
+explicitly not pursued.
+
+\paragraph{Exposure and stock recommendation --- modest} A small on-device
+model suggesting exposure compensation and stock from scene content is a
+convenience feature with real but bounded value. It should be additive and
+always overridable, and it should present its reasoning in the product's own
+vocabulary ("this scene has a 9-stop range; a stock with a longer straight line
+will hold both ends").
+
+\subsection{Full Spectral Rendering}
+
+The reduced spectral strategy of Section~\ref{sec:colorspace} bakes crosstalk at
+profile time against a reference illuminant. A full spectral path would carry
+$N \approx 31$ wavelength samples through the exposure and density stages,
+integrating against measured layer sensitivities and dye transmittances.
+
+The cost is roughly $10\times$ in the density stage --- which, per
+Table~\ref{tab:previewperf}, is a small fraction of the total, so the cost is
+more tolerable than it first appears. The real obstacle is data: measured
+spectral sensitivities and dye densities are not published for most stocks and
+would require spectrophotometric measurement of physical samples.
+
+The value would be correct rendering under unusual illuminants and correct
+prediction of crosstalk from first principles rather than by fitted matrix.
+This is a research direction rather than a product feature, appropriate for a
+later phase once the profile measurement apparatus already exists for other
+reasons.
+
+\subsection{Cross-Device Continuity}
+
+The macOS companion shares \texttt{EmulsionCore} and \texttt{EmulsionRender}
+unchanged; only \texttt{EmulsionCapture} and the UI layer differ. This is the
+direct payoff of the module layering in Table~\ref{tab:layers} and the reason
+that layering was specified as strictly as it was.
+
+Synchronization carries recipes and library metadata, not images. A recipe is
+under a kilobyte; syncing recipes is trivial and syncing 48\,MP originals is a
+different product with different economics. The sync model is therefore:
+recipes and metadata via CloudKit, images by user action only. This keeps the
+privacy commitment of CR-02 substantially intact --- the default remains that
+no image leaves the device.

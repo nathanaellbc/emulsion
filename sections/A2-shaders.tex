@@ -1,0 +1,420 @@
+\section{Reference Shader Implementations}
+\label{app:shaders}
+
+The body gives the kernels whose \emph{form} carries an argument: the stable
+characteristic curve (Listing~\ref{lst:charcurve}), the interlayer combine, the
+grain field generator (Listing~\ref{lst:grain}), the fused pointwise chain, and
+tetrahedral interpolation (Listing~\ref{lst:tetra}). This appendix supplies the
+remainder needed to reproduce the pipeline, in the order they execute.
+
+All listings are Metal Shading Language 3.1 unless noted, compile with
+\texttt{-ffast-math} disabled (Section~\ref{sec:precision}), and assume the
+threadgroup sizing and bounds convention established in
+Section~\ref{sec:metal}: every kernel begins with a grid guard, because
+dispatch sizes are rounded up to threadgroup multiples and a missing guard
+corrupts the row below the image in a way that is invisible until export.
+
+\subsection{Host--Shader Parameter ABI}
+
+One header is shared between Swift and Metal, so a parameter added on one side
+fails to compile on the other rather than silently misaligning. Alignment is
+explicit: Metal's \texttt{float3} is 16-byte aligned, and a Swift
+\texttt{SIMD3<Float>} matches it, but a Swift tuple does not.
+
+\begin{lstlisting}[language=Metal, caption={Shared parameter block (\texttt{EmulsionABI.h}).}, label={lst:abi}]
+#ifndef EMULSION_ABI_H
+#define EMULSION_ABI_H
+#include <simd/simd.h>
+
+// Per-record characteristic curve parameters (softplus density model).
+typedef struct {
+    simd_float3 dMin;      // base + fog, per record
+    simd_float3 deltaD;    // density range
+    simd_float3 gamma;     // straight-line gamma (negative for reversal)
+    simd_float3 x0;        // extrapolated speed point, log10 lx-s
+    simd_float3 kappaT;    // toe softness
+    simd_float3 kappaS;    // shoulder softness
+    simd_float3 maskDepl;  // m, mask depletion
+} EMCurveParams;
+
+typedef struct {
+    simd_float3x3 dirMatrix;   // A, DIR coupling matrix
+    simd_float2   dirSigmaPx;  // (sigma1, sigma2) in render pixels
+    float         dirW2;       // long-scale weight
+    float         dirMu;       // activity exponent
+} EMInterlayerParams;
+
+typedef struct {
+    simd_float3   sigmaPx;     // grain kernel sigma per record, pixels
+    simd_float3x3 cholesky;    // L, chroma correlation factor
+    simd_float2   nu;          // granularity shape exponents
+    float         amount;      // user grain amount g
+    float         chi;         // clustering fraction
+    float         lambdaPx;    // expected grains per pixel
+    uint          seed;        // frame seed
+} EMGrainParams;
+
+typedef struct {
+    simd_float3 aimLogL;       // log10 L_aim, computed aim balance
+    simd_int3   points;        // printer lights p_c, integer
+    int         masterPoints;  // print density
+    simd_float3x3 C;           // printing density matrix
+    EMCurveParams print;       // print stock curve
+    float       silverRho;     // silver retention fraction
+    float       surroundGamma; // viewing condition exponent
+} EMPrintParams;
+
+typedef struct {
+    EMCurveParams      negative;
+    EMInterlayerParams interlayer;
+    EMGrainParams      grain;
+    EMPrintParams      print;
+    simd_float3x3      mIn;        // P3 -> ACEScg input transform
+    simd_float3x3      mWhite;     // collapsed von Kries adaptation
+    float              anchorGain; // exposure anchoring gain
+    uint               qualityTier;
+} EMFrameParams;
+#endif
+\end{lstlisting}
+
+\texttt{EMFrameParams} is a single 3-buffer upload of under 700 bytes, written
+once per frame into a triple-buffered ring. Nothing in the pipeline reads a
+parameter from any other source, which is what makes the render a pure function
+of \texttt{(source texture, EMFrameParams)} and therefore makes the golden-image
+tests of Section~\ref{sec:validation} meaningful.
+
+\subsection{Input Transform, Anchoring, and White Balance}
+
+The three host-computed matrices collapse into one, so the entire color
+management front end costs a single multiply. This is worth stating explicitly
+because it is easy to implement as three passes and never notice the cost.
+
+\begin{lstlisting}[language=Metal, caption={Fused input transform.}]
+kernel void em_input_transform(
+    texture2d<float, access::read>  src  [[texture(0)]],
+    texture2d<float, access::write> dst  [[texture(1)]],
+    constant EMFrameParams&         P    [[buffer(0)]],
+    uint2 gid [[thread_position_in_grid]])
+{
+    if (gid.x >= dst.get_width() || gid.y >= dst.get_height()) return;
+
+    float3 e = src.read(gid).rgb;          // extended linear Display P3
+
+    // Host has premultiplied M_in * M_white; one matrix, not two.
+    e = P.mWhite * (P.mIn * e);
+
+    // Exposure anchoring: anchorGain folds 2^eps * 0.18 / g_cal.
+    e *= P.anchorGain;
+
+    // The pipeline takes log10 next; a non-positive channel is not an error
+    // to clamp away silently, it is a signal that the working space is too
+    // small. AP1 makes this rare; we floor at a value below any real signal
+    // and count occurrences in the debug build.
+    e = max(e, float3(1e-7));
+
+    dst.write(float4(e, 1.0), gid);
+}
+\end{lstlisting}
+
+\subsection{Separable Recursive Gaussian}
+\label{app:recursive}
+
+The interlayer diffusion blurs and the grain kernel convolution use a separable
+recursive filter \cite{deriche1993,young1995}, whose cost is independent of
+$\sigma$. This is what makes the interlayer long scale --- $6\,\mu$m at the film
+plane, tens of pixels at export resolution --- affordable at all. The
+implementation is a third-order forward/backward pass per axis; coefficients are
+computed on the host from $\sigma$ and uploaded.
+
+Halation does \emph{not} use this filter. As established in
+Section~\ref{sec:recursive-blur}, a separable IIR realization of the exponential
+PSF is anisotropic in a way that is plainly visible on point highlights, so
+halation is evaluated instead as the fitted Gaussian mixture over mip levels,
+each term of which is small enough for direct separable convolution. The
+distinction matters: the recursive filter is correct where the target kernel is
+Gaussian and the radius is large, and wrong where the target kernel is an
+isotropic exponential.
+
+\begin{lstlisting}[language=Metal, caption={Recursive Gaussian, one axis, one row per thread.}, label={lst:recursive}]
+struct EMRecursiveCoeffs { float b0, b1, b2, b3, B; };
+
+kernel void em_recursive_blur_h(
+    texture2d<float, access::read>  src [[texture(0)]],
+    texture2d<float, access::write> dst [[texture(1)]],
+    constant EMRecursiveCoeffs&     k   [[buffer(0)]],
+    uint gy [[thread_position_in_grid]])
+{
+    const uint W = src.get_width();
+    if (gy >= src.get_height()) return;
+
+    // Forward pass. Boundary is initialized to the edge value rather than
+    // zero: a zero boundary produces a dark rim that survives into the
+    // print and reads as a vignette the user did not ask for.
+    float3 p1, p2, p3;
+    p1 = p2 = p3 = src.read(uint2(0, gy)).rgb;
+
+    for (uint x = 0; x < W; ++x) {
+        float3 s = src.read(uint2(x, gy)).rgb;
+        float3 o = k.B * s + k.b1 * p1 + k.b2 * p2 + k.b3 * p3;
+        p3 = p2; p2 = p1; p1 = o;
+        dst.write(float4(o, 1.0), uint2(x, gy));
+    }
+
+    // Backward pass, in place.
+    p1 = p2 = p3 = dst.read(uint2(W - 1, gy)).rgb;
+    for (int x = int(W) - 1; x >= 0; --x) {
+        float3 s = dst.read(uint2(uint(x), gy)).rgb;
+        float3 o = k.B * s + k.b1 * p1 + k.b2 * p2 + k.b3 * p3;
+        p3 = p2; p2 = p1; p1 = o;
+        dst.write(float4(o, 1.0), uint2(uint(x), gy));
+    }
+}
+\end{lstlisting}
+
+The vertical pass is the transpose of this kernel. Because a row-per-thread
+dispatch has poor occupancy at small image heights, the graph substitutes the
+threadgroup-staged two-pass separable convolution of Section~\ref{sec:metal}
+below $\sigma = 2.5$ pixels, where the direct filter is cheaper anyway; the
+crossover was measured, not assumed (Section~\ref{sec:performance}).
+
+\subsection{Halation Composite}
+
+The four-term Gaussian mixture of Table~\ref{tab:gaussmix} is evaluated by
+blurring a thresholded source at four mip levels and accumulating. The
+threshold is soft, because a hard threshold produces a visible contour in a
+sky at the point where the source crosses it.
+
+\begin{lstlisting}[language=Metal, caption={Halation source extraction and composite.}]
+kernel void em_halation_source(
+    texture2d<float, access::read>  lin [[texture(0)]],
+    texture2d<float, access::write> out [[texture(1)]],
+    constant EMHalationParams&      H   [[buffer(0)]],
+    uint2 gid [[thread_position_in_grid]])
+{
+    if (gid.x >= out.get_width() || gid.y >= out.get_height()) return;
+    float3 e = lin.read(gid).rgb;
+
+    // Soft threshold: smoothstep over a knee of width kappa_h around tau.
+    float3 t = smoothstep(float3(H.tau - H.kappaH),
+                          float3(H.tau + H.kappaH), e);
+    float3 s = pow(max(e - H.tau, float3(0.0)), H.q) * t;
+
+    // Channel bias beta applies at the source, not at the composite, so
+    // that a red-biased halo also scatters over the red channel's longer
+    // length -- the two are the same physical fact.
+    out.write(float4(s * H.beta, 1.0), gid);
+}
+
+kernel void em_halation_composite(
+    texture2d<float, access::read>       base [[texture(0)]],
+    array<texture2d<float, access::sample>, 4> mips [[texture(1)]],
+    texture2d<float, access::write>      dst  [[texture(5)]],
+    constant EMHalationParams&           H    [[buffer(0)]],
+    sampler                              samp [[sampler(0)]],
+    uint2 gid [[thread_position_in_grid]])
+{
+    if (gid.x >= dst.get_width() || gid.y >= dst.get_height()) return;
+    float2 uv = (float2(gid) + 0.5) / float2(dst.get_width(), dst.get_height());
+
+    float3 halo = float3(0.0);
+    for (uint j = 0; j < 4; ++j) {
+        halo += H.w[j] * mips[j].sample(samp, uv).rgb;
+    }
+    // Base-reflection ring: a second, wider term weighted by omega, offset
+    // to the minimum radius set by base thickness. Near zero for modern
+    // stocks; the .xr profiles are where it earns its place.
+    halo += H.omega * mips[3].sample(samp, uv).rgb;
+
+    float3 e = base.read(gid).rgb + H.alpha * halo;
+    dst.write(float4(e, 1.0), gid);
+}
+\end{lstlisting}
+
+Halation is added in \emph{linear exposure}, before the characteristic curve,
+because that is where the scattered light physically lands. Adding it to
+density, or to the print, produces a glow that does not compress in the
+negative's shoulder --- which is the tell that separates a simulated halo from
+a bloom filter.
+
+\subsection{Poisson-Mode Grain}
+
+Listing~\ref{lst:grain} gives the Gaussian mode used at full resolution.
+Below $\Lambda = 10$ expected grains per pixel the central limit theorem fails
+and individual grains must be realized.
+
+\begin{lstlisting}[language=Metal, caption={Poisson-mode grain realization.}]
+inline uint em_hash(uint3 v) {        // shared with the Gaussian-mode kernel
+    uint h = v.x * 0x9E3779B9u ^ v.y * 0x85EBCA6Bu ^ v.z * 0xC2B2AE35u;
+    h ^= h >> 15; h *= 0x2545F491u; h ^= h >> 13;
+    return h;
+}
+inline float em_unit(uint h) { return float(h & 0x00FFFFFFu) / 16777216.0f; }
+
+kernel void em_grain_poisson(
+    texture2d<float, access::read>  dens [[texture(0)]],
+    texture2d<float, access::write> fld  [[texture(1)]],
+    constant EMGrainParams&         G    [[buffer(0)]],
+    uint2 gid [[thread_position_in_grid]])
+{
+    if (gid.x >= fld.get_width() || gid.y >= fld.get_height()) return;
+
+    // Lattice cell in FILM coordinates, not pixel coordinates: this is what
+    // makes preview and export the same field at two sampling rates.
+    uint3 cell = uint3(gid.x, gid.y, G.seed);
+
+    float3 acc = float3(0.0);
+    // 3x3 neighbourhood covers the kernel support at Poisson-mode sigmas.
+    for (int dy = -1; dy <= 1; ++dy) {
+        for (int dx = -1; dx <= 1; ++dx) {
+            uint  h  = em_hash(cell + uint3(uint(dx + 1), uint(dy + 1), 0u));
+            // Knuth's method; valid because lambda < 10 by construction.
+            float L  = exp(-G.lambdaPx);
+            float p  = 1.0; uint n = 0u;
+            do { p *= em_unit(em_hash(uint3(h, n, 0u))); ++n; } while (p > L);
+            n -= 1u;
+
+            for (uint i = 0; i < n; ++i) {
+                uint  hi = em_hash(uint3(h, i, 1u));
+                float ox = em_unit(hi)            + float(dx);
+                float oy = em_unit(hi * 747796405u) + float(dy);
+                float r2 = ox * ox + oy * oy;
+                acc += exp(-r2 / (2.0 * G.sigmaPx * G.sigmaPx));
+            }
+        }
+    }
+    // Normalize to zero mean, unit variance; the density-dependent
+    // scaling sigma_D(D) is applied in the combine pass.
+    float3 mean = G.lambdaPx * 2.0 * M_PI_F * G.sigmaPx * G.sigmaPx;
+    fld.write(float4((acc - mean) * rsqrt(mean), 1.0), gid);
+}
+\end{lstlisting}
+
+\subsection{Print Transfer, Silver Retention, and Display}
+
+The print stage is a single fused kernel: crosstalk, exposure, curve,
+retention, and display normalization touch each pixel once. It is the last
+place in the pipeline where a texture round trip would be pure waste, since
+every operation is pointwise given the negative density.
+
+\begin{lstlisting}[language=Metal, caption={Fused print transfer and display conversion.}, label={lst:print}]
+inline float3 em_softplus(float3 u, float3 a) {   // numerically stable form
+    return max(u, 0.0) + a * log1p(exp(-abs(u) / a));
+}
+
+kernel void em_print_transfer(
+    texture2d<float, access::read>  negD [[texture(0)]],
+    texture2d<float, access::write> dst  [[texture(1)]],
+    constant EMFrameParams&         P    [[buffer(0)]],
+    uint2 gid [[thread_position_in_grid]])
+{
+    if (gid.x >= dst.get_width() || gid.y >= dst.get_height()) return;
+    float3 D = negD.read(gid).rgb;
+
+    // Printing density: unwanted absorptions of the negative's dyes.
+    float3 Deff = P.print.C * D;
+
+    // Printer lights as a 0.025-per-point offset from the computed aim.
+    float3 pts = float3(P.print.points) * 0.025
+               + float(P.print.masterPoints) * 0.025;
+    float3 logE = P.print.aimLogL + pts - Deff;
+
+    // Print characteristic curve: identical form to the negative.
+    const EMCurveParams k = P.print.print;
+    float3 u  = k.gamma * (logE - k.x0);
+    float3 Dp = k.dMin + em_softplus(u, k.kappaT)
+                       - em_softplus(u - k.deltaD, k.kappaS);
+
+    // Silver retention: a neutral density proportional to total
+    // development, added to all three records.
+    if (P.print.silverRho > 0.0) {
+        float bar = dot((Dp - k.dMin) / k.deltaD, float3(1.0 / 3.0)) * 0.90;
+        Dp += P.print.silverRho * bar;
+    }
+
+    // Print density to relative luminance. The Dmax subtraction
+    // is not cosmetic: without it the print's finite black compounds with
+    // the panel's and the image looks washed out on OLED.
+    float3 dMax = k.dMin + k.deltaD;
+    float3 num  = exp10(-Dp)     - exp10(-dMax);
+    float3 den  = exp10(-k.dMin) - exp10(-dMax);
+    float3 Y    = clamp(num / den, 0.0, 1.0);
+
+    if (P.print.surroundGamma != 1.0) Y = pow(Y, P.print.surroundGamma);
+
+    dst.write(float4(Y, 1.0), gid);   // linear, print primaries
+}
+\end{lstlisting}
+
+\subsection{Aging Artifacts}
+
+Dust and scratches are generated procedurally in the density domain with the
+polarity of Table~\ref{tab:aging}, from the same hash as the grain field but a
+different salt, so a frame's blemishes are as reproducible as its grain.
+
+\begin{lstlisting}[language=Metal, caption={Dust and scratch overlay in negative density.}]
+kernel void em_aging(
+    texture2d<float, access::read_write> D [[texture(0)]],
+    constant EMAgingParams&              A [[buffer(0)]],
+    uint2 gid [[thread_position_in_grid]])
+{
+    if (gid.x >= D.get_width() || gid.y >= D.get_height()) return;
+    float3 d = D.read(gid).rgb;
+
+    // Dust: sparse opaque particles. Positive density in the negative,
+    // therefore WHITE in the print -- the opposite of what an overlay
+    // texture applied to the final image would give, and the reason those
+    // always look wrong.
+    uint  h = em_hash(uint3(gid, A.seed ^ 0x5BD1u));
+    float u = em_unit(h);
+    if (u < A.dustDensity) {
+        float r = em_unit(h * 2654435761u);
+        d += A.dustOpacity * (0.4 + 0.6 * r);
+    }
+
+    // Emulsion scratch: a vertical run of removed emulsion, negative
+    // density, printing dark. Column-coherent by hashing x only.
+    uint  hc = em_hash(uint3(gid.x, 0u, A.seed ^ 0x1D3Bu));
+    if (em_unit(hc) < A.scratchDensity) {
+        float depth = 0.3 + 0.7 * em_unit(hc * 40503u);
+        d -= A.scratchStrength * depth;
+    }
+
+    D.write(float4(max(d, 0.0), 1.0), gid);
+}
+\end{lstlisting}
+
+\subsection{Pointwise Chain Bake}
+
+The LUT bake of Section~\ref{sec:lutbake} runs the entire pointwise chain ---
+layer balance, characteristic curve, mask depletion, printing density, print
+curve, silver retention, neutral axis, output transform --- over the $45^3$
+lattice in a single dispatch of 91\,125 threads. It is the same code path as
+the per-pixel chain, invoked with lattice coordinates instead of texture reads,
+which is the only way to guarantee that the baked LUT and the direct evaluation
+agree; a separately written bake kernel drifts from the real chain within two
+releases, and the drift shows up as a preview that does not match the export.
+
+\begin{lstlisting}[language=Metal, caption={LUT bake driver.}, label={lst:bake}]
+kernel void em_bake_lut(
+    texture3d<half, access::write> lut [[texture(0)]],
+    constant EMFrameParams&        P   [[buffer(0)]],
+    uint3 gid [[thread_position_in_grid]])
+{
+    const uint N = 45;
+    if (gid.x >= N || gid.y >= N || gid.z >= N) return;
+
+    // Inverse shaper: the lattice is uniform in log exposure over [-4, +2].
+    // A lattice uniform in linear exposure would spend almost all of its
+    // nodes above middle gray and band the shadows.
+    float3 t    = float3(gid) / float(N - 1);
+    float3 logE = t * 6.0 - 4.0;
+
+    float3 Y = em_pointwise_chain(logE, P);   // shared with the direct path
+    lut.write(half4(half3(Y), 1.0h), gid);
+}
+\end{lstlisting}
+
+The equality of the two paths is asserted by a test rather than by inspection:
+the bake is run, the direct chain is evaluated at 20\,000 random points, and the
+maximum density difference must remain below $7\times10^{-3}$ --- the
+tetrahedral interpolation bound derived in Section~\ref{sec:lutbake}.

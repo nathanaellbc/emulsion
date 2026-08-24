@@ -1,0 +1,161 @@
+/*
+ * The darkroom instrument.
+ *
+ * A safelight room: near-black warm ground, one amber accent, and the
+ * photograph as the only bright object on screen. Everything chrome is held
+ * below the image in value so nothing competes with it — which is not a style
+ * choice so much as a working condition. You cannot judge a print next to a
+ * white panel.
+ */
+
+:root {
+  /* Ground, ascending. Warm-biased greys: a neutral grey next to a warm print
+     reads blue, which would make every render look colder than it is. */
+  --ground: #0a0908;
+  --surface: #100e0d;
+  --surface-raised: #161412;
+  --surface-hover: #1d1a17;
+  --surface-sunken: #070606;
+
+  /* Hairlines. Two weights only: a structural rule and a whisper. */
+  --rule: rgba(232, 227, 220, 0.09);
+  --rule-strong: rgba(232, 227, 220, 0.16);
+
+  /* Type. */
+  --ink: #e8e3dc;
+  --ink-muted: #948a7e;
+  --ink-faint: #635c53;
+
+  /* The safelight. Used for state, never for decoration. */
+  --accent: #e08a3c;
+  --accent-dim: #a4622a;
+  --accent-wash: rgba(224, 138, 60, 0.12);
+
+  /* The three records, at their own hues, used consistently everywhere a
+     record is shown: the curve plot, the printer lights, the readouts. */
+  --record-r: #d8574a;
+  --record-g: #5aa86b;
+  --record-b: #4d84cf;
+
+  --warn: #d4553c;
+  --warn-wash: rgba(212, 85, 60, 0.12);
+
+  --font-sans: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto,
+    'Helvetica Neue', Arial, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', 'Cascadia Mono', 'JetBrains Mono',
+    'Roboto Mono', Menlo, Consolas, monospace;
+
+  /* A 4px base. Instrument panels want tight, regular rhythm. */
+  --s1: 4px;
+  --s2: 8px;
+  --s3: 12px;
+  --s4: 16px;
+  --s5: 24px;
+  --s6: 32px;
+  --s7: 48px;
+
+  --radius: 3px;
+  --radius-lg: 5px;
+
+  --rail-width: 336px;
+  --header-height: 52px;
+
+  --ease: cubic-bezier(0.2, 0, 0.1, 1);
+  --dur: 140ms;
+}
+
+/* The interface commits to dark. A darkroom that follows the system theme into
+   daylight is not a darkroom, and the print would be unjudgeable. */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur: 0ms;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  overscroll-behavior: none;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+::selection {
+  background: var(--accent-dim);
+  color: #fff;
+}
+
+/* Numerals are data here: they must line up in a column and never jitter as
+   they change. */
+.num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
+}
+
+.label {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+  font-weight: 500;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Scrollbars, so the rail does not sprout a bright system-coloured bar. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(232, 227, 220, 0.16) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: rgba(232, 227, 220, 0.14);
+  border-radius: 99px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: rgba(232, 227, 220, 0.26);
+  background-clip: content-box;
+}

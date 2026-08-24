@@ -1,0 +1,337 @@
+\section{The Digital Negative: Characteristic Curve Model}
+\label{sec:negative}
+
+\subsection{Requirements on the Curve Model}
+
+The transfer from log exposure to optical density is the mathematical heart of
+the application. The model must satisfy six requirements:
+
+\begin{enumerate}
+\item \textbf{R1.} Reproduce the toe, straight-line, and shoulder regions of a
+measured $D$--$\logE$ curve to within AC-1 tolerance.
+\item \textbf{R2.} Provide \emph{independent} control of each region. A change
+to shoulder sharpness must not move the speed point; a change to gamma must not
+change $\Dmax$.
+\item \textbf{R3.} Be $C^\infty$. Any discontinuity in the first derivative
+produces a visible contour in a smooth gradient, and any discontinuity in the
+second derivative is visible in a sky.
+\item \textbf{R4.} Have a closed-form derivative, because the derivative
+\emph{is} the local gamma, which the grain model
+(Section~\ref{sec:grain}) requires pointwise.
+\item \textbf{R5.} Be monotonically non-decreasing for all reachable
+parameters (AC-6).
+\item \textbf{R6.} Evaluate in a handful of GPU instructions.
+\end{enumerate}
+
+Spline-fit tables satisfy R1 and R6 but violate R2 catastrophically --- moving
+one control point changes the curve globally in ways that do not correspond to
+any physical parameter, which destroys parameter honesty. The classical
+Hurter--Driffield treatment \cite{hurter1890,james1977} gives the straight line
+but no closed form for the extremes. Generalized logistic (Richards) curves are $C^\infty$ and monotone but
+couple toe and shoulder sharpness through a single asymmetry exponent, failing
+R2.
+
+\subsection{The Softplus Density Model}
+
+\EM{} uses a formulation built from softplus primitives. Define the softplus
+with sharpness parameter $a > 0$:
+
+\begin{equation}
+\softp{a}{u} \;=\; a \ln\!\left(1 + e^{u/a}\right).
+\label{eq:softplus}
+\end{equation}
+
+This function is the canonical smooth relaxation of $\max(u, 0)$: it is
+$C^\infty$, strictly increasing, satisfies $\softp{a}{u} \to \max(u,0)$ as $a
+\to 0^+$, and has the logistic function as its derivative,
+$\tfrac{d}{du}\softp{a}{u} = \sigma(u/a)$ with $\sigma(t) = (1+e^{-t})^{-1}$.
+
+Let $x = \logE$ be the log exposure reaching a given layer, and define the
+straight-line coordinate
+
+\begin{equation}
+u(x) \;=\; \gamma\,\big(x - x_{0}\big),
+\label{eq:ucoord}
+\end{equation}
+
+where $\gamma$ is the straight-line gamma and $x_0$ is the \emph{extrapolated
+speed point}: the log exposure at which the straight-line portion, extended
+downward, intersects $\Dmin$.
+
+The characteristic curve is then
+
+\begin{equation}
+\boxed{\;D(x) \;=\; \Dmin \;+\; \softp{\kappa_t}{u(x)} \;-\; \softp{\kappa_s}{u(x) - \Delta D}\;}
+\label{eq:charcurve}
+\end{equation}
+
+with $\Delta D = \Dmax - \Dmin$ the density range, $\kappa_t > 0$ the toe
+softness, and $\kappa_s > 0$ the shoulder softness.
+
+\subsection{Behavior and Verification of the Model}
+
+The three asymptotic regimes follow directly from \eqref{eq:softplus}:
+
+\paragraph{Toe, $u \ll 0$} Both softplus terms vanish exponentially and $D \to
+\Dmin$. Approach is exponential with scale $\kappa_t/\gamma$ in log exposure,
+matching the observed sub-threshold behavior of real emulsions.
+
+\paragraph{Straight line, $\kappa_t \ll u \ll \Delta D - \kappa_s$} The first
+term is $\approx u$, the second $\approx 0$, giving
+
+\begin{equation}
+D(x) \approx \Dmin + \gamma\,(x - x_0),
+\end{equation}
+
+a line of slope exactly $\gamma$ intercepting $\Dmin$ at $x_0$, as required by
+R2.
+
+\paragraph{Shoulder, $u \gg \Delta D$} The first term is $\approx u$, the
+second $\approx u - \Delta D$, and $D \to \Dmin + \Delta D = \Dmax$.
+
+\medskip
+The derivative --- the \emph{point gamma} $\gamma(x)$ --- is available in closed
+form, satisfying R4:
+
+\begin{equation}
+\boxed{\;\gamma(x) \;=\; \frac{dD}{dx} \;=\; \gamma\left[\sigma\!\left(\frac{u}{\kappa_t}\right) - \sigma\!\left(\frac{u - \Delta D}{\kappa_s}\right)\right]\;}
+\label{eq:pointgamma}
+\end{equation}
+
+Monotonicity (R5) follows immediately: $\sigma$ is strictly increasing, and
+since $u > u - \Delta D$ whenever $\Delta D > 0$, we have $\sigma(u/\kappa_t) >
+\sigma((u-\Delta D)/\kappa_s)$ provided $\kappa_t \le \kappa_s$ or, more
+generally, provided $\Delta D$ is large relative to the softness parameters.
+The precise condition is stated below.
+
+\subsection{Well-Formedness Condition}
+
+The two softplus terms overlap when $\Delta D$ is not large compared to
+$\kappa_t + \kappa_s$, in which case the curve never reaches $\Dmax$ and, in the
+extreme, can become non-monotone. Evaluating \eqref{eq:pointgamma} at the
+midpoint $u = \Delta D/2$ gives the minimum-margin case; requiring
+$\gamma(x) > 0$ everywhere yields the sufficient condition
+
+\begin{equation}
+\Delta D \;>\; \left(\kappa_t + \kappa_s\right)\ln\!\left(\frac{\kappa_s}{\kappa_t}\right)
+\quad\text{when } \kappa_s > \kappa_t,
+\label{eq:wellformed1}
+\end{equation}
+
+and monotonicity is unconditional when $\kappa_s \le \kappa_t$. In practice
+\EM{} enforces the stricter engineering constraint
+
+\begin{equation}
+\Delta D \;\geq\; 4\left(\kappa_t + \kappa_s\right),
+\label{eq:wellformed}
+\end{equation}
+
+which additionally guarantees that the attained maximum density is within
+$0.02$ density units of the nominal $\Dmax$ and that a genuine straight-line
+region of at least $\Delta D / 2$ exists. The parameter validator in
+\texttt{EmulsionCore} rejects any profile violating \eqref{eq:wellformed} at
+load time, and the UI clamps $\kappa$ sliders so that the condition cannot be
+violated interactively.
+
+\subsection{Per-Record Parameterization and the Orange Mask}
+
+Each color record has an independent parameter set
+$\theta_c = (\Dmin{}_{,c}, \Delta D_c, \gamma_c, x_{0,c}, \kappa_{t,c},
+\kappa_{s,c})$, $c \in \{R,G,B\}$, so \eqref{eq:charcurve} is evaluated three
+times.
+
+The $\Dmin$ vector deserves specific attention because it encodes the
+\emph{orange mask} of color negative film. Colored couplers in the magenta and
+cyan layers absorb blue and green light even where undeveloped, producing the
+familiar orange base. In Status M density \cite{iso5} this appears as
+
+\begin{equation}
+\Dmin^{\mathrm{(colorneg)}} \approx (0.58,\; 0.92,\; 1.28)^\top
+\end{equation}
+
+for a typical modern stock. The mask is not decorative: it is an
+inter-image correction that compensates for unwanted absorptions of the cyan
+and magenta dyes, and it is calibrated to be removed by the printing stage.
+Modelling the mask but failing to model its removal produces the ``scanned
+negative that was never printed'' look --- muddy, low-saturation, warm ---
+which is a real and recognizable failure mode. Section~\ref{sec:print}
+specifies the removal.
+
+Because the mask density is largely independent of exposure, it can be carried
+as a constant offset. \EM{} nevertheless models a small exposure dependence,
+since real masking couplers are consumed in proportion to development:
+
+\begin{equation}
+\Dmin{}_{,c}(x) = \Dmin{}_{,c}^{(0)} - m_c \cdot \frac{D_c(x) - \Dmin{}_{,c}^{(0)}}{\Delta D_c},
+\label{eq:maskdepletion}
+\end{equation}
+
+with $m_c$ the mask depletion coefficient, typically $(0.00, 0.06, 0.10)$.
+Equation \eqref{eq:maskdepletion} is applied as a single fixed-point iteration
+rather than solved exactly; the correction is small and one iteration is
+below the AC-1 tolerance.
+
+\subsection{Curve Family Illustration}
+
+Figure~\ref{fig:charcurve} plots \eqref{eq:charcurve} for the three records of a
+representative daylight color negative stock, and
+Figure~\ref{fig:pointgamma} plots the corresponding point gamma
+\eqref{eq:pointgamma}.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}
+\begin{axis}[
+  width=\columnwidth, height=5.4cm,
+  xlabel={$\logE$ (relative)},
+  ylabel={Status M density $D$},
+  xmin=-3, xmax=2, ymin=0, ymax=3.2,
+  grid=both, grid style={draw=emLine!20},
+  legend style={font=\scriptsize, at={(0.02,0.98)}, anchor=north west, draw=emLine!40},
+  label style={font=\scriptsize}, tick label style={font=\scriptsize},
+  samples=250,
+]
+% Blue record (highest Dmin, mask)
+\addplot[emBlue, very thick, domain=-3:2]
+  {1.28 + 0.13*ln(1+exp((0.66*(x+2.05))/0.13)) - 0.11*ln(1+exp((0.66*(x+2.05)-1.85)/0.11))};
+\addlegendentry{Blue record}
+% Green record
+\addplot[emGreen, very thick, domain=-3:2]
+  {0.92 + 0.14*ln(1+exp((0.63*(x+2.10))/0.14)) - 0.11*ln(1+exp((0.63*(x+2.10)-1.90)/0.11))};
+\addlegendentry{Green record}
+% Red record
+\addplot[emAcc, very thick, domain=-3:2]
+  {0.58 + 0.15*ln(1+exp((0.61*(x+2.15))/0.15)) - 0.12*ln(1+exp((0.61*(x+2.15)-1.95)/0.12))};
+\addlegendentry{Red record}
+\end{axis}
+\end{tikzpicture}
+\caption{Characteristic curves from \eqref{eq:charcurve} for a daylight color negative stock. The vertical separation at the base is the orange mask. Note that the three records are near-parallel through the straight-line region --- non-parallelism is \emph{crossover}, and it is the dominant cause of colors that cannot be corrected by a global balance change.}
+\label{fig:charcurve}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}
+\begin{axis}[
+  width=\columnwidth, height=4.4cm,
+  xlabel={$\logE$ (relative)},
+  ylabel={point gamma $\gamma(x)$},
+  xmin=-3, xmax=2, ymin=0, ymax=0.8,
+  grid=both, grid style={draw=emLine!20},
+  label style={font=\scriptsize}, tick label style={font=\scriptsize},
+  samples=250,
+]
+\addplot[emAcc, very thick, domain=-3:2]
+  {0.61*( 1/(1+exp(-(0.61*(x+2.15))/0.15)) - 1/(1+exp(-(0.61*(x+2.15)-1.95)/0.12)) )};
+\addplot[emGreen, very thick, domain=-3:2]
+  {0.63*( 1/(1+exp(-(0.63*(x+2.10))/0.14)) - 1/(1+exp(-(0.63*(x+2.10)-1.90)/0.11)) )};
+\end{axis}
+\end{tikzpicture}
+\caption{Point gamma from \eqref{eq:pointgamma} for the red and green records. The plateau is the straight line; the rise and fall are the toe and shoulder. This function is consumed directly by the grain variance model \eqref{eq:grainvar} and by the interlayer inhibition weighting.}
+\label{fig:pointgamma}
+\end{figure}
+
+\subsection{Derived Sensitometric Quantities}
+
+The following quantities are computed from $\theta_c$ on the host and exposed
+in the UI as read-only diagnostics. They are the standard vocabulary of
+sensitometry and their presence is a substantial part of the product's claim to
+professional seriousness.
+
+\paragraph{Speed point} The log exposure producing density $\Dmin + 0.10$:
+
+\begin{equation}
+x_{\mathrm{sp}} = x_0 + \frac{\kappa_t}{\gamma}\ln\!\left(e^{0.10/\kappa_t} - 1\right).
+\label{eq:speedpoint}
+\end{equation}
+
+This inverts the toe branch of \eqref{eq:charcurve} exactly, since the shoulder
+term is negligible at this density. ISO speed follows as $S = 0.8 /
+10^{x_{\mathrm{sp}}}$ in the arithmetic scale \cite{iso5800,iso6}.
+
+\paragraph{Contrast index} Following standard sensitometric practice
+\cite{kodakh740}, the slope of the chord
+from the speed point to a point $2.00$ log-exposure units higher:
+
+\begin{equation}
+\mathrm{CI} = \frac{D(x_{\mathrm{sp}} + 2.00) - D(x_{\mathrm{sp}})}{2.00}.
+\label{eq:ci}
+\end{equation}
+
+For a normal-process color negative $\mathrm{CI} \approx 0.55$--$0.62$; for
+black-and-white pictorial negatives $0.50$--$0.58$.
+
+\paragraph{Useful exposure latitude} The interval over which point gamma
+exceeds a fraction $\lambda$ of its maximum (default $\lambda = 0.5$),
+obtained by solving $\gamma(x) = \lambda\gamma_{\max}$ numerically with two
+Newton steps from the analytic straight-line bracket. Reported in stops as
+$\mathrm{L} = (x_{\mathrm{hi}} - x_{\mathrm{lo}})/\log_{10} 2$. Modern color
+negative stocks report 12--14 stops by this measure, which is why the format
+tolerates overexposure so gracefully --- and why the model, if correct,
+reproduces that tolerance without a special case.
+
+\subsection{Monochrome Stocks}
+
+Monochrome emulsions use the same formulation with a single parameter set and a
+spectral weighting applied before \eqref{eq:charcurve} to convert the
+three-channel working image into the single exposure the panchromatic layer
+receives:
+
+\begin{equation}
+E_{\mathrm{pan}} = \mathbf{w}^\top \mathbf{E}, \qquad
+\mathbf{w} = \mathbf{w}_{\mathrm{spectral}} \odot \mathbf{w}_{\mathrm{filter}},
+\label{eq:pan}
+\end{equation}
+
+where $\mathbf{w}_{\mathrm{spectral}}$ is the stock's normalized spectral
+sensitivity integrated against the AP1 primaries and
+$\mathbf{w}_{\mathrm{filter}}$ models an optional contrast filter (yellow,
+orange, red, green) \cite{kodakh1}. This is the mechanism by which a red filter darkens a blue
+sky in \EM{} for the same reason it does on a real camera, rather than by a
+scripted sky-darkening effect. Default weights for a panchromatic stock are
+$\mathbf{w}_{\mathrm{spectral}} = (0.30, 0.59, 0.11)$; an orthochromatic
+profile uses $(0.02, 0.68, 0.30)$, which correctly renders red lips dark.
+
+\subsection{Shader Implementation}
+
+Equation~\eqref{eq:charcurve} costs two \texttt{log}, two \texttt{exp}, and
+approximately ten fused multiply-adds per channel. The naive evaluation
+overflows for large $u/\kappa$; the numerically stable form used in the shader
+is
+
+\begin{equation}
+\softp{a}{u} = \max(u, 0) + a\ln\!\left(1 + e^{-|u|/a}\right),
+\label{eq:softplus-stable}
+\end{equation}
+
+which is exact and never evaluates $e^{t}$ for $t > 0$.
+
+\begin{lstlisting}[language=Metal, caption={Stable characteristic curve evaluation.}, label={lst:charcurve}]
+inline float softplus_stable(float u, float a) {
+    // sp_a(u) = max(u,0) + a*log1p(exp(-|u|/a))
+    return max(u, 0.0f) + a * log1p(exp(-abs(u) / a));
+}
+
+inline float3 characteristic_curve(float3 logE, constant StockParams &p) {
+    float3 u = p.gamma * (logE - p.x0);
+    float3 sp_t, sp_s;
+    for (uint c = 0; c < 3; ++c) {
+        sp_t[c] = softplus_stable(u[c],              p.kappa_t[c]);
+        sp_s[c] = softplus_stable(u[c] - p.dD[c],    p.kappa_s[c]);
+    }
+    return p.dMin + sp_t - sp_s;
+}
+
+inline float3 point_gamma(float3 logE, constant StockParams &p) {
+    float3 u = p.gamma * (logE - p.x0);
+    float3 a = 1.0f / (1.0f + exp(-u / p.kappa_t));
+    float3 b = 1.0f / (1.0f + exp(-(u - p.dD) / p.kappa_s));
+    return p.gamma * (a - b);
+}
+\end{lstlisting}
+
+Note that \texttt{log1p} is required rather than \texttt{log(1+x)}: for large
+$|u|/a$ the argument $e^{-|u|/a}$ underflows toward zero and $\log(1+x)$ loses
+all significant digits, producing a stair-stepped toe that is plainly visible in
+deep shadow. This is the kind of defect that survives casual review and is
+caught only by the ramp test in NFR-06.

@@ -1,0 +1,363 @@
+\section{Complete Database Schema}
+\label{app:ddl}
+
+This appendix gives the version-1 DDL in full. Listings~\ref{lst:ddl-asset}
+through \ref{lst:ddl-rend} in Section~\ref{sec:schema} reproduce the four
+central tables with their design rationale; they are repeated here only where
+necessary for the schema to be complete and executable as written. The text
+below is the literal content of \texttt{ddlV1} referenced by the migration
+registration in Section~\ref{sec:schema}.
+
+\subsection{Connection Configuration}
+
+\begin{lstlisting}[language=SQL, caption={Pragmas applied on every connection.}, label={lst:ddl-pragma}]
+PRAGMA journal_mode  = WAL;         -- concurrent reads during autosave
+PRAGMA synchronous   = NORMAL;      -- WAL makes FULL unnecessary
+PRAGMA foreign_keys  = ON;          -- off by default in SQLite; must be set
+PRAGMA cache_size    = -20000;      -- 20 MB, negative unit is kibibytes
+PRAGMA busy_timeout  = 5000;
+PRAGMA temp_store    = MEMORY;
+PRAGMA mmap_size     = 268435456;   -- 256 MB
+PRAGMA auto_vacuum   = INCREMENTAL; -- rendition churn would otherwise bloat
+\end{lstlisting}
+
+\texttt{foreign\_keys} deserves emphasis: SQLite disables foreign key
+enforcement by default, per connection, and a schema full of \texttt{REFERENCES}
+clauses that are never enforced is a schema that lies. GRDB applies this in the
+connection preparation block so that no code path can open an unconfigured
+connection.
+
+\subsection{Metadata and Settings}
+
+\begin{lstlisting}[language=SQL, caption={Schema metadata and key/value settings.}, label={lst:ddl-meta}]
+-- Written by the migrator; read by diagnostics and by the crash reporter so
+-- that a bug report identifies the exact schema and recipe versions.
+CREATE TABLE schema_meta (
+    key             TEXT PRIMARY KEY,
+    value           TEXT NOT NULL
+) STRICT;
+
+INSERT INTO schema_meta(key, value) VALUES
+    ('schema_version', '1'),
+    ('recipe_version', '4'),
+    ('created_by',     '1.0.0');
+
+-- Application settings that are not user documents. Deliberately not in
+-- UserDefaults: these participate in the same backup and migration story
+-- as the library, and a setting that survives a restore while its library
+-- does not is a support incident.
+CREATE TABLE setting (
+    key             TEXT PRIMARY KEY,
+    value           TEXT NOT NULL,
+    updated_at      REAL NOT NULL
+) STRICT;
+
+-- Per-device calibration constant g_cal relating the decoded middle-gray
+-- value to the working-space unit. Device-specific, so it is keyed by
+-- model identifier and never synchronized between devices.
+CREATE TABLE device_calibration (
+    model_id        TEXT NOT NULL,        -- e.g. "iPhone17,2"
+    lens_id         TEXT NOT NULL,        -- wide | ultrawide | tele
+    g_cal           REAL NOT NULL,
+    method          TEXT NOT NULL,        -- 'shipped' | 'measured'
+    measured_at     REAL,
+    PRIMARY KEY (model_id, lens_id)
+) STRICT;
+\end{lstlisting}
+
+\subsection{Library Tables}
+
+\begin{lstlisting}[language=SQL, caption={Roll, asset, and tagging.}, label={lst:ddl-library}]
+CREATE TABLE roll (
+    id                TEXT PRIMARY KEY,
+    name              TEXT NOT NULL,
+    created_at        REAL NOT NULL,
+    default_recipe_id TEXT REFERENCES recipe(id) ON DELETE SET NULL,
+    notes             TEXT
+) STRICT;
+
+CREATE TABLE asset (
+    id              TEXT PRIMARY KEY,
+    roll_id         TEXT REFERENCES roll(id) ON DELETE SET NULL,
+    file_relpath    TEXT,
+    ph_local_id     TEXT,
+    content_hash    TEXT NOT NULL,
+    original_uti    TEXT NOT NULL,
+    pixel_width     INTEGER NOT NULL,
+    pixel_height    INTEGER NOT NULL,
+    captured_at     REAL,
+    imported_at     REAL NOT NULL,
+    camera_model    TEXT,
+    lens_model      TEXT,
+    iso             INTEGER,
+    exposure_time   REAL,
+    f_number        REAL,
+    focal_length    REAL,
+    gps_lat         REAL,
+    gps_lon         REAL,
+    is_favorite     INTEGER NOT NULL DEFAULT 0,
+    deleted_at      REAL,
+    CHECK ((file_relpath IS NULL) <> (ph_local_id IS NULL))
+) STRICT;
+
+CREATE INDEX idx_asset_roll        ON asset(roll_id, captured_at DESC);
+CREATE INDEX idx_asset_captured    ON asset(captured_at DESC)
+                                   WHERE deleted_at IS NULL;
+CREATE UNIQUE INDEX idx_asset_hash ON asset(content_hash)
+                                   WHERE deleted_at IS NULL;
+CREATE INDEX idx_asset_deleted     ON asset(deleted_at)
+                                   WHERE deleted_at IS NOT NULL;
+
+CREATE TABLE tag (
+    id              TEXT PRIMARY KEY,
+    name            TEXT NOT NULL,
+    kind            TEXT NOT NULL DEFAULT 'user',
+    CHECK (kind IN ('user','system')),
+    UNIQUE (name, kind)
+) STRICT;
+
+CREATE TABLE asset_tag (
+    asset_id        TEXT NOT NULL REFERENCES asset(id)  ON DELETE CASCADE,
+    tag_id          TEXT NOT NULL REFERENCES tag(id)    ON DELETE CASCADE,
+    PRIMARY KEY (asset_id, tag_id)
+) STRICT, WITHOUT ROWID;
+
+CREATE INDEX idx_asset_tag_tag ON asset_tag(tag_id, asset_id);
+\end{lstlisting}
+
+\subsection{Edit State}
+
+\begin{lstlisting}[language=SQL, caption={Edit, history, and profile binding.}, label={lst:ddl-editfull}]
+CREATE TABLE edit (
+    asset_id         TEXT PRIMARY KEY REFERENCES asset(id) ON DELETE CASCADE,
+    recipe_json      TEXT NOT NULL,
+    recipe_version   INTEGER NOT NULL,
+    recipe_hash      TEXT NOT NULL,
+    source_recipe_id TEXT REFERENCES recipe(id) ON DELETE SET NULL,
+    updated_at       REAL NOT NULL
+) STRICT;
+
+CREATE INDEX idx_edit_hash   ON edit(recipe_hash);
+CREATE INDEX idx_edit_source ON edit(source_recipe_id)
+                             WHERE source_recipe_id IS NOT NULL;
+
+CREATE TABLE edit_history (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    asset_id        TEXT NOT NULL REFERENCES asset(id) ON DELETE CASCADE,
+    seq             INTEGER NOT NULL,
+    recipe_json     TEXT NOT NULL,
+    changed_key     TEXT,
+    created_at      REAL NOT NULL
+) STRICT;
+
+CREATE UNIQUE INDEX idx_hist_asset_seq ON edit_history(asset_id, seq);
+
+-- The (edit, profile version) binding. An edit references
+-- every profile it was authored against, so a corrected profile can be
+-- offered as an explicit opt-in rather than silently changing the image.
+CREATE TABLE edit_profile_binding (
+    asset_id        TEXT NOT NULL REFERENCES asset(id) ON DELETE CASCADE,
+    profile_id      TEXT NOT NULL,
+    profile_version INTEGER NOT NULL,
+    role            TEXT NOT NULL,     -- 'negative'|'print'|'chemistry'
+    PRIMARY KEY (asset_id, role),
+    CHECK (role IN ('negative','print','chemistry')),
+    FOREIGN KEY (profile_id, profile_version)
+        REFERENCES stock_profile(id, profile_version) ON DELETE RESTRICT
+) STRICT, WITHOUT ROWID;
+\end{lstlisting}
+
+The \texttt{ON DELETE RESTRICT} on the profile binding is deliberate and is the
+enforcement point for the non-destructive promise of FR-12: a superseded
+profile version cannot be deleted while any edit still references it, so
+"clean up old profiles" cannot become "silently change the user's photographs."
+
+\subsection{Recipes and Profiles}
+
+\begin{lstlisting}[language=SQL, caption={Recipe and versioned stock profile.}, label={lst:ddl-recipefull}]
+CREATE TABLE recipe (
+    id              TEXT PRIMARY KEY,
+    name            TEXT NOT NULL,
+    recipe_json     TEXT NOT NULL,
+    recipe_version  INTEGER NOT NULL,
+    is_builtin      INTEGER NOT NULL DEFAULT 0,
+    swatch_blob     BLOB,
+    use_count       INTEGER NOT NULL DEFAULT 0,
+    last_used_at    REAL,
+    created_at      REAL NOT NULL,
+    sort_order      INTEGER NOT NULL DEFAULT 0
+) STRICT;
+
+CREATE INDEX idx_recipe_used ON recipe(last_used_at DESC);
+
+-- Primary key is (id, profile_version): superseded versions are retained,
+-- not overwritten. Bundled profiles are re-inserted on launch only when the
+-- (id, version) pair is absent.
+CREATE TABLE stock_profile (
+    id              TEXT NOT NULL,
+    profile_version INTEGER NOT NULL,
+    kind            TEXT NOT NULL,
+    display_name    TEXT NOT NULL,
+    params_json     TEXT NOT NULL,
+    fit_status      TEXT NOT NULL DEFAULT 'E',
+    is_builtin      INTEGER NOT NULL DEFAULT 1,
+    superseded_by   INTEGER,
+    installed_at    REAL NOT NULL,
+    PRIMARY KEY (id, profile_version),
+    CHECK (kind IN ('negative','print','mono','chemistry')),
+    CHECK (fit_status IN ('M','P','E'))
+) STRICT, WITHOUT ROWID;
+
+CREATE INDEX idx_profile_current ON stock_profile(kind, id)
+                                 WHERE superseded_by IS NULL;
+\end{lstlisting}
+
+\subsection{Rendition Cache and Export}
+
+\begin{lstlisting}[language=SQL, caption={Rendition cache and export jobs.}, label={lst:ddl-rendfull}]
+CREATE TABLE rendition (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    asset_id        TEXT NOT NULL REFERENCES asset(id) ON DELETE CASCADE,
+    cache_key       TEXT NOT NULL,
+    size_class      TEXT NOT NULL,
+    pixel_width     INTEGER NOT NULL,
+    pixel_height    INTEGER NOT NULL,
+    color_space     TEXT NOT NULL,
+    file_relpath    TEXT NOT NULL,
+    byte_size       INTEGER NOT NULL,
+    created_at      REAL NOT NULL,
+    last_access_at  REAL NOT NULL,
+    CHECK (size_class IN ('thumb','grid','screen','full'))
+) STRICT;
+
+CREATE UNIQUE INDEX idx_rend_key ON rendition(cache_key);
+CREATE INDEX idx_rend_lru        ON rendition(last_access_at);
+CREATE INDEX idx_rend_asset      ON rendition(asset_id, size_class);
+
+CREATE TABLE export_job (
+    id              TEXT PRIMARY KEY,
+    asset_id        TEXT NOT NULL REFERENCES asset(id) ON DELETE CASCADE,
+    state           TEXT NOT NULL,
+    long_edge       INTEGER,              -- NULL means native resolution
+    format          TEXT NOT NULL,        -- 'heif'|'jpeg'|'tiff16'|'png'
+    color_space     TEXT NOT NULL,        -- 'displayP3'|'srgb'|'rec2020pq'
+    quality         REAL,
+    include_sidecar INTEGER NOT NULL DEFAULT 0,
+    destination     TEXT NOT NULL,        -- 'photos'|'files'|'share'
+    error_domain    TEXT,
+    error_code      INTEGER,
+    enqueued_at     REAL NOT NULL,
+    started_at      REAL,
+    finished_at     REAL,
+    CHECK (state IN ('queued','running','done','failed','cancelled')),
+    CHECK (format  IN ('heif','jpeg','tiff16','png'))
+) STRICT;
+
+CREATE INDEX idx_export_queue ON export_job(state, enqueued_at)
+                              WHERE state IN ('queued','running');
+\end{lstlisting}
+
+\subsection{Search}
+
+Library search is full-text over the fields a photographer actually recalls:
+roll name, note, tag, camera, and lens. It is an external-content FTS5 table so
+the text is not duplicated, kept current by triggers rather than by application
+code --- a search index maintained in application code is an index that goes
+stale the first time a write path is added without remembering it.
+
+\begin{lstlisting}[language=SQL, caption={FTS5 index and synchronization triggers.}, label={lst:ddl-fts}]
+CREATE VIRTUAL TABLE asset_fts USING fts5(
+    haystack,
+    content = '',                 -- contentless; we store only the index
+    tokenize = 'unicode61 remove_diacritics 2'
+);
+
+-- Rowid of asset_fts is the asset's integer surrogate, materialized here
+-- because FTS5 requires an integer key and asset.id is a UUID string.
+CREATE TABLE asset_fts_map (
+    rowid           INTEGER PRIMARY KEY AUTOINCREMENT,
+    asset_id        TEXT NOT NULL UNIQUE REFERENCES asset(id) ON DELETE CASCADE
+) STRICT;
+
+CREATE TRIGGER trg_asset_fts_ins AFTER INSERT ON asset BEGIN
+    INSERT INTO asset_fts_map(asset_id) VALUES (new.id);
+    INSERT INTO asset_fts(rowid, haystack)
+    SELECT m.rowid,
+           COALESCE(new.camera_model,'') || ' ' ||
+           COALESCE(new.lens_model,'')   || ' ' ||
+           COALESCE((SELECT name  FROM roll WHERE id = new.roll_id), '') || ' ' ||
+           COALESCE((SELECT notes FROM roll WHERE id = new.roll_id), '')
+    FROM asset_fts_map m WHERE m.asset_id = new.id;
+END;
+
+CREATE TRIGGER trg_asset_fts_del AFTER DELETE ON asset BEGIN
+    INSERT INTO asset_fts(asset_fts, rowid, haystack)
+    SELECT 'delete', m.rowid, '' FROM asset_fts_map m WHERE m.asset_id = old.id;
+    DELETE FROM asset_fts_map WHERE asset_id = old.id;
+END;
+\end{lstlisting}
+
+\subsection{Views}
+
+Two views exist because the same three-way join appears in the library grid,
+the filmstrip, and the export queue, and because a view is the cheapest place
+to enforce that soft-deleted assets never appear in a list by accident.
+
+\begin{lstlisting}[language=SQL, caption={Library views.}, label={lst:ddl-views}]
+CREATE VIEW v_library AS
+SELECT a.id, a.roll_id, r.name AS roll_name, a.captured_at, a.is_favorite,
+       a.pixel_width, a.pixel_height, a.camera_model, a.lens_model,
+       e.recipe_hash, e.recipe_version,
+       (SELECT file_relpath FROM rendition
+         WHERE asset_id = a.id AND size_class = 'grid'
+         ORDER BY created_at DESC LIMIT 1) AS grid_relpath
+FROM asset a
+LEFT JOIN roll r ON r.id = a.roll_id
+LEFT JOIN edit e ON e.asset_id = a.id
+WHERE a.deleted_at IS NULL;
+
+-- Cache pressure, read by the eviction task. Evicting thumb and grid last
+-- is the stated policy, expressed where the query can see it rather than
+-- in the application code that calls it.
+CREATE VIEW v_evictable AS
+SELECT rn.id, rn.file_relpath, rn.byte_size, rn.last_access_at,
+       CASE rn.size_class WHEN 'full'   THEN 0
+                          WHEN 'screen' THEN 1
+                          WHEN 'grid'   THEN 2
+                          ELSE 3 END AS evict_rank
+FROM rendition rn
+JOIN asset a ON a.id = rn.asset_id
+ORDER BY evict_rank, rn.last_access_at;
+\end{lstlisting}
+
+\subsection{Integrity Constraints Not Expressible in DDL}
+
+Three invariants are enforced in the repository layer because SQLite cannot
+express them, and each is covered by a test that asserts the violation is
+rejected:
+
+\begin{enumerate}
+\item \texttt{edit.recipe\_hash} must equal the canonical hash of
+\texttt{edit.recipe\_json}. A trigger could recompute it only if SQLite could
+canonicalize JSON, which it cannot; the repository computes it on write and a
+consistency check verifies it during the periodic maintenance task.
+\item \texttt{rendition.cache\_key} must incorporate the profile versions
+bound in \texttt{edit\_profile\_binding}. Omitting them is the obvious
+implementation and the wrong one: a corrected profile then serves stale
+renditions from cache, and the user sees the old rendering until something
+unrelated evicts it. The key is built in one function, and a test asserts that
+bumping a profile version changes it.
+\item \texttt{edit\_history.seq} must be contiguous from zero for each asset.
+The unique index prevents duplicates but not gaps, which arise if a truncation
+is interrupted; the maintenance task renumbers.
+\end{enumerate}
+
+\subsection{Expected Size}
+
+For a library of 5\,000 assets with an average of 40 history entries each, the
+database is approximately 95\,MB, of which 78\,MB is
+\texttt{edit\_history.recipe\_json}. History is therefore the only table with a
+retention policy: entries older than 90 days are pruned to the ten most recent
+per asset by the maintenance task, which reduces the same library to about
+22\,MB. Renditions are not counted here; they are files on disk, tracked by
+\texttt{rendition.byte\_size} and capped at 3.5\,GB per Section~\ref{sec:schema}.

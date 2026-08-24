@@ -1,0 +1,196 @@
+\section{Chemical Development Modelling}
+\label{sec:development}
+
+\subsection{What Development Actually Changes}
+
+Development converts the latent image into density. Varying the development
+process does not translate the characteristic curve; it \emph{reshapes} it, and
+the reshaping is highly structured:
+
+\begin{itemize}
+\item \textbf{Gamma rises with development, then saturates.} More development
+time develops more of the exposed crystals, steepening the curve --- but only
+until essentially all exposed crystals are developed, after which further time
+produces only fog. The classical gamma-versus-time family
+\cite{james1977,kodakh740} is asymptotic to a
+value $\gamma_\infty$ characteristic of the emulsion and developer.
+\item \textbf{Fog rises without bound.} Unexposed crystals develop
+spontaneously at a slow rate, raising $\Dmin$ indefinitely. This is why heavy
+pushing produces flat, milky shadows: the shadow density is fog, and fog
+carries no image.
+\item \textbf{Speed gain is much smaller than the exposure deficit.} A
+two-stop push does not recover two stops. It recovers, typically, one third to
+one half of a stop of true speed, because the toe crystals that received too
+few photons never formed a developable latent image and no amount of
+development creates one. The rest of the apparent gain is contrast increase.
+\end{itemize}
+
+The last point is the one that consumer applications universally miss, and it
+is the reason \EM{}'s push processing looks correct: pushed images have
+\emph{empty, contrasty shadows}, not brighter shadows.
+
+\subsection{Development Activity}
+
+All process variables --- time, temperature, agitation, developer strength ---
+are collapsed into a single scalar \emph{development activity} $A$, normalized
+so that $A = 1$ is the manufacturer's normal process. Time and temperature
+combine through an Arrhenius relation on the reaction rate:
+
+\begin{equation}
+A \;=\; \frac{t}{t_0}\,\exp\!\left[\frac{E_a}{R}\left(\frac{1}{T_0} - \frac{1}{T}\right)\right]\, \eta(a_g)\, \frac{[\mathrm{dev}]}{[\mathrm{dev}]_0},
+\label{eq:activity}
+\end{equation}
+
+where $t$ is development time, $T$ is absolute temperature in kelvin, $E_a$ is
+the apparent activation energy of the development reaction, $R$ is the gas
+constant, $\eta(a_g)$ is an agitation efficiency factor, and the final factor
+is relative developer concentration. For standard color negative chemistry
+$E_a/R \approx 8.4 \times 10^3$\,K, which yields the familiar rule of thumb that
+a $\pm 0.5$\textdegree C error at 38\textdegree C is roughly a $\pm 4.5\%$ change
+in effective time. Reproducing that sensitivity is what makes the temperature
+control feel like a real process control rather than a slider.
+
+Agitation efficiency uses a saturating form,
+
+\begin{equation}
+\eta(a_g) = \eta_\infty - (\eta_\infty - \eta_0)\,e^{-a_g/a_c},
+\end{equation}
+
+normalized so that $\eta(1) = 1$ at the recommended agitation scheme. Reduced
+agitation ($a_g < 1$) both lowers activity and, importantly, \emph{increases}
+the interlayer adjacency effect of Section~\ref{sec:interlayer}, because
+exhausted developer and released inhibitor are not swept away from the emulsion
+surface. This coupling is modelled explicitly and is the mechanism behind
+stand-development's characteristic edge effects.
+
+\subsection{Parameter Modulation}
+
+Given $A$ and a push/pull setting of $n$ stops (positive is push), the stock's
+nominal parameters $\theta^{(0)}$ are modulated as follows. Push and pull are
+expressed through $A$ --- a push of $n$ stops corresponds to
+$A = A_0 \cdot \rho^{\,n}$ with $\rho \approx 1.35$ per stop for color negative
+chemistry --- so there is a single mechanism, not two.
+
+\paragraph{Gamma} follows the saturating development curve:
+
+\begin{equation}
+\gamma(A) \;=\; \gamma_\infty\left(1 - e^{-A/A_\gamma}\right),
+\label{eq:gammatime}
+\end{equation}
+
+with $A_\gamma$ chosen per stock so that $\gamma(1) = \gamma^{(0)}$, i.e.
+
+\begin{equation}
+A_\gamma = \left[\ln\!\left(\frac{\gamma_\infty}{\gamma_\infty - \gamma^{(0)}}\right)\right]^{-1}.
+\end{equation}
+
+Typical values are $\gamma_\infty \approx 1.6\,\gamma^{(0)}$, so that gamma can
+rise substantially but not without limit. This single equation is why extreme
+pushes stop adding contrast --- the correct behavior, obtained for free.
+
+\paragraph{Fog} rises monotonically and without saturation:
+
+\begin{equation}
+\Dmin(A) \;=\; \Dmin^{(0)} + \phi_0\left(A^{\,\beta_f} - 1\right),
+\label{eq:fog}
+\end{equation}
+
+with $\beta_f \approx 2.1$ and $\phi_0 \approx 0.045$ for color negative
+stocks. The per-channel $\phi_0$ is not equal --- the blue-sensitive layer fogs
+fastest --- which produces the characteristic cool-shadow crossover of
+heavily pushed color film.
+
+\paragraph{Speed} shifts by a fraction of the nominal push:
+
+\begin{equation}
+x_0(A) \;=\; x_0^{(0)} \;-\; \alpha_s \log_{10} A,
+\label{eq:speedshift}
+\end{equation}
+
+with the \emph{speed recovery coefficient} $\alpha_s \in [0.25, 0.45]$,
+substantially less than the $1.0$ that would represent full speed recovery.
+Table~\ref{tab:pushresp} gives the resulting behavior, which matches published
+push-processing data closely.
+
+\paragraph{Toe softness} increases with development, because heavy development
+extends the toe region as marginally-exposed crystals begin to develop:
+
+\begin{equation}
+\kappa_t(A) = \kappa_t^{(0)}\left(1 + \tau_t \ln A\right), \quad \tau_t \approx 0.30.
+\end{equation}
+
+\paragraph{Density range} rises modestly, since the shoulder is set primarily
+by silver and coupler availability rather than by development:
+
+\begin{equation}
+\Delta D(A) = \Delta D^{(0)}\left(1 + \tau_D \ln A\right), \quad \tau_D \approx 0.12.
+\end{equation}
+
+\begin{table}[htbp]
+\caption{Modelled Push/Pull Response, Typical Color Negative}
+\label{tab:pushresp}
+\begin{center}
+\renewcommand{\arraystretch}{1.15}
+\begin{tabular}{@{}lccccc@{}}
+\toprule
+\textbf{Setting} & $A$ & $\gamma$ & $\Delta\Dmin$ & \textbf{True} & \textbf{CI} \\
+ & & & & \textbf{speed} & \\
+\midrule
+Pull 2  & $0.55$ & $0.44$ & $-0.02$ & $-0.24$\,EV & $0.41$ \\
+Pull 1  & $0.74$ & $0.53$ & $-0.01$ & $-0.13$\,EV & $0.49$ \\
+Normal  & $1.00$ & $0.61$ & $\phantom{-}0.00$ & $\phantom{-}0.00$\,EV & $0.58$ \\
+Push 1  & $1.35$ & $0.69$ & $+0.05$ & $+0.15$\,EV & $0.66$ \\
+Push 2  & $1.82$ & $0.77$ & $+0.13$ & $+0.29$\,EV & $0.73$ \\
+Push 3  & $2.46$ & $0.83$ & $+0.28$ & $+0.42$\,EV & $0.79$ \\
+\bottomrule
+\multicolumn{6}{@{}p{0.95\columnwidth}@{}}{\footnotesize A three-stop push yields $0.42$\,EV of genuine speed. The remaining apparent gain is contrast, and the cost is $+0.28$ of fog in the shadows.}
+\end{tabular}
+\end{center}
+\end{table}
+
+\subsection{Cross-Processing}
+
+Cross-processing --- developing color negative film in reversal chemistry
+(C-41 in E-6) or the reverse --- is modelled as a substitution of the entire
+modulation parameter set rather than as an extra effect. The mechanism is a
+\emph{chemistry profile} that supplies $(\gamma_\infty, \phi_0, \beta_f,
+\alpha_s, \tau_t, \tau_D)$ and a per-channel activity scaling
+$\mathbf{A}_{\mathrm{chem}}$. Because the layers of a stock designed for one
+chemistry respond with wildly different efficiency to another, the per-channel
+activity scaling is far from unity --- for E-6 chemistry applied to a C-41
+stock, approximately $(1.8, 1.1, 0.6)$ --- which is precisely what produces
+cross-processing's extreme contrast and violent color crossover. Again, the
+effect emerges from the model rather than being authored.
+
+\begin{table}[htbp]
+\caption{Chemistry Profiles}
+\label{tab:chemistry}
+\begin{center}
+\renewcommand{\arraystretch}{1.15}
+\begin{tabular}{@{}lccccc@{}}
+\toprule
+\textbf{Process} & $\gamma_\infty/\gamma^{(0)}$ & $\phi_0$ & $\beta_f$ & $\alpha_s$ & $\rho$ \\
+\midrule
+C-41 (color neg.)   & $1.60$ & $0.045$ & $2.1$ & $0.35$ & $1.35$ \\
+E-6 (reversal)      & $1.35$ & $0.020$ & $1.7$ & $0.28$ & $1.30$ \\
+ECN-2 (motion pic.) & $1.55$ & $0.030$ & $2.0$ & $0.33$ & $1.32$ \\
+B\&W, general       & $2.10$ & $0.035$ & $2.4$ & $0.42$ & $1.45$ \\
+B\&W, compensating  & $1.45$ & $0.025$ & $1.9$ & $0.38$ & $1.25$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+\end{table}
+
+\subsection{Where This Executes}
+
+All of Section~\ref{sec:development} is host-side arithmetic. The development
+model consumes the stock profile and the user's process parameters and produces
+a modified $\theta$, which is uploaded as a small constant buffer. Nothing in
+this section costs a GPU instruction, which is worth stating explicitly:
+substantial perceived sophistication in the product is free at render time
+because it modulates parameters rather than pixels.
+
+This has an important corollary for the UI. Development controls can update at
+unlimited rate without any incremental render cost beyond one re-render, and
+they invalidate the baked pointwise LUT (Section~\ref{sec:lutbake}) but nothing
+spatial. The dependency tracking in Section~\ref{sec:rendergraph} encodes this.

@@ -1,0 +1,340 @@
+\section{Grain Synthesis}
+\label{sec:grain}
+
+\subsection{Grain Is Not Noise, and It Is Not a Texture}
+
+Two failure modes dominate grain in existing products. The first overlays a
+scanned grain plate, which is spatially fixed, resolution-dependent, uncoupled
+to image content, and repeats visibly. The second adds Gaussian noise of
+constant variance, which is uncoupled to density and has a flat spectrum,
+producing something that reads as sensor noise rather than emulsion grain.
+
+Real grain has four properties that must all be reproduced:
+
+\begin{enumerate}
+\item It is \emph{signal-dependent}: variance depends on how much of the image
+was developed at that point, peaking in the mid-scale.
+\item It is \emph{spatially correlated} at a scale set by the emulsion's grain
+size, with a characteristic non-flat Wiener spectrum.
+\item It is \emph{physically sized}: a grain is a few micrometres at the film
+plane, so its appearance at a given viewing size depends on the format and the
+enlargement, not on the pixel count.
+\item It is \emph{chromatically structured}: in color film, the three dye
+clouds form in separate layers and are essentially statistically independent,
+producing colored grain; in monochrome film there is one layer, producing
+neutral grain.
+\end{enumerate}
+
+\EM{} derives all four from a single generative model.
+
+\subsection{The Filtered Poisson Model}
+
+Model developed grains as a spatial Poisson point process. Let $\{\mathbf{p}_i\}$
+be grain centers with intensity $\lambda$ (grains per unit area), and let each
+grain contribute a density profile $a_i\, g(\mathbf{p} - \mathbf{p}_i)$, where
+$g$ is the normalized dye cloud profile and $a_i$ is a random amplitude drawn
+from the grain size distribution. The density field is the shot-noise process
+
+\begin{equation}
+D_g(\mathbf{p}) \;=\; \sum_i a_i\, g\!\left(\mathbf{p} - \mathbf{p}_i\right).
+\label{eq:shotnoise}
+\end{equation}
+
+Campbell's theorem \cite{campbell1909} gives the first two moments and the power
+spectrum in closed form:
+
+\begin{align}
+\mathbb{E}[D_g] &= \lambda\,\mathbb{E}[a] \int g(\mathbf{p})\, d\mathbf{p},
+\label{eq:campbell-mean}\\
+\mathrm{Var}[D_g] &= \lambda\,\mathbb{E}[a^2] \int g^2(\mathbf{p})\, d\mathbf{p},
+\label{eq:campbell-var}\\
+W(\mathbf{f}) &= \lambda\,\mathbb{E}[a^2]\, \left|G(\mathbf{f})\right|^2,
+\label{eq:wiener}
+\end{align}
+
+where $G = \mathcal{F}\{g\}$ and $W$ is the Wiener (noise power) spectrum. This
+is the entire theoretical content of the grain engine, and it is the reason the
+model can be validated against published Wiener spectra (AC-3) rather than
+tuned by eye.
+
+\subsection{Selwyn Granularity Recovered}
+
+Measuring density through a scanning aperture of area $A$ averages the field,
+which for $A$ large compared to the grain gives
+
+\begin{equation}
+\sigma_A^2 = \frac{1}{A}\,\lambda\,\mathbb{E}[a^2] \int g^2\, d\mathbf{p},
+\end{equation}
+
+so $\sigma_A \sqrt{2A}$ is a constant of the emulsion. This is
+\emph{Selwyn's law} \cite{selwyn1935}, and the constant
+
+\begin{equation}
+G_S = \sigma_A\sqrt{2A} = \sqrt{2\lambda\,\mathbb{E}[a^2]\textstyle\int g^2}
+\label{eq:selwyn}
+\end{equation}
+
+is the Selwyn granularity, the quantity manufacturers publish (typically as RMS
+granularity measured through a $48\,\mu$m aperture, scaled by $1000$). Because
+$G_S$ is published for most stocks, \eqref{eq:selwyn} lets us fit
+$\lambda\mathbb{E}[a^2]$ directly from datasheet values rather than guessing.
+
+\subsection{Density Dependence}
+
+A pure Poisson model predicts $\sigma^2 \propto \lambda$, and since mean density
+is also $\propto \lambda$ by Nutting's relation \cite{nutting1913}
+
+\begin{equation}
+D = 0.4343\,\frac{n\,\bar{a}}{A},
+\end{equation}
+
+it predicts $\sigma \propto \sqrt{D}$, monotonically increasing. Real emulsions
+do not behave this way at high density: as development approaches completion the
+available crystals are exhausted, grain overlap saturates, and granularity
+falls again.
+
+The correct model replaces the Poisson count with a \emph{binomial} count: there
+are $N$ crystals available, and each develops with probability $p$ determined by
+exposure. Then $\mathrm{Var}[n] = Np(1-p)$ and
+
+\begin{equation}
+\boxed{\;\sigma_D^2(D) \;=\; \sigma_{\mathrm{ref}}^2 \cdot \frac{p(1-p)}{p_{\mathrm{ref}}(1-p_{\mathrm{ref}})}\;}
+\qquad p = \frac{D - \Dmin}{\Delta D}
+\label{eq:grainvar}
+\end{equation}
+
+with $p_{\mathrm{ref}} = 0.5$ so the reference is the peak. This recovers the
+observed inverted-U granularity--density relationship with no free parameters
+beyond the peak magnitude.
+
+A shape exponent pair $(\nu_1, \nu_2)$ generalizes \eqref{eq:grainvar} to
+$\sigma_D^2 \propto p^{\nu_1}(1-p)^{\nu_2}$ for stocks whose measured curve is
+asymmetric; monochrome stocks typically fit $(\nu_1, \nu_2) = (1.0, 0.45)$,
+which rises to a peak at $p \approx 0.69$ and falls only modestly thereafter,
+matching black-and-white behavior.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}
+\begin{axis}[
+  width=\columnwidth, height=4.2cm,
+  xlabel={fractional density $p = (D-\Dmin)/\Delta D$},
+  ylabel={$\sigma_D$ (normalized)},
+  xmin=0, xmax=1, ymin=0, ymax=1.15,
+  grid=both, grid style={draw=emLine!20},
+  legend style={font=\scriptsize, at={(0.5,0.05)}, anchor=south, draw=emLine!40, legend columns=2},
+  label style={font=\scriptsize}, tick label style={font=\scriptsize},
+  samples=200,
+]
+\addplot[emAcc, very thick, domain=0.001:0.999] {sqrt(4*x*(1-x))};
+\addlegendentry{color, $(1,1)$}
+\addplot[emBlue, very thick, domain=0.001:0.999] {(x^1.0 * (1-x)^0.45)/ (0.69^1.0 * 0.31^0.45)};
+\addlegendentry{mono, $(1,0.45)$}
+\end{axis}
+\end{tikzpicture}
+\caption{Granularity versus density from \eqref{eq:grainvar}. Grain vanishes in clear film and in fully developed maximum density, and peaks in the mid-scale --- which is why grain is most visible in skies and skin, not in shadows.}
+\label{fig:grainvar}
+\end{figure}
+
+\subsection{The Grain Kernel and Clustering}
+
+The dye cloud profile $g$ is modelled as a mixture of two Gaussians, capturing
+both the individual grain and the tendency of grains to cluster:
+
+\begin{equation}
+g(\mathbf{p}) = (1-\chi)\, \mathcal{N}(\mathbf{p};\, \sigma_1) + \chi\, \mathcal{N}(\mathbf{p};\, \sigma_2),
+\qquad \sigma_2 = \zeta \sigma_1,
+\label{eq:grainkernel}
+\end{equation}
+
+with $\chi \in [0, 0.4]$ the clustering fraction and $\zeta \approx 3$. Since the
+Fourier transform of a Gaussian is a Gaussian, the Wiener spectrum follows in
+closed form from \eqref{eq:wiener}:
+
+\begin{equation}
+W(f) = \lambda \mathbb{E}[a^2]\left[(1-\chi)e^{-2\pi^2\sigma_1^2 f^2} + \chi e^{-2\pi^2\sigma_2^2 f^2}\right]^2 .
+\label{eq:wienerclosed}
+\end{equation}
+
+Equation \eqref{eq:wienerclosed} is what AC-3 compares against measured
+data. Fitting a stock is therefore a two-parameter least-squares problem in
+$(\sigma_1, \chi)$ against its published Wiener spectrum, with $\lambda
+\mathbb{E}[a^2]$ pinned by the published RMS granularity through
+\eqref{eq:selwyn}. This is a genuine fit to measurement, satisfying the
+"defaults are measurements" principle of Section~\ref{sec:intro-thesis}.
+
+\subsection{Format Scaling}
+\label{sec:formatscale}
+
+All grain geometry is specified in micrometres at the film plane. The
+conversion to render pixels is
+
+\begin{equation}
+\sigma^{\mathrm{px}} = \sigma^{\mu\mathrm{m}} \cdot \frac{W_{\mathrm{px}}}{1000\, W_{\mathrm{mm}}},
+\label{eq:formatscale}
+\end{equation}
+
+where $W_{\mathrm{px}}$ is the render width in pixels and $W_{\mathrm{mm}}$ the
+simulated frame width in millimetres. A \emph{format} selector supplies
+$W_{\mathrm{mm}}$: $36$\,mm for 135, $56$\,mm for 645/6$\times$6, $102$\,mm for
+4$\times$5, $24.9$\,mm for Super\,35, $12.5$\,mm for Super\,16, $10.3$\,mm for
+8\,mm. Selecting Super\,16 makes the grain of the same emulsion roughly three
+times larger relative to the frame, which is exactly the real relationship and
+requires no separate "grain size" authoring per format.
+
+The same equation governs $\sigma_1, \sigma_2$ of the interlayer model
+\eqref{eq:twoscale} and the halation scattering length \eqref{eq:halpsf}, so
+format selection coherently rescales every spatial phenomenon at once. This is
+a significant structural advantage of specifying everything in physical units.
+
+\subsection{Resolution Independence and Determinism}
+
+NFR-08 requires that identical parameters produce identical output, and the
+preview/export equivalence of NFR-07 requires that the grain \emph{structure} be
+the same field sampled at two resolutions, not two different random fields.
+
+Both are achieved by defining the noise on a lattice in \emph{film-plane
+coordinates} rather than pixel coordinates, the same device that makes
+stochastic grain models resolution-independent \cite{newson2017}. For a render pixel at position
+$\mathbf{q}$ pixels, the film coordinate is $\mathbf{m} = \mathbf{q} \cdot
+1000\,W_{\mathrm{mm}} / W_{\mathrm{px}}$ in micrometres. The white noise field is
+evaluated by hashing the integer lattice cell of $\mathbf{m}$ at the grain
+lattice pitch, so:
+
+\begin{itemize}
+\item The same film position yields the same random value at every render
+resolution.
+\item Preview at $1/4$ resolution samples the same field more coarsely, which
+--- through \eqref{eq:formatscale} --- correctly reduces the per-pixel variance
+according to Selwyn's law. The preview grain therefore looks like the export
+grain viewed at preview size, which is what WYSIWYG actually means here.
+\item Changing the frame seed changes the hash salt, producing an independent
+realization, so "re-roll grain" is a one-integer operation.
+\end{itemize}
+
+\subsection{Chromatic Structure}
+
+In color film the three dye clouds form in physically separate layers from
+independent crystal populations, so the three noise fields are close to
+statistically independent, producing visibly colored grain. In monochrome film
+there is a single silver image, so the three output channels receive the
+identical field, producing neutral grain.
+
+\EM{} interpolates between these through a correlation matrix
+$\mathbf{R}$ with unit diagonal and off-diagonal $\varphi$:
+
+\begin{equation}
+\mathbf{n} = \mathbf{L}\, \mathbf{z}, \qquad \mathbf{L}\mathbf{L}^\top = \mathbf{R},
+\label{eq:graincorr}
+\end{equation}
+
+where $\mathbf{z}$ is a vector of three independent standard normal fields and
+$\mathbf{L}$ is the Cholesky factor, computed once on the host. Setting
+$\varphi = 0$ gives fully chromatic grain, $\varphi = 1$ gives neutral grain,
+and the shipping defaults are $\varphi \approx 0.15$ for color negative,
+$\varphi \approx 0.35$ for transparency (whose layers are more closely coupled),
+and $\varphi = 1$ for monochrome.
+
+Because $\mathbf{R}$ is a $3\times3$ correlation matrix, its Cholesky factor is
+lower triangular with six nonzero entries, so \eqref{eq:graincorr} costs six
+multiply-adds.
+
+\subsection{Application to Density}
+
+The grain field is added in the density domain, scaled by the density-dependent
+standard deviation:
+
+\begin{equation}
+\boxed{\;\hat{D}_c(\mathbf{p}) \;=\; D_c(\mathbf{p}) \;+\; g \cdot \sigma_{D,c}\!\left(D_c(\mathbf{p})\right) \cdot n_c(\mathbf{p})\;}
+\label{eq:grainapply}
+\end{equation}
+
+with $g$ the user's grain amount ($0$ to $2$, default $1$; $1$ means "the
+physically correct amount for this stock"). Setting $g = 0$ produces a
+grainless render, which is not physical but is a legitimate user choice; the UI
+labels the $g = 1$ position on the slider explicitly.
+
+Note that grain is added to the \emph{negative} density, which is then printed
+through \eqref{eq:printcurve}. The print stock's gamma of $2.8$ therefore
+amplifies negative grain by that factor in the print, and the print's toe and
+shoulder \emph{suppress} grain in print highlights and print blacks. Both are
+correct, both are free, and neither is achievable by adding grain to the final
+image.
+
+\subsection{Generation Algorithm}
+
+Two synthesis modes are required, selected by the expected number of grains per
+render pixel $\Lambda = \lambda\,\Delta A_{\mathrm{px}}$:
+
+\begin{itemize}
+\item \textbf{Gaussian mode} ($\Lambda \geq 10$). The central limit theorem
+applies; generate a white Gaussian field and convolve with $g$. This is the
+common case at full resolution.
+\item \textbf{Poisson mode} ($\Lambda < 10$). The Gaussian approximation fails
+and produces grain that is too smooth and insufficiently "clumpy"; individual
+grains must be realized. This occurs for large formats rendered small, and for
+heavily enlarged small formats. The shader draws $n \sim \mathrm{Poisson}(\Lambda)$
+per lattice cell using Knuth's method \cite{knuth1997} (acceptable since
+$\Lambda$ is small) and splats.
+\end{itemize}
+
+\begin{lstlisting}[language=Metal, caption={Deterministic hash and grain field generation (Gaussian mode).}, label={lst:grain}]
+// PCG-style integer hash: deterministic, well-distributed, cheap.
+inline uint pcg_hash(uint v) {
+    uint state = v * 747796405u + 2891336453u;
+    uint word  = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
+    return (word >> 22u) ^ word;
+}
+inline float hash01(uint3 c, uint salt) {
+    uint h = pcg_hash(c.x ^ pcg_hash(c.y ^ pcg_hash(c.z ^ salt)));
+    return float(h) * 2.3283064365386963e-10f;   // 1/2^32
+}
+// Box-Muller from two hashed uniforms; returns standard normal.
+inline float gauss(uint3 c, uint salt) {
+    float u1 = max(hash01(c, salt),        1e-7f);
+    float u2 =     hash01(c, salt ^ 0x9E3779B9u);
+    return sqrt(-2.0f * log(u1)) * cos(6.2831853f * u2);
+}
+
+kernel void grain_white_field(
+    texture2d<float, access::write> outTex [[texture(0)]],
+    constant GrainParams&           P      [[buffer(0)]],
+    uint2 gid [[thread_position_in_grid]])
+{
+    if (gid.x >= outTex.get_width() || gid.y >= outTex.get_height()) return;
+
+    // Map pixel -> film-plane micrometres -> grain lattice cell.
+    // P.umPerPixel = 1000 * frameWidthMM / renderWidthPX
+    float2 um   = float2(gid) * P.umPerPixel;
+    int2   cell = int2(floor(um / P.latticePitchUM));
+
+    float3 z;
+    for (uint c = 0; c < 3; ++c)
+        z[c] = gauss(uint3(uint2(cell), c), P.seed);
+
+    // Correlate the three records via the Cholesky factor of R.
+    float3 n;
+    n.x = P.L00 * z.x;
+    n.y = P.L10 * z.x + P.L11 * z.y;
+    n.z = P.L20 * z.x + P.L21 * z.y + P.L22 * z.z;
+
+    outTex.write(float4(n, 1.0f), gid);
+}
+\end{lstlisting}
+
+The white field is then convolved with the two-Gaussian kernel of
+\eqref{eq:grainkernel} using the separable recursive filter of
+Section~\ref{sec:recursive-blur}, and combined with the density image by
+\eqref{eq:grainapply}. Total cost is two separable blur passes plus two
+pointwise passes over a single-precision RGBA texture.
+
+\subsection{A Note on Downsampling}
+
+If a full-resolution render is exported and then downsampled by an external
+tool, the grain will be averaged and its variance reduced by the sampling
+area --- correctly, per Selwyn. If instead the user exports at a reduced
+resolution, \EM{} renders at that resolution and \eqref{eq:formatscale} gives
+smaller pixel-space grain, again correctly. The two paths agree to within
+the difference between the resampling filter and the grain kernel, which is
+below visual threshold. This consistency is verified by test V-11 in
+Section~\ref{sec:validation}.

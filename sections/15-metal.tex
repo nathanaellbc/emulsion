@@ -1,0 +1,331 @@
+\section{Metal Rendering Architecture}
+\label{sec:metal}
+
+\subsection{Device Objects and Lifetime}
+
+A single \texttt{MTLDevice}, one \texttt{MTLCommandQueue} for rendering, and a
+second low-priority queue for background work (thumbnails, export) are created
+at application launch and live for the process lifetime. The render queue is
+owned exclusively by the render actor of Section~\ref{sec:arch}; no other
+context may enqueue on it.
+
+All shader functions live in a single default \texttt{MTLLibrary} compiled at
+build time. Pipeline states are compiled lazily, cached by a key comprising the
+function name and the function-constant values, and persisted to disk through
+the Metal binary archive so that second launch avoids recompilation:
+
+\begin{lstlisting}[language=Swift, caption={Pipeline state cache with binary archive.}]
+actor PipelineCache {
+    private var states: [PipelineKey: MTLComputePipelineState] = [:]
+    private let archive: MTLBinaryArchive?
+
+    func state(for key: PipelineKey) throws -> MTLComputePipelineState {
+        if let s = states[key] { return s }
+        let desc = MTLComputePipelineDescriptor()
+        desc.computeFunction = try library.makeFunction(
+            name: key.function, constantValues: key.constants)
+        desc.label = key.debugLabel
+        // Prefer the archived binary; fall back to JIT and record it.
+        if let a = archive { desc.binaryArchives = [a] }
+        let s = try device.makeComputePipelineState(
+            descriptor: desc, options: [], reflection: nil).0
+        states[key] = s
+        return s
+    }
+}
+\end{lstlisting}
+
+Cold-start pipeline compilation for the full graph is approximately 180\,ms on
+an A15, which would violate NFR-04. The binary archive reduces this to under
+20\,ms on subsequent launches, and the first launch compiles only the subset of
+pipelines the capture path needs, deferring the develop-path pipelines to a
+background task started after the camera is live.
+
+\subsection{Precision Policy}
+\label{sec:precision}
+
+Constraint CR-05 forbids \texttt{half} for scene-referred linear data. The full
+policy is:
+
+\begin{table}[htbp]
+\caption{Precision Policy by Pipeline Domain}
+\label{tab:precision}
+\begin{center}
+\renewcommand{\arraystretch}{1.15}
+\begin{tabularx}{\columnwidth}{@{}ll>{\raggedright\arraybackslash}X@{}}
+\toprule
+\textbf{Domain} & \textbf{Format} & \textbf{Rationale} \\
+\midrule
+Scene linear & \texttt{rgba32f} & 18-stop range; \texttt{half} subnormals quantize shadows. \\
+Log exposure & \texttt{rgba32f} & Feeds \texttt{exp}; error amplifies. \\
+Halation source & \texttt{r16f} & Single channel, large values, low precision need. \\
+Halation pyramid & \texttt{rgba16f} & Blurred data; error is spatially smoothed. \\
+Negative density & \texttt{rgba16f} & Range $[0,4]$, needs $10^{-3}$; \texttt{half} gives $5\times10^{-4}$. \\
+Grain field & \texttt{rgba16f} & Zero-mean unit-variance. \\
+Print density & \texttt{rgba16f} & As negative density. \\
+Display linear & \texttt{rgba16f} & Pre-encode. \\
+Preview output & \texttt{bgra8unorm\_srgb} & Direct to drawable. \\
+Export output & \texttt{rgba16unorm} & 16-bit TIFF/PNG path. \\
+\bottomrule
+\end{tabularx}
+\end{center}
+\end{table}
+
+Arithmetic within kernels is performed in \texttt{float} regardless of storage
+format \cite{metalspec}. The \texttt{half} storage saves bandwidth, which is the
+binding constraint on a mobile GPU \cite{metalbest}; it does not save ALU, and
+using \texttt{half} arithmetic in the density model measurably degrades the toe.
+
+\subsection{Resource Management}
+
+Textures are allocated from a small number of \texttt{MTLHeap} objects with
+manual aliasing. The render graph (Section~\ref{sec:rendergraph}) computes the
+lifetime interval of every intermediate texture, then performs a linear-scan
+allocation so that textures with disjoint lifetimes share memory.
+
+For the full pipeline at 48\,MP, the naive allocation is 14 intermediates of
+$4032 \times 3024 \times 8$ bytes $= 97.5$\,MB each, totalling 1.37\,GB and
+violating NFR-03. Lifetime aliasing reduces the live set to four full-resolution
+intermediates plus the pyramid, totalling 442\,MB. The remaining headroom
+absorbs the source RAW and the export buffer.
+
+\begin{lstlisting}[language=Swift, caption={Heap-backed transient texture allocation.}]
+final class TransientPool {
+    private let heap: MTLHeap
+    private var live: [ResourceID: MTLTexture] = [:]
+
+    func acquire(_ desc: MTLTextureDescriptor, id: ResourceID) -> MTLTexture {
+        desc.storageMode = .private
+        desc.hazardTrackingMode = .untracked   // graph inserts barriers
+        let tex = heap.makeTexture(descriptor: desc)!
+        live[id] = tex
+        return tex
+    }
+    /// Called when the graph determines the resource's last reader has run.
+    func release(_ id: ResourceID) {
+        live[id]?.makeAliasable()
+        live[id] = nil
+    }
+}
+\end{lstlisting}
+
+Hazard tracking is disabled on heap resources and barriers are inserted
+explicitly by the graph from the dependency edges it already knows. Automatic
+hazard tracking on an aliased heap is conservative to the point of serializing
+the entire graph.
+
+\subsection{Threadgroup Sizing}
+
+All compute kernels are dispatched with \texttt{dispatchThreads} (non-uniform
+threadgroups), which is supported on all target devices and removes the bounds
+check from the common case. Threadgroup size is chosen per pipeline from the
+device's reported \texttt{maxTotalThreadsPerThreadgroup} and
+\texttt{threadExecutionWidth}:
+
+\begin{equation}
+w = \mathtt{threadExecutionWidth},\quad h = \left\lfloor \frac{\mathtt{maxTotal}}{w} \right\rfloor,
+\end{equation}
+
+clamped to $h \leq 8$ for pointwise kernels (which are bandwidth-bound and
+benefit from wide, shallow groups with good cache locality) and $h = w$ for
+separable filters (which benefit from square tiles when using threadgroup
+memory). The values are queried, not hardcoded: on Apple silicon $w = 32$, but
+assuming it is a correctness hazard on any future device.
+
+\subsection{Kernel Fusion and Tile Memory}
+
+Each pass that reads and writes a full-resolution texture costs, at 48\,MP and
+\texttt{rgba16f}, 97.5\,MB read plus 97.5\,MB write. At a realistic 60\,GB/s of
+achievable bandwidth that is 3.25\,ms per pass in memory traffic alone. With
+fourteen passes the pipeline would be bandwidth-bound at 45\,ms before any
+arithmetic --- a factor that dominates every other consideration.
+
+Fusion is therefore the primary optimization, and the graph performs it
+automatically for chains of pointwise passes (Section~\ref{sec:rendergraph}).
+Beyond that, two Metal-specific mechanisms are used:
+
+\paragraph{Imageblock (tile) memory} On Apple GPUs, a render pass can retain
+per-tile data in on-chip imageblock storage across multiple draw or dispatch
+calls without a round trip to device memory. The optical warp, the pointwise
+develop chain, and the output transform are expressed as tile dispatches within
+a single render pass, so the intermediate never leaves tile memory. This
+eliminates six full-resolution round trips.
+
+\paragraph{Memoryless attachments} Any attachment that is written and consumed
+entirely within one render pass is declared \texttt{.memoryless}, so it is never
+backed by device memory at all.
+
+\begin{lstlisting}[language=Metal, caption={Fused pointwise develop chain as a tile dispatch.}]
+struct DevelopTile {
+    half4 color;
+};
+
+[[kernel]] void develop_tile(
+    imageblock<DevelopTile, imageblock_layout_implicit> blk,
+    constant DevelopParams& P    [[buffer(0)]],
+    texture3d<half, access::sample> lut [[texture(0)]],
+    ushort2 lid [[thread_position_in_threadgroup]])
+{
+    threadgroup_imageblock DevelopTile* px = blk.data(lid);
+    float3 e = float3(px->color.rgb);
+
+    e = apply_vignette_and_warp_correction(e, P);   // fused optics
+    float3 x = log10(max(e, P.epsFloor));           // to log exposure
+    float3 D = sample_baked_lut(lut, x, P);         // pointwise chain
+    px->color = half4(half3(D), px->color.a);
+}
+\end{lstlisting}
+
+\subsection{Pointwise Chain Baking}
+\label{sec:lutbake}
+
+The pointwise portion of the pipeline --- layer balance, characteristic curve,
+mask depletion, printing density matrix, print curve, silver retention, neutral
+axis, and output transform --- is a fixed function $\Rspace^3 \to \Rspace^3$ for
+a given parameter set. Evaluating it per pixel costs roughly 140 ALU operations
+including six transcendentals. Baking it into a 3D lookup table reduces that to
+one texture fetch with hardware trilinear filtering, or eight fetches with
+software tetrahedral interpolation.
+
+\paragraph{Shaper} The input domain is log exposure over $[-4, +2]$, which is
+uniform in the perceptually relevant variable, so the shaper is simply the
+affine map
+
+\begin{equation}
+s(x) = \frac{x + 4}{6} \in [0,1].
+\end{equation}
+
+Uniform sampling in $\logE$ is essential; a LUT uniform in linear exposure would
+allocate almost all of its resolution to highlights and band the shadows badly.
+
+\paragraph{Grid size} A $45^3$ grid is used. The error analysis is
+straightforward: the maximum second derivative of the composite transfer occurs
+at the print stock's shoulder, where $|D''| \lesssim 9$ per unit of $\logE$.
+Trilinear interpolation error is bounded by $\tfrac{1}{8}|D''|\Delta^2$ with
+$\Delta = 6/44 = 0.136$, giving $2.1 \times 10^{-2}$ density --- too large.
+Tetrahedral interpolation on the same grid reduces the error by approximately a
+factor of three for this class of function, and the residual $7\times10^{-3}$
+density is below the $10^{-2}$ visibility threshold. A $65^3$ grid would halve
+the error again at $2.7\times$ the memory; $45^3 \times 8$ bytes is 729\,KB,
+which fits comfortably and is rebuilt in under 1\,ms.
+
+\paragraph{Rebuild policy} The LUT is rebuilt on the GPU by a
+$45\times45\times45$ dispatch evaluating the analytic chain --- 91{,}125 threads,
+a trivial dispatch. It is invalidated by any change to a pointwise parameter and
+is not invalidated by changes to grain, halation, interlayer, or optical
+parameters. The dependency tracking that determines this is specified in
+Section~\ref{sec:rendergraph}.
+
+\paragraph{Tetrahedral interpolation} Trilinear interpolation of a 3D LUT is
+not exact on the neutral axis: the eight corners of a cell do not in general
+interpolate to a neutral result, producing faint colored artifacts in gray
+gradients. Tetrahedral interpolation \cite{kang2006} decomposes the cube into
+six tetrahedra
+along the main diagonal, which \emph{is} the neutral axis, so neutrals are
+reproduced exactly.
+
+\begin{lstlisting}[language=Metal, caption={Tetrahedral 3D LUT interpolation.}, label={lst:tetra}]
+inline float3 tetrahedral(texture3d<float, access::read> lut,
+                          float3 uvw, uint N)
+{
+    float3 p = uvw * float(N - 1);
+    uint3  i = uint3(floor(p));
+    i = min(i, uint3(N - 2));
+    float3 f = p - float3(i);
+
+    // Eight cell corners
+    float3 c000 = lut.read(i + uint3(0,0,0)).rgb;
+    float3 c111 = lut.read(i + uint3(1,1,1)).rgb;
+
+    // Select the tetrahedron by ordering of (fx, fy, fz)
+    float3 v1, v2;  float w1, w2, w3;
+    if (f.x > f.y) {
+        if (f.y > f.z)      { v1 = lut.read(i+uint3(1,0,0)).rgb;
+                              v2 = lut.read(i+uint3(1,1,0)).rgb;
+                              w1 = f.x-f.y; w2 = f.y-f.z; w3 = f.z; }
+        else if (f.x > f.z) { v1 = lut.read(i+uint3(1,0,0)).rgb;
+                              v2 = lut.read(i+uint3(1,0,1)).rgb;
+                              w1 = f.x-f.z; w2 = f.z-f.y; w3 = f.y; }
+        else                { v1 = lut.read(i+uint3(0,0,1)).rgb;
+                              v2 = lut.read(i+uint3(1,0,1)).rgb;
+                              w1 = f.z-f.x; w2 = f.x-f.y; w3 = f.y; }
+    } else {
+        if (f.z > f.y)      { v1 = lut.read(i+uint3(0,0,1)).rgb;
+                              v2 = lut.read(i+uint3(0,1,1)).rgb;
+                              w1 = f.z-f.y; w2 = f.y-f.x; w3 = f.x; }
+        else if (f.z > f.x) { v1 = lut.read(i+uint3(0,1,0)).rgb;
+                              v2 = lut.read(i+uint3(0,1,1)).rgb;
+                              w1 = f.y-f.z; w2 = f.z-f.x; w3 = f.x; }
+        else                { v1 = lut.read(i+uint3(0,1,0)).rgb;
+                              v2 = lut.read(i+uint3(1,1,0)).rgb;
+                              w1 = f.y-f.x; w2 = f.x-f.z; w3 = f.z; }
+    }
+    float w0 = 1.0f - w1 - w2 - w3;
+    return w0*c000 + w1*v1 + w2*v2 + w3*c111;
+}
+\end{lstlisting}
+
+\subsection{Separable Filters}
+
+Gaussian blurs at the small radii used inside the pyramid (Section
+\ref{sec:recursive-blur}) are implemented as separable two-pass convolutions with
+threadgroup-memory staging. For a $\sigma \le 3$ kernel the tap count is 13, and
+linear-sampling pairing halves the fetches to 7.
+
+\texttt{MPSImageGaussianBlur} is deliberately \emph{not} used. It is
+well-optimized, but it clamps at the texture edge in a way that is not
+configurable, it allocates internally, and it cannot be fused into a tile
+dispatch. The application-owned implementation is within 8\% of its throughput
+and composes with the rest of the graph.
+
+\subsection{Function Constants and Specialization}
+\label{sec:specialization}
+
+Branching on parameter state inside a kernel costs both instructions and
+register pressure. Instead, boolean and small-integer configuration is exposed
+as Metal function constants, and the pipeline cache keys on their values, so
+each configuration compiles to a specialized kernel with the branches removed:
+
+\begin{lstlisting}[language=Metal, caption={Function-constant specialization.}]
+constant bool  kMonochrome        [[function_constant(0)]];
+constant bool  kSilverRetention   [[function_constant(1)]];
+constant bool  kSpatialActivity   [[function_constant(2)]];  // chemical streaking
+constant uint  kPrintStockModel   [[function_constant(3)]];
+
+kernel void develop_pointwise(/* ... */) {
+    float3 D = characteristic_curve(x, negParams);
+    if (kSpatialActivity) {                 // compiled out when false
+        D = apply_spatial_activity(D, x, streakTex, gid);
+    }
+    // ...
+}
+\end{lstlisting}
+
+The number of live specializations is bounded: three booleans and one four-value
+enum give 32 combinations, of which fewer than 10 occur in practice. The cache
+holds all of them.
+
+\subsection{Command Buffer Structure}
+
+A preview render is one command buffer containing, in order: an optional LUT
+rebuild dispatch; a render pass containing the fused tile chain; two compute
+encoders for the spatial stages; and the final blit or drawable present. The
+buffer is scheduled with a completion handler that signals the render actor,
+which then picks up any pending recipe.
+
+Export uses a separate command buffer on the same queue, submitted with
+\texttt{MTLCommandBufferErrorOption.\allowbreak{}encoderExecutionStatus} so that
+a GPU fault
+during a long export is attributable to a specific encoder rather than crashing
+opaquely.
+
+\subsection{Debugging and Instrumentation}
+
+Every encoder is labelled, every resource is labelled, and debug groups wrap
+each logical stage, so a Metal frame capture reads as the pipeline diagram of
+Figure~\ref{fig:pipeline}. In debug builds, Metal shader validation and
+\texttt{MTLCaptureManager} programmatic capture on a triggered gesture are
+enabled. A build-time flag inserts a per-stage GPU timestamp using
+\texttt{MTLCounterSampleBuffer}, and the resulting per-stage timings are
+surfaced in a developer overlay --- which is how the numbers in
+Section~\ref{sec:performance} are collected.

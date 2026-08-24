@@ -1,0 +1,312 @@
+\section{User Interface Design}
+\label{sec:ui}
+
+\subsection{Interaction Principles}
+
+Four principles govern the interface, in priority order when they conflict.
+
+\begin{enumerate}
+\item \textbf{The image is the interface.} Controls overlay or dock; they never
+crop the image below 55\% of the screen area. Any control that requires the
+image to shrink is a modal sheet, not a permanent chrome element.
+\item \textbf{One vocabulary.} The names in Table~\ref{tab:controlmap} appear
+identically in the UI, in the tooltip, in the exported metadata, and in this
+document. There is no simplified alias.
+\item \textbf{Progressive disclosure without a beginner mode.} Every panel has
+a primary row of two to four controls and a disclosure for the remainder. The
+beginner and the professional use the same controls; the beginner sees fewer at
+once.
+\item \textbf{Every control teaches.} Long-pressing any control presents a
+one-paragraph explanation of the physical process it corresponds to, with a
+diagram where useful. This is the mechanism by which the product's central claim
+--- that development is more truthful than filtering --- becomes something the
+user experiences rather than reads in marketing copy.
+\end{enumerate}
+
+\subsection{Navigation Structure}
+
+Three root workspaces in a tab structure: \textbf{Capture}, \textbf{Develop},
+\textbf{Library}. Develop is reachable only with an active asset; selecting an
+asset in Library or completing a capture pushes into it. This is a shallow
+hierarchy by design --- the deepest navigation path in the application is three
+levels (Library $\to$ Develop $\to$ Stage detail).
+
+\begin{figure*}[htbp]
+\centering
+\begin{tikzpicture}[
+  font=\tiny,
+  phone/.style={draw=emLine, line width=0.5pt, rounded corners=3pt, minimum width=42mm, minimum height=78mm},
+  ctl/.style={draw=emLine!60, fill=emGray, rounded corners=1pt, minimum height=3.2mm, inner sep=1pt, align=center},
+  img/.style={draw=emLine!50, fill=emBlue!7, minimum width=38mm},
+  lbl/.style={font=\tiny\bfseries},
+  wfcap/.style={font=\scriptsize\bfseries, text=emLine}
+]
+
+%============ CAPTURE ============
+\begin{scope}[shift={(0,0)}]
+  \node[phone] (p1) at (0,0) {};
+  \node[wfcap, above=1mm of p1.north] {CAPTURE};
+  % status bar
+  \node[ctl, minimum width=38mm, fill=white] at (0,3.62) {\tiny Portra 400 \; $\cdot$ \; 2383 \; $\cdot$ \; 135 \hfill ISO 400 \; 1/125 \; f/2.8};
+  % viewfinder
+  \node[img, minimum height=44mm] (vf) at (0,1.0) {};
+  \node at (0,1.0) {\itshape live preview, recipe applied};
+  % grid overlay hint
+  \draw[emLine!25] (-1.9,-0.47) -- (1.9,-0.47);
+  \draw[emLine!25] (-1.9,2.47) -- (1.9,2.47);
+  \draw[emLine!25] (-0.63,-1.2) -- (-0.63,3.2);
+  \draw[emLine!25] (0.63,-1.2) -- (0.63,3.2);
+  % histogram
+  \node[ctl, minimum width=17mm, minimum height=6mm, anchor=north west] at (-1.9,-1.35) {\tiny log histogram};
+  \node[ctl, minimum width=19mm, minimum height=6mm, anchor=north east] at (1.9,-1.35) {\tiny zone / clip warn};
+  % manual control strip
+  \node[ctl, minimum width=8.5mm, anchor=north west] at (-1.9,-2.25) {ISO};
+  \node[ctl, minimum width=8.5mm, anchor=north west] at (-0.95,-2.25) {SHUT};
+  \node[ctl, minimum width=8.5mm, anchor=north west] at (0.0,-2.25) {WB};
+  \node[ctl, minimum width=8.5mm, anchor=north west] at (0.95,-2.25) {FOCUS};
+  % dial
+  \draw[emLine!60] (0,-3.15) circle (0.55);
+  \node at (0,-3.15) {\tiny stock};
+  \node[ctl, minimum width=9mm, anchor=east] at (-0.8,-3.15) {recipes};
+  \node[ctl, minimum width=9mm, anchor=west] at (0.8,-3.15) {last shot};
+  % shutter
+  \draw[emAcc, line width=0.8pt] (0,-3.15) circle (0.78);
+\end{scope}
+
+%============ DEVELOP ============
+\begin{scope}[shift={(5.6,0)}]
+  \node[phone] (p2) at (0,0) {};
+  \node[wfcap, above=1mm of p2.north] {DEVELOP};
+  \node[ctl, minimum width=38mm, fill=white] at (0,3.62) {\tiny $\leftarrow$ \hfill IMG\_4471 \hfill compare \; $\cdot$ \; export};
+  \node[img, minimum height=38mm] (im) at (0,1.4) {};
+  \node at (0,1.4) {\itshape rendered image};
+  % stage rail
+  \node[ctl, minimum width=38mm, minimum height=4mm] at (0,-0.85)
+    {\tiny NEG $\cdot$ DEV $\cdot$ PRINT $\cdot$ COLOR $\cdot$ GRAIN $\cdot$ HAL $\cdot$ OPT $\cdot$ AGE};
+  % active panel
+  \node[draw=emLine!60, fill=emGray, rounded corners=2pt, minimum width=38mm, minimum height=22mm, anchor=north] (panel) at (0,-1.25) {};
+  \node[lbl, anchor=north west] at (-1.85,-1.4) {PRINT};
+  % printer lights
+  \node[anchor=north west, align=left] at (-1.85,-1.75)
+    {\tiny printer lights};
+  \node[ctl, minimum width=11mm, anchor=north west] at (-1.85,-2.1) {R \; 25 \; $-|+$};
+  \node[ctl, minimum width=11mm, anchor=north west] at (-0.6,-2.1) {G \; 25 \; $-|+$};
+  \node[ctl, minimum width=11mm, anchor=north west] at (0.65,-2.1) {B \; 27 \; $-|+$};
+  % density slider
+  \node[anchor=north west] at (-1.85,-2.55) {\tiny print density};
+  \draw[emLine] (-1.85,-2.95) -- (1.85,-2.95);
+  \draw[emAcc, fill=emAcc] (0.25,-2.95) circle (0.09);
+  \node[anchor=north east] at (1.85,-2.55) {\tiny $+3$ pts};
+  % disclosure
+  \node[ctl, minimum width=38mm, anchor=north] at (0,-3.15) {\tiny more: saturation density $\cdot$ roll-off $\cdot$ shadow lift $\cdot$ neutral axis \; $\vee$};
+\end{scope}
+
+%============ LIBRARY ============
+\begin{scope}[shift={(11.2,0)}]
+  \node[phone] (p3) at (0,0) {};
+  \node[wfcap, above=1mm of p3.north] {LIBRARY};
+  \node[ctl, minimum width=38mm, fill=white] at (0,3.62) {\tiny Projects \hfill select \; $\cdot$ \; $\cdots$};
+  % segmented
+  \node[ctl, minimum width=38mm] at (0,3.05) {\tiny ALL \; $\cdot$ \; ROLLS \; $\cdot$ \; RECIPES \; $\cdot$ \; STOCKS};
+  % grid
+  \foreach \r in {0,1,2,3} {
+    \foreach \c in {0,1,2} {
+      \node[img, minimum width=11.5mm, minimum height=11.5mm, anchor=north west]
+        at (-1.85+\c*1.27, 2.7-\r*1.27) {};
+    }
+  }
+  \node[anchor=north west] at (-1.8,2.65) {\tiny \textbf{Roll 04}};
+  % footer
+  \node[ctl, minimum width=38mm, anchor=south] at (0,-3.72) {\tiny 214 frames \; $\cdot$ \; 6 recipes \; $\cdot$ \; 3.1 GB};
+\end{scope}
+
+\end{tikzpicture}
+\caption{Primary workspace wireframes. Capture keeps the manual control strip and the stock dial within thumb reach of the shutter. Develop devotes the upper 55\% to the image with a horizontal stage rail selecting the active panel below. Library is grid-first with roll grouping, since users organize by shooting session.}
+\label{fig:wireframes}
+\end{figure*}
+
+\subsection{The Develop Workspace}
+
+The stage rail in Figure~\ref{fig:wireframes} is the structural expression of
+the pipeline. Selecting a stage swaps the panel below without changing the image
+area, so comparisons across stages do not shift the frame.
+
+Each panel follows an identical layout contract:
+
+\begin{itemize}
+\item A title matching the pipeline stage name in Figure~\ref{fig:pipeline}.
+\item Two to four \emph{primary} controls, always visible.
+\item A disclosure row listing the secondary controls by name, so their
+existence is discoverable without being present.
+\item A reset affordance scoped to the stage.
+\item A bypass toggle, which disables the stage entirely (and, through dead
+pass elimination in Section~\ref{sec:rendergraph}, removes its cost).
+\end{itemize}
+
+\begin{table}[htbp]
+\caption{Panel Contents by Stage}
+\label{tab:panels}
+\begin{center}
+\renewcommand{\arraystretch}{1.15}
+\begin{tabularx}{\columnwidth}{@{}l>{\raggedright\arraybackslash}X@{}}
+\toprule
+\textbf{Panel} & \textbf{Primary / secondary} \\
+\midrule
+NEG & Stock, film speed rating, exposure comp. / format, layer balance readout, curve inspector \\
+DEV & Push/pull, development time / temperature, agitation, chemistry, CI readout \\
+PRINT & Printer lights R/G/B, print density / print stock, silver retention \\
+COLOR & Saturation density, highlight roll-off / shadow lift, neutral axis warm, neutral axis tint \\
+GRAIN & Amount, size / seed, clustering, chroma correlation \\
+HAL & Intensity, threshold / radius, color bias, ring weight \\
+OPT & Diffusion, vignetting / chromatic aberration, distortion, bloom, defocus \\
+AGE & Expired age, dust / scratches, edge fog, light leak, streaking \\
+\bottomrule
+\end{tabularx}
+\end{center}
+\end{table}
+
+\subsection{Control Idioms}
+
+Three control types cover the entire parameter surface.
+
+\paragraph{The stepper-slider} Used for all continuous parameters. A horizontal
+track with a draggable thumb, a numeric readout in the parameter's physical unit,
+and a detent at the physically neutral value. Dragging with one finger is coarse;
+a second finger down engages a $5\times$ fine mode without lifting. Double-tap
+resets to the stage default.
+
+\paragraph{The printer-point stepper} Used only for printer lights. Integer
+increment and decrement buttons flanking a value, with a hold-to-repeat. It is
+deliberately \emph{not} a slider, because printer points are integers and
+because the tactile discreteness reinforces the unit
+(Section~\ref{sec:printerlights}).
+
+\paragraph{The stock dial} A circular selector for negative and print stock,
+showing a live thumbnail of the current image under each candidate as it passes
+under the selection indicator. Rendering eight thumbnails at $128^2$ costs
+approximately 1.2\,ms total, so the previews are live rather than cached ---
+which is the single most persuasive interaction in the product, because the user
+sees the stock's actual effect on their own image rather than on a sample.
+
+\subsection{Comparison Modes}
+
+FR-19 requires before/after. Three modes are provided:
+
+\begin{itemize}
+\item \textbf{Toggle.} Press and hold anywhere on the image to show the
+unprocessed scene-referred image with only the output transform applied.
+\item \textbf{Split.} A draggable vertical divider. The two sides render from
+the same graph with different recipes, sharing all resources whose parameters
+are unchanged --- so a split view of a printer-light change costs
+$1.9\times$, not $2\times$, and a split of a grain change costs $1.2\times$.
+\item \textbf{Pin to stage.} Compare the current state against the pipeline
+output at any earlier stage. This is the pipeline inspector of FR-20 expressed
+as a comparison rather than as a separate screen, and it is how a user comes to
+understand what each stage contributes.
+\end{itemize}
+
+\subsection{The Pipeline Inspector}
+
+A full-screen modal presenting the pipeline as the diagram of
+Figure~\ref{fig:pipeline}, with a live thumbnail rendered at each node showing
+the image state at that point. Tapping a node jumps to its panel; long-pressing
+shows the governing equation and the current parameter values.
+
+This screen is, deliberately, the most technically explicit surface in the
+product. It is not the default view and most users will visit it rarely. Its
+purpose is to make the claim in Section~\ref{sec:intro-thesis} inspectable: a
+user who doubts that anything physical is happening can look.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[
+  font=\tiny,
+  nd/.style={draw=emLine!70, fill=emGray, rounded corners=1.5pt, minimum width=12mm, minimum height=9mm, align=center},
+  th/.style={draw=emBlue!40, fill=emBlue!8, minimum width=11mm, minimum height=7mm},
+  ar/.style={-{Latex[length=1.2mm]}, draw=emLine!70}
+]
+\foreach \i/\n [count=\j from 0] in {0/RAW, 1/HAL, 2/NEG, 3/DEV} {
+  \node[th] (t\i) at (\j*1.55, 0.9) {};
+  \node[nd, below=1mm of t\i] (n\i) {\n};
+}
+\foreach \i/\n [count=\j from 0] in {4/ILR, 5/GRN, 6/PRN, 7/OUT} {
+  \node[th] (t\i) at (\j*1.55, -1.4) {};
+  \node[nd, below=1mm of t\i] (n\i) {\n};
+}
+\foreach \a/\b in {n0/n1, n1/n2, n2/n3} \draw[ar] (\a) -- (\b);
+\foreach \a/\b in {n4/n5, n5/n6, n6/n7} \draw[ar] (\a) -- (\b);
+\draw[ar] (n3.east) -- ++(0.35,0) |- ($(t4.west)+(-0.35,-0.5)$) -- ++(0.35,0);
+\node[anchor=north, align=center, text width=52mm] at (2.3,-2.55)
+  {\scriptsize tap a node to open its panel \; $\cdot$ \; long-press for the model};
+\end{tikzpicture}
+\caption{Pipeline inspector layout. Each node shows the live image state at that point in the chain, rendered from the same graph with an early termination.}
+\label{fig:inspector}
+\end{figure}
+
+\subsection{Gestures}
+
+\begin{table}[htbp]
+\caption{Gesture Map}
+\label{tab:gestures}
+\begin{center}
+\renewcommand{\arraystretch}{1.15}
+\begin{tabularx}{\columnwidth}{@{}l>{\raggedright\arraybackslash}X@{}}
+\toprule
+\textbf{Gesture} & \textbf{Action} \\
+\midrule
+Pinch & Zoom, 1$\times$ to 400\%. Triggers ROI rendering above 100\%. \\
+Two-finger pan & Pan when zoomed. \\
+Press and hold on image & Show original (toggle compare). \\
+Double-tap image & Zoom to 100\% at tap point, or back to fit. \\
+Horizontal swipe on stage rail & Change active panel. \\
+Horizontal swipe on image & Previous/next asset (only when at fit zoom). \\
+Two-finger drag on any slider & Fine adjustment, $5\times$ resolution. \\
+Three-finger swipe left/right & Undo / redo (system convention). \\
+Long-press control label & Explanation sheet. \\
+\bottomrule
+\end{tabularx}
+\end{center}
+\end{table}
+
+Note the conflict resolution between horizontal image swipe (asset change) and
+pan: asset swiping is enabled only at fit zoom, where panning is meaningless.
+This is checked in the gesture recognizer's \texttt{shouldBegin}, not by
+disabling recognizers, so the transition is seamless as the user zooms out.
+
+\subsection{Visual Design}
+
+The visual language is quiet, achromatic, and deferential to the image. The
+chrome is a single neutral gray at two elevations, with one accent color used
+exclusively for modified-from-default state. This is not minimalism for its own
+sake: any chroma in the surrounding UI biases the perception of the image being
+graded, which is why professional grading suites are painted neutral gray. The
+same reasoning that governs a color suite governs this interface, and it is
+stated in the design system documentation so that it survives future
+redesigns.
+
+Explicitly excluded: leather textures, film-canister iconography, simulated
+light leaks in the chrome, faux-analog typography, sprocket-hole borders, and
+any skeuomorphic camera imagery. The application is a laboratory instrument, and
+laboratory instruments do not cosplay.
+
+\subsection{Dark and Light Appearance}
+
+Both are supported. Dark is the default, because a dark surround improves the
+perception of highlight roll-off and because the application is most often used
+in editing rather than reference-viewing contexts. The image area's immediate
+surround is held at a fixed 18\% neutral in \emph{both} appearances, since a
+pure-black or pure-white surround measurably shifts perceived contrast; only the
+outer chrome changes with appearance.
+
+\subsection{Accessibility}
+
+NFR-11 is met by: VoiceOver labels for every control stating name, value, and
+unit ("printer light red, 25 points"); custom rotors for stage navigation and
+for parameter adjustment; Dynamic Type support to XXL in all text, with panels
+reflowing to a vertical layout at large sizes; Reduce Motion honored by
+replacing panel transitions with cross-fades; and a minimum 44$\times$44 point
+touch target for every interactive element including the printer-point steppers.
+
+Color is never the sole carrier of information. The modified-from-default
+indicator is an accent color \emph{and} a shape change on the slider detent.
+Clipping warnings use a diagonal hatch pattern rather than a color overlay.

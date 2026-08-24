@@ -1,0 +1,217 @@
+\section{Interlayer Inhibition and Adjacency Effects}
+\label{sec:interlayer}
+
+\subsection{The Mechanism}
+
+Modern color negative films incorporate Development Inhibitor Releasing (DIR)
+couplers \cite{james1977}. When development proceeds at a point in a layer, these couplers
+release a soluble inhibitor that diffuses laterally within the layer and
+vertically into adjacent layers, locally suppressing further development.
+
+Two distinct and separately visible consequences follow:
+
+\begin{enumerate}
+\item \textbf{Intra-layer adjacency (acutance).} A densely developed region
+suppresses development just outside its boundary, producing a light rim on the
+low-density side of an edge --- the Eberhard effect. Because the suppression is
+proportional to neighborhood density and subtracted locally, the net operator is
+an unsharp mask applied in the density domain. This is why color negative film
+has apparent sharpness exceeding what its MTF alone would predict, and why it
+does not look like digital sharpening: the effect is in density, is asymmetric
+in its response to edge polarity, and scales with local development activity.
+\item \textbf{Inter-layer (inter-image) effect.} Inhibitor from the
+green-sensitive layer suppresses development in the red and blue layers. Where a
+region is strongly green, red and blue develop less, so the region prints
+\emph{more} green. This is a saturation-enhancing, edge-localized, cross-channel
+coupling --- and it is a substantial part of why color negative film renders
+saturated colors the way it does. It cannot be reproduced by a saturation
+control, because it operates on the local difference between channels rather
+than on the global distance from neutral.
+\end{enumerate}
+
+\subsection{Formulation}
+
+Let $D_k(\mathbf{p})$ be the developed density in record $k$ at position
+$\mathbf{p}$ before inhibition. Inhibitor released is proportional to
+development activity, which is proportional to density; the released inhibitor
+diffuses with a Gaussian kernel $G_{\sigma_k}$ characteristic of the diffusion
+length. The concentration of inhibitor from layer $k$ is therefore
+
+\begin{equation}
+I_k = G_{\sigma_k} * D_k,
+\label{eq:inhibitor}
+\end{equation}
+
+and the suppressed density in record $c$ is
+
+\begin{equation}
+\tilde{D}_c = D_c - \sum_{k} a_{ck}\, I_k
+= D_c - \sum_{k} a_{ck}\, \left(G_{\sigma_k} * D_k\right).
+\label{eq:inhibited}
+\end{equation}
+
+Equation \eqref{eq:inhibited} as written contains a large DC term: it lowers
+mean density everywhere. That component is real, but it is \emph{already
+present in the measured characteristic curve} to which $\theta$ was fitted ---
+sensitometric measurement of a real film necessarily includes its own
+inhibition. Applying \eqref{eq:inhibited} directly would therefore double-count.
+
+The correct treatment is to decompose the inhibitor into its local mean and its
+spatial residual. Writing the highpass operator as
+
+\begin{equation}
+H_{\sigma}[D] \;=\; D - G_{\sigma} * D,
+\end{equation}
+
+we have $G_\sigma * D_k = D_k - H_{\sigma_k}[D_k]$, so \eqref{eq:inhibited}
+becomes
+
+\begin{equation}
+\tilde{D}_c = \underbrace{D_c - \sum_k a_{ck} D_k}_{\text{pointwise; absorbed into } \theta}
+\;+\; \sum_k a_{ck}\, H_{\sigma_k}[D_k].
+\end{equation}
+
+The runtime operator is therefore the residual term alone:
+
+\begin{equation}
+\boxed{\;\tilde{D}_c \;=\; D_c \;+\; \Lambda_c \sum_{k \in \{R,G,B\}} a_{ck}\, H_{\sigma_k}\!\left[D_k\right]\;}
+\label{eq:interlayer}
+\end{equation}
+
+where $\Lambda_c$ is an activity weight, discussed next. This form has the
+essential property that it is \emph{mean-preserving}: $H_\sigma$ annihilates
+constants, so a uniform patch is unchanged and no double-counting occurs. All of
+the visible effect --- edge rims and local saturation --- is retained.
+
+\subsection{Activity Weighting}
+
+Inhibitor release is proportional to development activity, not to density. In
+the toe, almost nothing is developing and almost no inhibitor is released; in
+the shoulder, development has run to completion and further release does
+nothing. Both are captured by the point gamma of
+\eqref{eq:pointgamma}, normalized:
+
+\begin{equation}
+\Lambda_c(\mathbf{p}) \;=\; \left(\frac{\gamma_c(x_c(\mathbf{p}))}{\gamma_c}\right)^{\!\mu},
+\qquad \mu \approx 1.0.
+\label{eq:activityweight}
+\end{equation}
+
+Consequently the adjacency effect is strongest in the mid-scale and vanishes in
+both extremes --- exactly the observed behavior, and a meaningful difference
+from an unsharp mask, which sharpens deep shadows and blown highlights with
+equal enthusiasm.
+
+Because $\gamma_c(x)$ is already computed by \eqref{eq:pointgamma} for the grain
+model, $\Lambda_c$ costs nothing additional.
+
+\subsection{Multi-Scale Diffusion}
+
+A single Gaussian is a poor model of diffusion in a layered gelatin structure,
+which exhibits both a short-range component within the layer and a long-range
+component through the interlayer. \EM{} uses a two-scale kernel:
+
+\begin{equation}
+H^{(2)}[D] = w_1\,H_{\sigma_1}[D] + w_2\,H_{\sigma_2}[D],
+\qquad \sigma_2 \approx 5\sigma_1,
+\label{eq:twoscale}
+\end{equation}
+
+with $w_1 + w_2 = 1$. The short scale $\sigma_1 \approx 1.2\,\mu\mathrm{m}$
+produces acutance; the long scale $\sigma_2 \approx 6\,\mu\mathrm{m}$ produces
+the broad-area inter-image effect. Both are specified in \emph{micrometres at
+the film plane} and converted to pixels through the format scaling of
+Section~\ref{sec:formatscale}, so that the effect has a fixed physical size
+regardless of output resolution.
+
+\subsection{The Coupling Matrix}
+
+The matrix $\mathbf{A} = [a_{ck}]$ is the stock's inhibition signature. Its
+structure is constrained by physics:
+
+\begin{itemize}
+\item Diagonal entries $a_{cc} > 0$: self-inhibition, producing acutance.
+\item Off-diagonal entries $a_{ck} > 0$ for $k \neq c$: cross-layer inhibition.
+\item Vertical adjacency matters. In the standard layer order (blue on top,
+then green, then red), green couples strongly to both neighbors, while
+red-to-blue coupling is weak because the layers are not adjacent and the yellow
+filter layer intervenes. The matrix is therefore approximately tridiagonal in
+the layer ordering, not symmetric in the RGB ordering.
+\end{itemize}
+
+A representative shipping matrix for a modern color negative stock, in layer
+order $(B, G, R)$ and re-expressed in RGB indexing, is
+
+\begin{equation}
+\mathbf{A} =
+\begin{pmatrix}
+0.42 & 0.26 & 0.05 \\
+0.19 & 0.48 & 0.19 \\
+0.05 & 0.29 & 0.38
+\end{pmatrix},
+\label{eq:dirmatrix}
+\end{equation}
+
+where row index is the affected record $c$ and column index the releasing
+record $k$. Note the small $R\!\leftrightarrow\!B$ terms and the strong
+coupling of both to $G$, reflecting the physical stack.
+
+A monochrome stock has a scalar $a$ and no cross terms. A transparency stock has
+substantially weaker inhibition overall (reversal films use fewer DIR couplers),
+with all entries scaled by roughly $0.4$.
+
+\subsection{Implementation}
+
+The operator is separable and cheap. The pass computes two Gaussian blurs of the
+density image at $\sigma_1$ and $\sigma_2$, forms the two highpass residuals,
+applies \eqref{eq:twoscale}, multiplies by $\mathbf{A}$ and by $\Lambda$, and
+adds. Blurs use the separable recursive filter of
+Section~\ref{sec:recursive-blur}, so cost is independent of $\sigma$.
+
+\begin{lstlisting}[language=Metal, caption={Interlayer inhibition combine pass.}]
+kernel void interlayer_combine(
+    texture2d<float, access::read>  density   [[texture(0)]],
+    texture2d<float, access::read>  blur1     [[texture(1)]],
+    texture2d<float, access::read>  blur2     [[texture(2)]],
+    texture2d<float, access::read>  gammaMap  [[texture(3)]],
+    texture2d<float, access::write> outTex    [[texture(4)]],
+    constant InterlayerParams&      P         [[buffer(0)]],
+    uint2 gid [[thread_position_in_grid]])
+{
+    if (gid.x >= outTex.get_width() || gid.y >= outTex.get_height()) return;
+
+    float3 D  = density.read(gid).rgb;
+    float3 b1 = blur1.read(gid).rgb;
+    float3 b2 = blur2.read(gid).rgb;
+
+    // Two-scale highpass residual, eq. (two-scale)
+    float3 H = P.w1 * (D - b1) + P.w2 * (D - b2);
+
+    // Coupling matrix A applied across records
+    float3 coupled = P.A * H;             // float3x3 * float3
+
+    // Activity weight from normalized point gamma
+    float3 lambda = pow(max(gammaMap.read(gid).rgb, 1e-4f), P.mu);
+
+    outTex.write(float4(D + P.strength * lambda * coupled, 1.0f), gid);
+}
+\end{lstlisting}
+
+\subsection{User Exposure of the Effect}
+
+Parameter honesty forbids labelling this control ``sharpness.'' The exposed
+controls are:
+
+\begin{itemize}
+\item \textbf{Coupler activity} ($0$--$200\%$, default $100\%$), scaling
+$\mathbf{A}$ uniformly. This is the strength of the DIR effect.
+\item \textbf{Agitation} (from Section~\ref{sec:development}), which
+\emph{inversely} modulates $\sigma_2$ and $w_2$: less agitation, longer-range
+inhibition, stronger broad-area effects. This is the single control that most
+rewards a user who knows darkroom practice.
+\end{itemize}
+
+Intra-layer and inter-layer strength are not separately exposed in v1.0, because
+they are not separately controllable in a real process. They are, however,
+separately editable in the stock profile format, which is how a future
+user-authored-profile feature would surface them.

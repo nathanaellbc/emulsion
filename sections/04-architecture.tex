@@ -1,0 +1,205 @@
+\section{System Architecture Overview}
+\label{sec:arch}
+
+\subsection{Layered Decomposition}
+
+\EM{} is decomposed into five layers with strictly downward dependencies. No
+layer may reference a type defined in a layer above it; this is enforced by
+placing each layer in a separate Swift module with explicit public interfaces.
+
+\begin{table}[htbp]
+\caption{Module Layering}
+\label{tab:layers}
+\begin{center}
+\renewcommand{\arraystretch}{1.15}
+\begin{tabularx}{\columnwidth}{@{}l>{\raggedright\arraybackslash}X@{}}
+\toprule
+\textbf{Module} & \textbf{Responsibility} \\
+\midrule
+\texttt{EmulsionApp} & SwiftUI scenes, navigation, app lifecycle. Depends on everything below. \\
+\texttt{EmulsionUI} & Reusable views, control surfaces, gesture handling, the Metal-backed preview view. No business logic. \\
+\texttt{EmulsionCore} & Domain model: \texttt{Recipe}, \texttt{Stage}, \texttt{Parameter}, \texttt{Asset}, edit history, preset resolution. Pure Swift, no rendering, no I/O. Fully unit-testable on any platform. \\
+\texttt{EmulsionRender} & Render graph, resource pooling, Metal pipeline state cache, the pass implementations, LUT baking. Consumes a \texttt{Recipe}, produces textures. \\
+\texttt{EmulsionStore} & Persistence: SQLite schema, asset library, cache management, sidecar import/export. \\
+\texttt{EmulsionCapture} & AVFoundation session management, ProRAW capture, device capability probing, metadata extraction. \\
+\bottomrule
+\end{tabularx}
+\end{center}
+\end{table}
+
+The critical architectural decision is that \texttt{EmulsionCore} contains no
+Metal and no Foundation persistence types. The parameter model, the pipeline
+topology, and the semantics of every stage are expressed as plain Swift values.
+This makes the entire imaging specification testable without a GPU, permits a
+reference CPU implementation for validation (Section~\ref{sec:validation}), and
+means the macOS companion application in the roadmap shares the domain layer
+unchanged.
+
+\subsection{The Development Pipeline}
+
+Figure~\ref{fig:pipeline} shows the full data flow. The pipeline is a directed
+acyclic graph, but for v1.0 it is a linear chain with optional bypasses; the
+graph machinery exists because the roadmap requires node-based editing and
+retrofitting it later would be a rewrite.
+
+\begin{figure*}[htbp]
+\centering
+\resizebox{\textwidth}{!}{%
+\begin{tikzpicture}[
+  font=\footnotesize,
+  node distance=0pt,
+  stg/.style={draw=emLine, rounded corners=2pt, fill=emGray, minimum height=8.5mm,
+              text width=20mm, align=center, inner sep=2pt},
+  spatial/.style={stg, fill=emAcc!12, draw=emAcc!70},
+  dom/.style={font=\scriptsize\itshape, text=emLine},
+  ar/.style={-{Latex[length=1.6mm]}, draw=emLine, thick}
+]
+
+\node[stg] (s0) at (0,0) {RAW\\decode};
+\node[stg, right=5mm of s0] (s1) {Sensor\\normalize};
+\node[stg, right=5mm of s1] (s2) {Exposure\\/ WB};
+\node[spatial, right=5mm of s2] (s3) {\textbf{Halation}\\(pre-exposure)};
+\node[stg, right=5mm of s3] (s4) {Negative\\density};
+\node[stg, right=5mm of s4] (s5) {Development\\modifiers};
+\node[spatial, right=5mm of s5] (s6) {\textbf{Interlayer}\\inhibition};
+\node[spatial, right=5mm of s6] (s7) {\textbf{Grain}\\synthesis};
+
+\foreach \a/\b in {s0/s1, s1/s2, s2/s3, s3/s4, s4/s5, s5/s6, s6/s7}
+  \draw[ar] (\a) -- (\b);
+
+\node[stg, below=11mm of s0] (t0) {Print\\exposure};
+\node[stg, right=5mm of t0] (t1) {Printer\\lights};
+\node[stg, right=5mm of t1] (t2) {Print stock\\density};
+\node[stg, right=5mm of t2] (t3) {Color\\science};
+\node[spatial, right=5mm of t3] (t4) {\textbf{Optical}\\simulation};
+\node[spatial, right=5mm of t4] (t5) {\textbf{Aging}\\/ artifacts};
+\node[stg, right=5mm of t5] (t6) {Output\\transform};
+\node[stg, right=5mm of t6] (t7) {Encode /\\display};
+
+\foreach \a/\b in {t0/t1, t1/t2, t2/t3, t3/t4, t4/t5, t5/t6, t6/t7}
+  \draw[ar] (\a) -- (\b);
+
+\draw[ar] (s7.east) -- ++(0.5,0) |- ($(t0.west)+(-0.8,0)$) -- (t0.west);
+
+\node[dom, above=1.2mm of s0] {DNG};
+\node[dom, above=1.2mm of s2] {linear scene};
+\node[dom, above=1.2mm of s4] {$\logE \to D$};
+\node[dom, above=1.2mm of s7] {negative $D$};
+\node[dom, below=1.2mm of t0] {$T = 10^{-D}$};
+\node[dom, below=1.2mm of t2] {$\logE' \to D'$};
+\node[dom, below=1.2mm of t5] {print $D'$};
+\node[dom, below=1.2mm of t7] {Display P3};
+
+\begin{scope}[on background layer]
+  \node[fit=(s0)(s7), draw=emBlue!50, dashed, rounded corners=3pt, inner sep=4mm] (negbox) {};
+  \node[fit=(t0)(t7), draw=emGreen!50, dashed, rounded corners=3pt, inner sep=4mm] (prbox) {};
+\end{scope}
+\node[above right=0mm and 0mm of negbox.north west, font=\scriptsize\bfseries, text=emBlue] {NEGATIVE DOMAIN};
+\node[below right=0mm and 0mm of prbox.south west, font=\scriptsize\bfseries, text=emGreen] {PRINT DOMAIN};
+
+\end{tikzpicture}}
+\caption{The \EM{} development pipeline. Shaded stages are spatial (neighborhood-dependent) or stochastic and cannot be expressed as a lookup table. The pipeline crosses from the negative domain to the print domain by converting density to transmittance, which is the operation a physical enlarger performs.}
+\label{fig:pipeline}
+\end{figure*}
+
+\subsection{Derivation of Stage Ordering}
+
+The ordering in Figure~\ref{fig:pipeline} is not a preference. Each adjacency
+is forced by physics, and the following are the binding constraints:
+
+\begin{enumerate}
+\item \textbf{Halation precedes density formation.} Scattered light is light.
+It adds to the exposure that forms the latent image, so it must be summed in
+the linear exposure domain \emph{before} the characteristic curve is applied.
+Applying a glow after tone mapping --- the near-universal shortcut --- produces
+halos whose intensity does not correctly saturate, because the shoulder has
+already compressed the highlight that should have driven them. This is the
+single most visible correctness difference between \EM{} and a filter.
+\item \textbf{Interlayer inhibition acts on development, not on the printed
+image.} Inhibitors are released during development in proportion to local
+development activity, and diffuse before they can suppress neighbors.
+Therefore the operator reads the developed density field and modifies it, after
+the characteristic curve and before printing.
+\item \textbf{Grain lives on the negative.} The dye clouds are in the negative
+emulsion. Their density fluctuation is subsequently \emph{printed}, which means
+the print stock's contrast amplifies negative grain --- a high-contrast print
+stock makes grain more visible, exactly as in practice. Synthesizing grain
+after the print transform loses this coupling and produces grain whose
+visibility is independent of print contrast, which is wrong and looks wrong.
+\item \textbf{Printer lights act on the print exposure, not on the negative
+density.} A printer light attenuates the enlarger beam. Because the negative's
+transmittance multiplies the beam, and because both are in the exposure domain,
+printer lights are a multiplicative offset in linear exposure, equivalently an
+additive offset in $\logE$. Section~\ref{sec:printerlights} shows why this
+produces the characteristic ``rotation'' of color balance with density that a
+simple RGB gain cannot.
+\item \textbf{Optical simulation follows the print.} Lens artifacts belong to
+the taking lens and therefore ought, strictly, to precede exposure. \EM{}
+splits them: \emph{geometric and irradiance} effects (distortion, vignetting,
+chromatic aberration) are applied pre-exposure where they physically belong;
+\emph{appearance} effects associated with viewing and projection (bloom,
+diffusion) are applied post-print. Section~\ref{sec:optical} specifies the
+split and the rationale for each.
+\item \textbf{Aging is last.} Physical damage to the film or print happens
+after everything else and is not attenuated by any subsequent process.
+\end{enumerate}
+
+\subsection{Domain Transitions}
+
+The pipeline traverses four distinct numerical domains, and every bug class we
+anticipate arises at a transition between them. Table~\ref{tab:domains} is the
+normative statement of what quantity is carried at each point.
+
+\begin{table}[htbp]
+\caption{Numerical Domains Along the Pipeline}
+\label{tab:domains}
+\begin{center}
+\renewcommand{\arraystretch}{1.15}
+\begin{tabularx}{\columnwidth}{@{}l>{\raggedright\arraybackslash}Xll@{}}
+\toprule
+\textbf{Domain} & \textbf{Quantity} & \textbf{Range} & \textbf{Format} \\
+\midrule
+Scene linear & Relative exposure $E$, $E=1$ at diffuse white & $[0, 64]$ & RGBA32F \\
+Log exposure & $x = \logE$ & $[-4, +2]$ & RGBA32F \\
+Negative density & $D$, Status M & $[0.1, 3.5]$ & RGBA16F \\
+Print exposure & $E' = T \cdot L$ & $[0,\ 8]$ & RGBA16F \\
+Print density & $D'$, Status A & $[0.05, 2.6]$ & RGBA16F \\
+Display & Encoded P3 / sRGB & $[0,1]$ & RGBA8 / RGBA16F \\
+\bottomrule
+\end{tabularx}
+\end{center}
+\end{table}
+
+Note that the format column permits \texttt{half} precision only from the
+density domain onward. In density, values are compressed into roughly
+$[0, 3.5]$ with meaningful resolution of $0.001$; \texttt{half} provides
+approximately $0.0005$ resolution at $D=2$, which is adequate. In scene linear,
+a 16-stop range requires representing $10^{-4}$ and $10^{1}$ with equal relative
+precision, and \texttt{half}'s subnormal behavior near $10^{-4}$ introduces
+visible shadow quantization. Constraint CR-05 exists for this reason and is
+tested by NFR-06.
+
+\subsection{Concurrency Model}
+
+Three execution contexts exist and are strictly separated:
+
+\begin{itemize}
+\item \textbf{Main actor.} All SwiftUI state, all user input, all
+\texttt{Recipe} mutation. The \texttt{Recipe} is a value type; mutations are
+cheap and produce a new immutable snapshot.
+\item \textbf{Render actor.} A dedicated serial \texttt{actor} owning the
+\texttt{MTLCommandQueue}, the resource heap, and the pipeline state cache.
+Receives immutable \texttt{Recipe} snapshots, coalesces them (only the most
+recent pending snapshot is rendered --- intermediate ones are dropped), and
+enqueues GPU work.
+\item \textbf{I/O queue.} A concurrent \texttt{DispatchQueue} for RAW decode,
+thumbnail generation, database writes, and export encoding.
+\end{itemize}
+
+The coalescing behavior on the render actor is what makes slider dragging feel
+correct. During a drag, parameter updates arrive at up to 120\,Hz while the
+render takes 8--16\,ms. Queueing every update produces mounting latency; the
+render actor therefore holds a single \texttt{pendingRecipe} slot, overwrites
+it on each update, and picks up the latest value when the previous frame's
+command buffer completes. This is specified in Section~\ref{sec:apparch} with
+the full state machine.

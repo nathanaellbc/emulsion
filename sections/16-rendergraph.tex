@@ -1,0 +1,228 @@
+\section{The Render Graph}
+\label{sec:rendergraph}
+
+\subsection{Why a Graph}
+
+Three requirements make a hand-written sequence of encoder calls untenable.
+
+First, the aging stage injects parameters at four different pipeline points
+(Section~\ref{sec:aging}), so the "pipeline" is not a linear sequence of UI
+panels. Second, correctly invalidating the baked LUT
+(Section~\ref{sec:lutbake}) and the halation pyramid requires knowing which
+parameters each pass depends on, and maintaining that knowledge by hand across
+25 parameters and 14 passes is a defect generator. Third, the roadmap calls for
+node-based editing, which is a graph by definition; building the graph now costs
+little and building it later costs a rewrite.
+
+\subsection{Graph Model}
+
+A graph is a set of \emph{passes}, each declaring:
+
+\begin{itemize}
+\item \textbf{Reads}: resource identifiers it samples or reads.
+\item \textbf{Writes}: resource identifiers it produces, with descriptors.
+\item \textbf{Parameter dependencies}: the set of parameter keys whose values
+affect its output.
+\item \textbf{Execute}: a closure that encodes GPU work given resolved
+resources.
+\end{itemize}
+
+\begin{lstlisting}[language=Swift, caption={Pass declaration.}, label={lst:pass}]
+protocol RenderPass {
+    var name: String { get }
+    var reads: [ResourceID] { get }
+    var writes: [ResourceWrite] { get }
+    /// Keys whose mutation dirties this pass's output.
+    var parameterKeys: Set<ParameterKey> { get }
+
+    func encode(into: MTLCommandBuffer,
+                resources: ResourceTable,
+                params: ResolvedParameters) throws
+}
+
+struct ResourceWrite {
+    let id: ResourceID
+    let descriptor: TextureDescriptorSpec   // resolution-relative
+    let access: Access                      // .write, .readWrite
+}
+\end{lstlisting}
+
+Resource descriptors are \emph{resolution-relative}: a pass declares that it
+writes a texture at scale $1$, $1/2$, or $1/16$ of the render extent, and the
+concrete size is resolved at compile time from the target extent. This is what
+allows the identical graph to serve a $1024$-pixel preview and a $4032$-pixel
+export with no branching, and it is the structural guarantee behind NFR-07.
+
+\subsection{Compilation}
+
+Graph compilation runs on the render actor and proceeds in five phases:
+
+\begin{enumerate}
+\item \textbf{Topological sort.} Kahn's algorithm over the read/write edges.
+A cycle is a programming error and traps in debug builds.
+\item \textbf{Dead pass elimination.} Passes whose outputs are not
+transitively read by the final output are removed. This is how disabling
+halation, grain, or aging removes their cost entirely rather than executing them
+with a zero strength --- which is a real and common performance bug in filter
+chains.
+\item \textbf{Fusion.} Adjacent passes that are pointwise, write to a single
+resource of identical extent, and have exactly one consumer are merged into a
+single tile dispatch. The fusion candidates are marked by a
+\texttt{isPointwise} capability on the pass.
+\item \textbf{Lifetime analysis.} For each resource, the first-writer and
+last-reader indices in the sorted order define a live interval.
+\item \textbf{Allocation.} Linear-scan register allocation over the heap using
+the live intervals, followed by barrier insertion at each write-after-read and
+read-after-write boundary.
+\end{enumerate}
+
+Compilation is memoized on a hash of the enabled-pass set and the target extent.
+In steady-state editing --- dragging a slider --- no recompilation occurs;
+only the parameter buffers change.
+
+\subsection{Dirty Tracking}
+
+The parameter model is a flat dictionary from \texttt{ParameterKey} to value,
+with a monotonically increasing version stamp per key. Each pass caches the
+version vector it last executed with. A pass is dirty if any key in its
+\texttt{parameterKeys} has advanced, or if any resource it reads was rewritten.
+
+The dirty set propagates forward transitively. The practical consequences are
+worth stating explicitly because they are the entire reason the application
+feels responsive:
+
+\begin{table}[htbp]
+\caption{Incremental Cost of Parameter Changes}
+\label{tab:dirtycost}
+\begin{center}
+\renewcommand{\arraystretch}{1.15}
+\begin{tabularx}{\columnwidth}{@{}>{\raggedright\arraybackslash}Xll@{}}
+\toprule
+\textbf{Changed parameter} & \textbf{Re-runs} & \textbf{Cost} \\
+\midrule
+Printer lights, print density & LUT + pointwise & $0.9\times$ \\
+Push/pull, dev. time, temp.   & LUT + pointwise & $0.9\times$ \\
+Print stock, negative stock   & LUT + pointwise & $0.9\times$ \\
+Grain amount                  & grain combine only & $0.2\times$ \\
+Grain size, seed              & grain field + combine & $0.4\times$ \\
+Halation intensity, bias      & halation combine & $0.3\times$ \\
+Halation threshold, radius    & full pyramid + all downstream & $1.0\times$ \\
+Coupler activity              & interlayer + downstream & $0.8\times$ \\
+Vignetting, distortion        & full graph & $1.0\times$ \\
+Exposure compensation         & full graph & $1.0\times$ \\
+\bottomrule
+\multicolumn{3}{@{}p{0.95\columnwidth}@{}}{\footnotesize Cost relative to a full graph execution. Grain amount --- the most-dragged control in user testing --- costs one fifth of a full render.}
+\end{tabularx}
+\end{center}
+\end{table}
+
+\subsection{Resolution Decoupling}
+
+Preview and export are the same graph at different extents, but the preview must
+additionally respond to zoom. Three preview modes exist:
+
+\begin{itemize}
+\item \textbf{Fit.} Render extent is the view's pixel size, typically
+$1179 \times 884$. The entire graph runs at that extent. Full graph time is
+approximately 4\,ms.
+\item \textbf{Zoomed, $< 100\%$.} Render extent is the view size; the source is
+sampled from an appropriate mip of the decoded RAW. Grain and halation are
+computed at render extent with the correct physical scaling of
+\eqref{eq:formatscale}, so they remain physically consistent.
+\item \textbf{Zoomed, $\geq 100\%$.} A region-of-interest render. The graph is
+compiled for the visible tile plus an apron whose width is the maximum spatial
+support of any enabled pass --- dominated by halation, which at
+$\ell_R = 95\,\mu$m and 100\% zoom is roughly $3\ell$ or 32 pixels, plus the
+pyramid's implicit support. The apron computation is derived from the passes
+rather than hardcoded, which is essential because enabling a large-radius
+diffusion filter would otherwise produce a visible seam at tile boundaries.
+\end{itemize}
+
+The apron requirement is stated formally: for a chain of passes with spatial
+supports $\rho_i$ pixels at their own scale $\varsigma_i$, the apron at render
+extent is
+
+\begin{equation}
+\rho_{\mathrm{apron}} = \sum_i \frac{\rho_i}{\varsigma_i},
+\end{equation}
+
+summing rather than maximizing because supports compose. For the default
+configuration this is 96 pixels, which is a 20\% area overhead on a
+$1179\times884$ tile --- acceptable, and far cheaper than rendering the full
+frame at 100\%.
+
+\subsection{Preview Progressive Refinement}
+
+During an active gesture, the graph renders at half the fit extent and upscales,
+which cuts cost by $4\times$ and is imperceptible while the image is moving. On
+gesture end, a full-extent render is scheduled after a 60\,ms debounce. If a new
+gesture begins during the debounce, the refinement is cancelled before
+encoding.
+
+Grain is the exception: it is disabled during gesture and enabled on refinement,
+because half-resolution grain that is then upscaled is visibly wrong and the
+transition is more distracting than its absence. This is a deliberate,
+documented deviation from strict WYSIWYG during motion only.
+
+\subsection{Export Path}
+
+Export runs the same graph at full extent, with three differences:
+
+\begin{enumerate}
+\item Tiling. If the full-extent live set would exceed the memory budget, the
+image is split into tiles with the computed apron and the graph is executed per
+tile. The tile size is chosen so that the live set fits in 400\,MB, and tiles
+are processed serially with the heap reused.
+\item The grain lattice is in film coordinates, so tiled grain is seamless by
+construction --- there is no tile-boundary discontinuity to reconcile. This is
+a direct payoff of the resolution-independence design in
+Section~\ref{sec:grain}.
+\item The output transform targets the requested export color space rather than
+the display's.
+\end{enumerate}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[
+  font=\scriptsize,
+  box/.style={draw=emLine, rounded corners=2pt, minimum height=6mm, text width=24mm, align=center, fill=emGray},
+  res/.style={draw=emBlue!60, fill=emBlue!8, rounded corners=1pt, minimum height=5mm, text width=17mm, align=center},
+  ar/.style={-{Latex[length=1.4mm]}, draw=emLine}
+]
+\node[box] (r) at (0,0) {Recipe (value type)};
+\node[box, below=5mm of r] (c) {Graph compile\\\scriptsize sort / DCE / fuse};
+\node[box, below=5mm of c] (a) {Lifetime + alias};
+\node[box, below=5mm of a] (d) {Dirty set};
+\node[box, below=5mm of d] (e) {Encode};
+
+\node[res, right=8mm of c] (m1) {memoized on\\pass set + extent};
+\node[res, right=8mm of d] (m2) {version vectors\\per parameter key};
+\node[res, right=8mm of e] (m3) {MTLCommand\\Buffer};
+
+\foreach \x/\y in {r/c, c/a, a/d, d/e} \draw[ar] (\x) -- (\y);
+\draw[ar, dashed] (m1) -- (c);
+\draw[ar, dashed] (m2) -- (d);
+\draw[ar] (e) -- (m3);
+\end{tikzpicture}
+\caption{Render graph execution flow. Compilation is memoized; steady-state slider dragging touches only the dirty set and the encode step.}
+\label{fig:graphflow}
+\end{figure}
+
+\subsection{Testability}
+
+The graph is a pure data structure until \texttt{encode} is called, which makes
+several important properties unit-testable without a GPU:
+
+\begin{itemize}
+\item \textbf{Topology.} Given a recipe, assert the compiled pass list. This
+catches accidental reordering, which is the highest-severity class of imaging
+regression.
+\item \textbf{Dead pass elimination.} Assert that disabling halation removes
+five passes.
+\item \textbf{Aliasing correctness.} Assert that no two resources with
+overlapping live intervals share an allocation offset. This is checked
+exhaustively by a property-based test over randomly generated graphs.
+\item \textbf{Dirty propagation.} Assert the re-run set for each parameter key
+matches Table~\ref{tab:dirtycost}. This table is generated \emph{from} the test,
+not written by hand, so it cannot drift.
+\end{itemize}

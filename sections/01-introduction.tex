@@ -1,0 +1,161 @@
+\section{Introduction}
+
+\subsection{Document Purpose and Audience}
+
+This document is the primary engineering specification for \EM{}, an iOS
+application that reconstructs the analog photographic development chain as a
+sequence of physically motivated computational transforms operating on
+scene-referred RAW sensor data.
+
+It is written to serve three audiences simultaneously, and each section is
+marked for its intended reader where the distinction matters:
+
+\begin{itemize}
+\item \textbf{Implementing engineers} require the mathematics, the numerical
+ranges, the GPU dispatch topology, the memory budget, and the persistence
+schema. Sections~\ref{sec:colorspace} through~\ref{sec:schema} are normative for
+implementation; where a formula appears with an equation number, that formula
+is the contract.
+\item \textbf{Technical reviewers and prospective investors} require the
+argument that the approach is differentiated, defensible, and achievable.
+Sections~\ref{sec:intro-thesis}, \ref{sec:background}, \ref{sec:roadmap},
+\ref{sec:business}, and \ref{sec:risks} carry that argument and can be read
+independently of the mathematics.
+\item \textbf{Product and design stakeholders} require the interaction model
+and the mapping from physical parameter to user-facing control.
+Section~\ref{sec:ui} is the interface specification and
+Table~\ref{tab:controlmap} is the authoritative translation table between
+laboratory terminology and internal parameters.
+\end{itemize}
+
+\subsection{Scope}
+
+In scope for the release covered by this document (v1.0, ``Still Photography''):
+RAW capture on iPhone, the ten-stage development pipeline, non-destructive
+editing with persisted parameter graphs, preset and recipe management, and
+export to display-referred and intermediate formats.
+
+Explicitly out of scope for v1.0, and deferred to the roadmap in
+Section~\ref{sec:roadmap}: video capture and real-time video emulation, ACES
+compliance certification, the macOS companion application, cloud
+synchronization, user-authored film profiles, and any machine-learning
+component. These are specified at architectural level only, sufficient to
+guarantee that v1.0 decisions do not foreclose them.
+
+\subsection{The Central Thesis}
+\label{sec:intro-thesis}
+
+The thesis of \EM{} is that the perceptual gap between mobile ``film camera''
+applications and professional film emulation is not a gap of taste but a gap of
+\emph{state space}. A lookup table is a memoryless, pointwise function
+$f:\Rspace^3 \to \Rspace^3$. It cannot express any phenomenon whose output at a
+pixel depends on the neighborhood of that pixel, on the local statistics of the
+image, or on a physical quantity that was destroyed before the lookup table was
+applied.
+
+Nearly every phenomenon that a trained eye uses to identify photographic film
+is exactly such a phenomenon:
+
+\begin{itemize}
+\item \textbf{Halation} is a spatial convolution whose strength depends on
+scene luminance above a threshold and whose radius depends on wavelength. It is
+not pointwise.
+\item \textbf{Grain} is a stochastic process whose local variance depends on
+local density and whose spatial correlation depends on emulsion structure. It
+is not pointwise, and it is not deterministic.
+\item \textbf{Interlayer inhibition} (the DIR coupler effect that gives color
+negative film its characteristic edge behavior and saturation-versus-density
+relationship) is a cross-channel spatial coupling. It is not pointwise.
+\item \textbf{Highlight roll-off} depends on the linear scene-referred
+radiance of the highlight, which a display-referred JPEG has already clipped.
+The information required is not present in the input.
+\end{itemize}
+
+A pointwise operator applied to a display-referred image is therefore not an
+approximation of film that happens to be imperfect; it is a class of function
+that provably cannot represent the target. \EM{} is the argument that carrying
+scene-referred data and modelling the actual transport is both feasible on
+current mobile silicon and perceptually decisive.
+
+\subsection{Design Principle: Parameter Honesty}
+
+A secondary principle governs every user-facing decision in this document. We
+call it \emph{parameter honesty}: no control is exposed unless it corresponds
+to a physical quantity in the model, and no control is named for its perceptual
+effect when a laboratory name exists.
+
+This is not skeuomorphism. The application does not draw a fake developing
+tank. It is the assertion that when a user increases \emph{development time},
+the increase should propagate through the contrast index, which should steepen
+the characteristic curve, which should raise mid-scale density, which should
+change how the print stock's shoulder engages, and the resulting image should
+differ from a naive contrast increase in precisely the ways that a real
+push-processed negative differs. If the model is correct, the user learns
+photography by using the application. If the model is a lookup table wearing
+laboratory vocabulary, the user learns nothing and the vocabulary is a lie.
+
+Concretely, parameter honesty implies three engineering constraints that
+recur throughout this document:
+
+\begin{enumerate}
+\item \textbf{No orphan parameters.} Every element of the parameter vector
+$\theta$ defined in Section~\ref{sec:apparch} appears in at least one equation
+in Sections~\ref{sec:negative}--\ref{sec:aging}.
+\item \textbf{Order is physical, not arbitrary.} Grain is applied to density,
+not to the printed image, because grain is a property of the emulsion. Halation
+is applied at exposure, not at output, because scattering happens before the
+latent image forms. The pipeline order in Section~\ref{sec:arch} is derived,
+not chosen.
+\item \textbf{Defaults are measurements, not preferences.} The per-stock
+parameters in Appendix~\ref{app:stockparams} are fit to published sensitometric
+data and scanned reference wedges, not authored by eye.
+\end{enumerate}
+
+\subsection{Summary of Contributions}
+
+The specific technical contributions specified in this document are:
+
+\begin{enumerate}
+\item A \emph{differentiable characteristic curve} formulation
+(Section~\ref{sec:negative}) constructed from softplus primitives, giving
+independent analytic control of toe sharpness, straight-line gamma, shoulder
+sharpness, and $\Dmin$/$\Dmax$ asymptotes, with $C^\infty$ continuity and a
+closed-form derivative required for both the tone-mapping Jacobian and the
+grain variance model.
+\item A \emph{filtered-Poisson grain model} (Section~\ref{sec:grain}) derived
+from Campbell's theorem, which yields an analytic Wiener spectrum and therefore
+permits exact spectral synthesis at any output resolution while preserving the
+correct Selwyn granularity--density relationship and the correct
+resolution-dependent appearance under downsampling.
+\item A \emph{physically parameterized halation model}
+(Section~\ref{sec:halation}) using an exponential point spread function whose
+2D optical transfer function is available in closed form, together with a
+third-order recursive filter approximation that evaluates in $O(1)$ per pixel
+independent of radius.
+\item A \emph{printer-light color control surface}
+(Section~\ref{sec:printerlights}) calibrated in the industry-standard unit of
+$0.025$ in $\log_{10}$ exposure per point, making \EM{} grades numerically
+transferable to and from professional laboratory practice.
+\item A \emph{render graph and precision policy} (Sections~\ref{sec:metal},
+\ref{sec:rendergraph}) that sustains interactive editing on 48-megapixel
+captures through resolution-decoupled preview, pointwise-chain LUT baking with
+tetrahedral interpolation, and tile-memory kernel fusion.
+\end{enumerate}
+
+\subsection{Document Conventions}
+
+Scene-referred linear quantities are written as radiometric exposures $E$ with
+implied units of lux-seconds at the film plane. Logarithmic exposure is always
+base ten, $x = \logE$, following sensitometric convention. Optical density is
+$D = -\log_{10} T$ where $T$ is transmittance. Vectors over the three color
+records are written in boldface, $\mathbf{D} = (D_R, D_G, D_B)^\top$.
+Convolution is $*$, the two-dimensional Fourier transform is
+$\mathcal{F}\{\cdot\}$, and spatial frequency in cycles per millimeter at the
+film plane is $f$.
+
+Requirement identifiers follow the pattern \reqid{FR-nn} for functional
+requirements, \reqid{NFR-nn} for non-functional requirements, and \reqid{CR-nn}
+for constraints, and are defined in Section~\ref{sec:requirements}.
+
+Where a numerical value is given as a default, it is the shipping default and
+is understood to be overridable by the stock profile.

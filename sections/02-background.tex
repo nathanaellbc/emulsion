@@ -1,0 +1,155 @@
+\section{Background and Related Work}
+\label{sec:background}
+
+\subsection{Photographic Film as an Imaging System}
+
+A color negative film is a stack of light-sensitive layers coated on a
+transparent base. In simplified form, from the incident-light side inward:
+an ultraviolet-absorbing overcoat; a blue-sensitive layer forming yellow dye; a
+yellow filter layer that prevents residual blue light from reaching the layers
+below; a green-sensitive layer forming magenta dye; a red-sensitive layer
+forming cyan dye; the acetate or polyester base; and an antihalation backing
+that absorbs light which passes entirely through the emulsion.
+
+Each sensitized layer contains silver halide microcrystals suspended in
+gelatin. When a crystal absorbs sufficient photons, a small cluster of metallic
+silver atoms forms on its surface --- the \emph{latent image}. Development
+chemically reduces the entire crystal to metallic silver, an amplification of
+order $10^8$--$10^9$. In color film, the oxidized developer then couples with
+dye-forming compounds in the layer, producing dye clouds; the silver is
+subsequently bleached and fixed away, leaving only dye.
+
+Four consequences of this architecture drive the entire \EM{} model:
+
+\begin{enumerate}
+\item \textbf{The response is logarithmic and sigmoidal.} Because
+crystals have a distribution of sizes and sensitivities, the fraction developed
+as a function of exposure follows a smooth cumulative distribution, producing
+the characteristic $D$ versus $\logE$ curve with its toe, straight line, and
+shoulder. This is modelled in Section~\ref{sec:negative}.
+\item \textbf{The image is granular by construction.} The final density is
+the sum of discrete dye clouds at effectively random positions. The signal is
+not merely noisy; its noise is structurally tied to how much of the image was
+formed. This is modelled in Section~\ref{sec:grain}.
+\item \textbf{Layers interact.} Development inhibitors released by one layer
+diffuse laterally and into adjacent layers, suppressing development there. This
+is the DIR (Development Inhibitor Releasing) coupler mechanism, and it is
+responsible for both the edge-enhancement that gives negative film its apparent
+acutance and the cross-channel behavior that keeps saturation controlled at
+high density. This is modelled in Section~\ref{sec:interlayer}.
+\item \textbf{Light scatters inside the stack.} Light not absorbed on first
+pass reflects from layer interfaces and from the base, re-exposing the emulsion
+at a displaced position. Because the red-sensitive layer sits deepest and red
+light penetrates furthest, the effect is strongly red-biased. This is halation,
+modelled in Section~\ref{sec:halation}.
+\end{enumerate}
+
+The negative is then optically printed: white light passes through the negative
+and exposes a \emph{print stock}, which has its own, much steeper,
+characteristic curve. The print stock is where most of the final contrast and
+color character is created. Reproducing this second transfer is what separates
+a ``film look'' from a ``scan of a negative'' look, and its omission is the
+most common failure of consumer film simulations.
+
+\subsection{Prior Art in Professional Tools}
+
+Desktop film emulation divides into three technical families.
+
+\subsubsection{Lookup-table pipelines}
+The dominant approach in color grading practice applies a 3D lookup table (3D
+LUT), typically $33^3$ or $65^3$, generated offline. Print film emulation LUTs
+are the canonical example: a single LUT captures the composite negative-plus-print
+transfer for a fixed set of printer lights. This is fast and reproducible, and
+it is genuinely correct for the pointwise part of the transform. Its limitation
+is definitional: a LUT cannot carry spatial or stochastic behavior, so halation,
+grain, and interlayer effects must be added by separate operators, and the LUT
+must be regenerated whenever a parameter inside the baked chain changes. \EM{}
+uses LUTs as an \emph{optimization} for the pointwise sub-chain
+(Section~\ref{sec:lutbake}) but never as the model.
+
+\subsubsection{Parametric density models}
+Tools in the Dehancer and FilmConvert family expose parameters that plausibly
+correspond to film behavior and evaluate a parametric transfer function per
+pixel, augmented by spatial passes for halation and bloom and a procedural
+grain generator. This is the family \EM{} belongs to. The distinguishing
+questions within the family are how faithfully the density model is fit to
+sensitometry, whether the grain model is statistically grounded or merely
+textural, and whether the print stage is a separate physical transfer or a
+cosmetic contrast curve.
+
+\subsubsection{Spectral and layer-resolved simulation}
+The most rigorous approach models the spectral sensitivity of each layer, the
+spectral transmittance of each dye, and the spectral power distribution of the
+printer illuminant, integrating over wavelength rather than over three
+channels. This handles metamerism and illuminant changes correctly and predicts
+crosstalk from first principles rather than by fitted matrix. It is
+computationally expensive --- typically 31 or more wavelength samples --- and
+requires spectral data that is not publicly available for most stocks. \EM{}
+adopts a \emph{reduced spectral} strategy (Section~\ref{sec:colorspace}): the
+crosstalk matrices and the printer-light response are derived from a spectral
+model offline, at profile authoring time, and baked into three-channel
+operators for runtime. This captures most of the spectral benefit at
+three-channel cost, and it leaves the door open to a full spectral path in a
+later release.
+
+\subsection{Prior Art in Mobile Applications}
+
+Table~\ref{tab:priorart} summarizes the capability boundary. The column
+\emph{Scene-referred} is the decisive one: applications that begin from a
+processed, display-referred image have already lost the highlight information
+that the film shoulder is supposed to compress, and they cannot recover it.
+
+\begin{table}[htbp]
+\caption{Capability Comparison, Mobile Film Simulation}
+\label{tab:priorart}
+\begin{center}
+\renewcommand{\arraystretch}{1.15}
+\begin{tabular}{@{}lccccc@{}}
+\toprule
+\textbf{Class} & \textbf{Scene} & \textbf{Print} & \textbf{Proc.} & \textbf{Phys.} & \textbf{Non-} \\
+ & \textbf{ref.} & \textbf{stage} & \textbf{grain} & \textbf{halation} & \textbf{destr.} \\
+\midrule
+Retro filter apps      & --- & --- & --- & --- & --- \\
+LUT-based camera apps  & --- & $\circ$ & --- & --- & $\circ$ \\
+Pro mobile RAW editors & \checkmark & --- & $\circ$ & --- & \checkmark \\
+Desktop film emulation & \checkmark & \checkmark & \checkmark & \checkmark & \checkmark \\
+\midrule
+\textbf{\EM{}}         & \checkmark & \checkmark & \checkmark & \checkmark & \checkmark \\
+\bottomrule
+\multicolumn{6}{@{}l@{}}{\footnotesize \checkmark\ full; $\circ$\ partial or cosmetic; ---\ absent.}
+\end{tabular}
+\end{center}
+\end{table}
+
+The observation motivating \EM{} is that the rightmost row of
+Table~\ref{tab:priorart} has, until recently, been unreachable on mobile for
+performance reasons. That constraint has lapsed. An A17-class or later mobile
+GPU sustains several teraflops of half-precision throughput with unified memory
+and tile-local storage; the pipeline specified in Section~\ref{sec:metal}
+requires approximately 40--60 arithmetic operations and 3 texture fetches per
+pixel for the pointwise chain, plus four separable spatial passes. At
+$4032\times3024$ this is a workload measured in tens of milliseconds, not
+seconds. The gap in the market is therefore an engineering-effort gap, not a
+silicon gap --- which is precisely the kind of gap a focused team can close.
+
+\subsection{Position Relative to Apple's Imaging Stack}
+
+Apple provides three relevant subsystems, and \EM{} deliberately uses each at a
+different level of trust:
+
+\begin{itemize}
+\item \textbf{AVFoundation / ProRAW capture} is used fully and without
+modification. Apple's Bayer demosaic, sensor noise reduction, and lens shading
+correction are excellent and reimplementing them would be value-destructive.
+\item \textbf{Core Image RAW processing} (\texttt{CIRAWFilter}) is used as the
+demosaic and linearization front end, configured to produce a
+\emph{scene-referred linear} output with tone mapping, local contrast, and
+sharpening disabled. This is the critical configuration decision of the entire
+application and is specified in detail in Section~\ref{sec:raw-config}.
+\item \textbf{Core Image's filter graph} is \emph{not} used for the development
+pipeline. Its concatenation and tiling behavior are opaque, its precision
+guarantees are insufficient for a density-domain pipeline, and its
+stochastic-noise support cannot express the grain model. The pipeline is
+implemented directly in Metal with an application-owned render graph
+(Section~\ref{sec:rendergraph}).
+\end{itemize}

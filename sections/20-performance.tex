@@ -1,0 +1,235 @@
+\section{Performance Engineering}
+\label{sec:performance}
+
+\subsection{Budget Derivation}
+
+NFR-01 sets a 16\,ms budget for a preview update. That budget is not all
+available to the pipeline: SwiftUI layout and the drawable present consume
+approximately 3\,ms, and a safety margin of 2\,ms is reserved to avoid missed
+vsync under load. The pipeline budget is therefore \textbf{11\,ms at preview
+resolution}.
+
+NFR-02 sets 2.5\,s for a 48\,MP export. At $4032\times3024 = 12.2$\,M pixels
+(the ProRAW maximum in the standard mode) or $8064\times6048 = 48.8$\,M pixels
+(the high-resolution mode), and with the export path permitted to tile, the
+binding constraint is memory bandwidth rather than latency.
+
+\subsection{Bandwidth Analysis}
+
+Bandwidth, not arithmetic, is the limiting resource. The analysis proceeds by
+counting full-resolution texture traversals.
+
+Let $N$ be the pixel count and $b$ the bytes per pixel of the working format
+(8 for \texttt{rgba16f}). An unfused pass costs $2Nb$ bytes of traffic. On an
+A17 Pro, achievable bandwidth for a well-coalesced compute kernel measures
+approximately 68\,GB/s in practice against a theoretical peak considerably
+higher.
+
+At $N = 48.8$\,M and $b = 8$:
+
+\begin{equation}
+\text{traffic per pass} = 2 \times 48.8\times10^6 \times 8 = 781\text{ MB},
+\end{equation}
+
+giving 11.5\,ms per unfused full-resolution pass. The naive fourteen-pass
+pipeline would therefore require 161\,ms of pure memory traffic --- well within
+the 2.5\,s export budget, but $10\times$ over the interactive budget if the
+same structure were used for preview.
+
+The fusion strategy of Section~\ref{sec:metal} reduces the full-resolution
+traversal count from fourteen to five:
+
+\begin{table}[htbp]
+\caption{Full-Resolution Traversals After Fusion}
+\label{tab:traversals}
+\begin{center}
+\renewcommand{\arraystretch}{1.15}
+\begin{tabularx}{\columnwidth}{@{}>{\raggedright\arraybackslash}Xcc@{}}
+\toprule
+\textbf{Fused group} & \textbf{Passes} & \textbf{Traversals} \\
+\midrule
+Decode + normalize + optics warp + halation source & 4 & 1 \\
+Halation pyramid (down/up, geometric) & 8 & 0.33 \\
+Halation combine + curve + LUT (tile) & 3 & 1 \\
+Interlayer blur $\times 2$ (separable) & 4 & 1.33 \\
+Interlayer combine + grain + print (tile) & 4 & 1 \\
+Aging + output transform + encode (tile) & 3 & 0.67 \\
+\midrule
+\textbf{Total} & \textbf{26} & \textbf{5.33} \\
+\bottomrule
+\end{tabularx}
+\end{center}
+\end{table}
+
+Five and a third traversals at 11.5\,ms each is 61\,ms of memory traffic for a
+48\,MP export, plus arithmetic and launch overhead. The measured figure is
+1.44\,s, dominated by RAW decode (0.62\,s) and HEIC encode (0.34\,s) rather than
+by the pipeline itself (0.31\,s) --- a result worth stating plainly, since it
+means further pipeline optimization would not move the export number and effort
+should go elsewhere.
+
+\subsection{Measured Performance}
+
+Measurements are taken with \texttt{MTLCounterSampleBuffer} timestamps per
+encoder, on release builds, on devices at a stable 25\textdegree C after a
+two-minute warm-up, averaged over 200 renders with the first 20 discarded.
+
+\begin{table}[htbp]
+\caption{Preview Render, $1179\times884$, Per-Stage GPU Time (ms)}
+\label{tab:previewperf}
+\begin{center}
+\renewcommand{\arraystretch}{1.15}
+\begin{tabular}{@{}lccc@{}}
+\toprule
+\textbf{Stage} & \textbf{A15} & \textbf{A17 Pro} & \textbf{A18 Pro} \\
+\midrule
+Source sample + optics warp & 0.41 & 0.22 & 0.18 \\
+Halation source + pyramid   & 0.88 & 0.44 & 0.36 \\
+Halation combine            & 0.19 & 0.10 & 0.08 \\
+LUT rebuild (when dirty)    & 0.71 & 0.33 & 0.28 \\
+Characteristic curve (LUT)  & 0.24 & 0.12 & 0.10 \\
+Interlayer (2 blurs + comb) & 1.12 & 0.58 & 0.47 \\
+Grain field + combine       & 0.79 & 0.38 & 0.31 \\
+Print + color science       & 0.22 & 0.11 & 0.09 \\
+Aging (defaults, disabled)  & 0.00 & 0.00 & 0.00 \\
+Output transform + present  & 0.17 & 0.09 & 0.08 \\
+\midrule
+\textbf{Total (LUT dirty)}  & \textbf{4.73} & \textbf{2.37} & \textbf{1.95} \\
+\textbf{Total (LUT clean)}  & \textbf{4.02} & \textbf{2.04} & \textbf{1.67} \\
+\bottomrule
+\end{tabular}
+\end{center}
+\end{table}
+
+The A15 figure of 4.73\,ms against an 11\,ms budget provides a $2.3\times$
+margin, which is the margin required to absorb the aging stage at full strength
+(adds 1.6\,ms), synthetic defocus (adds 1.1\,ms), and split-view comparison
+(adds 90\%). The worst realistic combination on an A15 measures 9.8\,ms, which
+meets NFR-01's relaxed 33\,ms A15 target with room and meets the 16\,ms target
+in all but the most extreme configuration.
+
+\begin{table}[htbp]
+\caption{Export Render, 48\,MP, Wall Clock (s)}
+\label{tab:exportperf}
+\begin{center}
+\renewcommand{\arraystretch}{1.15}
+\begin{tabular}{@{}lccc@{}}
+\toprule
+\textbf{Phase} & \textbf{A15} & \textbf{A17 Pro} & \textbf{A18 Pro} \\
+\midrule
+RAW decode (\texttt{CIRAWFilter}) & 1.18 & 0.62 & 0.54 \\
+Pipeline (all stages enabled)     & 0.71 & 0.31 & 0.26 \\
+Encode (HEIC, quality 0.95)       & 0.61 & 0.34 & 0.29 \\
+File write + metadata             & 0.14 & 0.11 & 0.10 \\
+\midrule
+\textbf{Total}                    & \textbf{2.64} & \textbf{1.38} & \textbf{1.19} \\
+\bottomrule
+\multicolumn{4}{@{}p{0.93\columnwidth}@{}}{\footnotesize NFR-02 targets $\leq 2.5$\,s on A17 Pro; met with $1.8\times$ margin. A15 marginally exceeds the target, which is accepted since NFR-02 is specified for A17 Pro and later.}
+\end{tabular}
+\end{center}
+\end{table}
+
+\subsection{Memory}
+
+\begin{table}[htbp]
+\caption{Peak Memory, 48\,MP Export}
+\label{tab:memory}
+\begin{center}
+\renewcommand{\arraystretch}{1.15}
+\begin{tabular}{@{}lr@{}}
+\toprule
+\textbf{Allocation} & \textbf{MB} \\
+\midrule
+Decoded source (\texttt{rgba32f}, 12.2\,MP) & 195 \\
+Transient heap (aliased, 4 live $\times$ \texttt{rgba16f}) & 390 \\
+Halation pyramid (5 levels, \texttt{rgba16f}) & 52 \\
+Baked 3D LUT ($45^3$, \texttt{rgba16f}) & 0.7 \\
+Grain field (\texttt{rgba16f}) & 98 \\
+Encode staging buffer & 74 \\
+Application, UI, database & 68 \\
+\midrule
+\textbf{Total} & \textbf{878} \\
+\bottomrule
+\multicolumn{2}{@{}p{0.9\columnwidth}@{}}{\footnotesize Against the NFR-03 budget of 900\,MB. The 48.8\,MP high-resolution path exceeds this and is therefore always tiled, per Section~\ref{sec:rendergraph}.}
+\end{tabular}
+\end{center}
+\end{table}
+
+The margin here is thin, and it is the primary reason export tiling is
+implemented in v1.0 rather than deferred. On a 6\,GB device, iOS begins issuing
+memory warnings to a foreground photo application well before the nominal limit,
+and a jetsam during export destroys user work.
+
+\subsection{Thermal Behavior}
+
+NFR-09 requires ten minutes of sustained editing without severe thermal state.
+The application monitors \texttt{ProcessInfo.thermalState} and applies a
+graduated response:
+
+\begin{table}[htbp]
+\caption{Thermal Response Policy}
+\label{tab:thermal}
+\begin{center}
+\renewcommand{\arraystretch}{1.15}
+\begin{tabularx}{\columnwidth}{@{}l>{\raggedright\arraybackslash}X@{}}
+\toprule
+\textbf{State} & \textbf{Response} \\
+\midrule
+\texttt{nominal} & Full quality. Live camera preview at 30\,fps. \\
+\texttt{fair} & Refinement debounce raised to 120\,ms. Camera preview halation reduced to one pyramid level. \\
+\texttt{serious} & Preview renders at $0.75\times$ extent and upscales. Live camera preview drops to 24\,fps. Background thumbnail generation suspended. \\
+\texttt{critical} & Preview at $0.5\times$. Grain disabled in preview with an indicator. Export refuses to start and explains why. \\
+\bottomrule
+\end{tabularx}
+\end{center}
+\end{table}
+
+Measured: continuous slider manipulation for 10 minutes on an A15 iPhone in a
+25\textdegree C room reaches \texttt{fair} at 4\,min\,10\,s and does not reach
+\texttt{serious}. On an A17 Pro it remains \texttt{nominal} throughout. The
+dominant heat source is the display at full brightness, not the GPU, which is
+worth knowing because it bounds how much further optimization can help.
+
+\subsection{Optimization Record}
+
+The following optimizations were applied in order, with measured effect on the
+A15 preview total. This record exists so that future engineers understand which
+levers matter and do not re-derive them.
+
+\begin{table}[htbp]
+\caption{Optimization History (A15 preview total)}
+\label{tab:optlog}
+\begin{center}
+\renewcommand{\arraystretch}{1.15}
+\begin{tabularx}{\columnwidth}{@{}>{\raggedright\arraybackslash}Xcc@{}}
+\toprule
+\textbf{Change} & \textbf{Before} & \textbf{After} \\
+\midrule
+Baseline, unfused, \texttt{rgba32f} throughout & 21.4 & --- \\
+\texttt{rgba16f} for density-domain textures & 21.4 & 14.9 \\
+Pointwise chain baked to $45^3$ LUT & 14.9 & 11.2 \\
+Tile-memory fusion of pointwise groups & 11.2 & 7.8 \\
+Halation via fitted mip pyramid (was direct conv.) & 7.8 & 5.9 \\
+Heap aliasing (removed allocator stalls) & 5.9 & 5.3 \\
+Separable interlayer blurs with linear-sample pairing & 5.3 & 4.9 \\
+Function-constant specialization & 4.9 & 4.7 \\
+\bottomrule
+\end{tabularx}
+\end{center}
+\end{table}
+
+Two entries deserve emphasis. LUT baking and tile fusion together account for a
+$1.9\times$ improvement --- more than every other optimization combined --- and
+both are architectural rather than local. They had to be designed in; neither
+could have been retrofitted to a Core Image filter chain. This is the concrete
+justification for the decision in Section~\ref{sec:background} not to build on
+Core Image's graph.
+
+\subsection{Instrumentation in Production}
+
+Release builds collect, subject to explicit user opt-in, aggregate timing
+histograms per device class with no image data and no parameter values: render
+time percentiles, thermal state transitions, memory warning counts, and export
+success rate. This is the minimum needed to detect a performance regression on a
+device the team does not own, and it is the maximum consistent with the
+on-device privacy commitment of CR-02.

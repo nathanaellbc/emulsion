@@ -1,0 +1,224 @@
+\section{Color Management and the Working Space}
+\label{sec:colorspace}
+
+\subsection{RAW Decode Configuration}
+\label{sec:raw-config}
+
+The correctness of every subsequent stage rests on obtaining a genuinely
+scene-referred linear image. Apple's RAW pipeline \cite{coreimage} defaults are
+tuned to produce a pleasing display-referred result, and every one of those
+defaults is destructive to our purposes. The required configuration is:
+
+\begin{lstlisting}[language=Swift, caption={Scene-referred RAW decode configuration.}, label={lst:rawconfig}]
+func makeSceneReferredFilter(url: URL) throws -> CIFilter & CIRAWFilter {
+    guard let f = CIRAWFilter(imageURL: url) else { throw DecodeError.unsupported }
+
+    // 1. Defeat every rendering intent Apple applies by default.
+    f.isGamutMappingEnabled       = false
+    f.localToneMapAmount          = 0.0
+    f.extendedDynamicRangeAmount  = 0.0   // we manage headroom ourselves
+    f.boostAmount                 = 0.0   // disables the S-curve entirely
+    f.boostShadowAmount           = 0.0
+    f.contrastAmount              = 0.0
+    f.shadowBias                  = 0.0
+
+    // 2. Defeat spatial processing we intend to model ourselves.
+    f.sharpnessAmount             = 0.0
+    f.detailAmount                = 0.0
+    f.contrastAmount              = 0.0
+    f.luminanceNoiseReductionAmount = 0.0
+    f.colorNoiseReductionAmount     = 0.0
+
+    // 3. Keep the vendor's geometric and shading corrections: these are
+    //    calibration, not interpretation, and reimplementing them is
+    //    value-destructive.
+    f.isLensCorrectionEnabled     = true
+
+    // 4. Preserve capture white balance as the *starting point*; the user
+    //    may override, but we must know what the camera decided.
+    f.neutralTemperature          = f.neutralTemperature
+    f.neutralTint                 = f.neutralTint
+
+    return f
+}
+\end{lstlisting}
+
+The decoded image is requested in a linear working color space with an
+extended range, and the render destination is configured with
+\texttt{CIContext} options that disable any output color management, because
+the render graph performs its own conversion:
+
+\begin{lstlisting}[language=Swift, caption={Context configuration for linear extended-range output.}]
+let ws = CGColorSpace(name: CGColorSpace.extendedLinearDisplayP3)!
+let ctx = CIContext(mtlDevice: device, options: [
+    .workingColorSpace  : ws,
+    .workingFormat      : CIFormat.RGBAf,
+    .cacheIntermediates : false,
+    .highQualityDownsample : true
+])
+\end{lstlisting}
+
+\subsection{Choice of Working Space}
+
+The pipeline requires a working space that (i) encloses the gamut of every
+iPhone sensor after color matrix application, (ii) encloses the gamut of the
+modelled film dyes, which extend outside Rec.\,709 in the cyan and yellow
+regions, (iii) has a white point compatible with the printing model, and (iv)
+has a documented, invertible relationship to CIE XYZ \cite{hunt2011}.
+
+Three candidates were evaluated:
+
+\begin{table}[htbp]
+\caption{Working Space Evaluation}
+\label{tab:workingspace}
+\begin{center}
+\renewcommand{\arraystretch}{1.15}
+\begin{tabularx}{\columnwidth}{@{}l>{\raggedright\arraybackslash}X@{}}
+\toprule
+\textbf{Space} & \textbf{Assessment} \\
+\midrule
+Linear Display P3 & Native to the platform, zero-cost preview conversion, but clips saturated cyans that the modelled cyan dye reaches. Rejected as primary; retained as the display target. \\
+ACEScg (AP1) & Wide enough, industry standard, well-documented transforms, D60 white point requires adaptation to D65 for display. Chosen. \\
+DaVinci Wide Gamut & Wider still, excellent for interchange with Resolve, but the transform is vendor-published rather than standardized. Retained as an export option only. \\
+\bottomrule
+\end{tabularx}
+\end{center}
+\end{table}
+
+\EM{} adopts \textbf{ACEScg} \cite{acescg,st2065} (ACES AP1 primaries, linear,
+D60 white) as the
+internal scene-referred working space. The choice costs one matrix multiply on
+input and one on output relative to staying in Display P3, and buys gamut
+headroom that prevents negative-valued channels from appearing mid-pipeline ---
+which matters enormously, because $\logE$ of a negative number is undefined and
+a single clamped channel produces a visible hue shift in saturated highlights.
+
+\subsection{Input Transform}
+
+The decoded image arrives in extended linear Display P3. The conversion to
+ACEScg is the composition of the P3-to-XYZ matrix, a Bradford
+\cite{lam1985} chromatic
+adaptation from D65 to D60, and the XYZ-to-AP1 matrix:
+
+\begin{equation}
+\mathbf{M}_{\mathrm{in}} = \mathbf{M}_{\mathrm{XYZ}\to\mathrm{AP1}}\,
+\mathbf{M}_{\mathrm{CAT}}^{\mathrm{D65}\to\mathrm{D60}}\,
+\mathbf{M}_{\mathrm{P3}\to\mathrm{XYZ}}
+\label{eq:min}
+\end{equation}
+
+evaluating numerically to
+
+\begin{equation}
+\mathbf{M}_{\mathrm{in}} \approx
+\begin{pmatrix}
+\phantom{-}0.9525 & \phantom{-}0.0343 & \phantom{-}0.0132 \\
+\phantom{-}0.0170 & \phantom{-}0.9754 & \phantom{-}0.0076 \\
+-0.0018 & \phantom{-}0.0107 & \phantom{-}0.9911
+\end{pmatrix}.
+\label{eq:minval}
+\end{equation}
+
+The matrix is precomputed on the host at profile-load time, not in the shader.
+
+The inverse transform for the display path is $\mathbf{M}_{\mathrm{out}} =
+\mathbf{M}_{\mathrm{in}}^{-1}$ followed by the Display P3 transfer function.
+
+\subsection{Exposure Normalization and the Anchor Problem}
+
+Film responds to absolute exposure; a digital sensor reports a relative value
+scaled by an unknown gain. Before the characteristic curve can be applied, the
+image must be anchored so that a known scene reflectance maps to a known
+position on the curve.
+
+\EM{} adopts the standard cinematographic anchor: an 18\% diffuse reflector
+under correct exposure maps to a relative exposure of $E = 0.18$ in the working
+space, which is placed at the film's rated speed point. The transformation is
+
+\begin{equation}
+E_{\mathrm{anchored}} = E_{\mathrm{decoded}} \cdot 2^{\,\varepsilon} \cdot
+\frac{0.18}{g_{\mathrm{cal}}}
+\label{eq:anchor}
+\end{equation}
+
+where $\varepsilon$ is the user's exposure compensation in stops and
+$g_{\mathrm{cal}}$ is a per-device calibration constant relating the decoded
+middle-gray value to the working-space unit. Determining $g_{\mathrm{cal}}$ is a
+calibration task, specified in Section~\ref{sec:calibration}; a wrong
+$g_{\mathrm{cal}}$ manifests as every image sitting too high or too low on the
+characteristic curve, which the user experiences as ``the stocks all look
+flat'' or ``everything blocks up.''
+
+The relation between anchored exposure and the film's rated ISO speed $S$ is
+
+\begin{equation}
+\logE_{\mathrm{film}} = \log_{10}\!\left(E_{\mathrm{anchored}}\right)
++ \log_{10}\!\left(\frac{S}{S_0}\right) + x_{\mathrm{ref}}
+\label{eq:isoshift}
+\end{equation}
+
+with $S_0 = 100$ the reference speed and $x_{\mathrm{ref}}$ the stock's
+speed-point log exposure. This is what makes ``shooting Portra 400 at 800''
+meaningful: it shifts $\logE_{\mathrm{film}}$ by $-0.301$, moving the entire
+image down the characteristic curve into the toe, which the user then
+compensates for by pushing development (Section~\ref{sec:development}) ---
+exactly the real relationship, produced by the model rather than scripted.
+
+\subsection{White Balance in the Working Space}
+
+White balance is applied as a von Kries adaptation in the LMS cone space rather
+than as an RGB channel gain, because channel gain in a wide-gamut space
+produces hue rotation in saturated colors. The operator is
+
+\begin{equation}
+\mathbf{E}' = \mathbf{M}_{\mathrm{AP1}\to\mathrm{LMS}}^{-1}\,
+\mathrm{diag}\!\left(\frac{\boldsymbol{\rho}_{\mathrm{dst}}}{\boldsymbol{\rho}_{\mathrm{src}}}\right)
+\mathbf{M}_{\mathrm{AP1}\to\mathrm{LMS}}\, \mathbf{E}
+\label{eq:vonkries}
+\end{equation}
+
+where $\boldsymbol{\rho}$ are the cone responses to the source and destination
+illuminants and $\mathbf{M}_{\mathrm{AP1}\to\mathrm{LMS}}$ uses the CAT02
+\cite{cie159}
+transform. Because both matrices and the diagonal are constant per frame, the
+whole of \eqref{eq:vonkries} collapses to a single $3\times3$ matrix computed on
+the host, so the shader cost is one matrix multiply.
+
+\subsection{Tungsten Stocks and the Illuminant Question}
+
+A tungsten-balanced stock such as Vision3 500T is not a color filter. It is an
+emulsion whose three layers have different relative sensitivities, calibrated so
+that a 3200\,K illuminant produces equal densities. Modelling it as a blue push
+is wrong; the correct model is a per-layer speed offset $\Delta x_c$ applied to
+the log exposure before the characteristic curve:
+
+\begin{equation}
+x_c \leftarrow x_c + \Delta x_c^{\mathrm{(balance)}}, \quad c \in \{R,G,B\}
+\label{eq:tungsten}
+\end{equation}
+
+with $\Delta x^{\mathrm{(balance)}}$ derived from the ratio of the stock's
+layer sensitivities integrated against the reference illuminant SPD. For a
+tungsten stock shot under daylight without correction, this produces the
+familiar strong blue cast --- and, importantly, produces it \emph{with the
+correct nonlinearity}, because the blue record is driven far up its curve while
+red sits low, so the cast varies with scene luminance rather than being a
+uniform tint. Table~\ref{tab:balance} gives the shipping values.
+
+\begin{table}[htbp]
+\caption{Layer Balance Offsets $\Delta x^{\mathrm{(balance)}}$}
+\label{tab:balance}
+\begin{center}
+\renewcommand{\arraystretch}{1.15}
+\begin{tabular}{@{}lccc@{}}
+\toprule
+\textbf{Stock class} & $\Delta x_R$ & $\Delta x_G$ & $\Delta x_B$ \\
+\midrule
+Daylight (5500\,K aim)  & $0.000$ & $0.000$ & $0.000$ \\
+Tungsten (3200\,K aim)  & $-0.310$ & $-0.055$ & $+0.365$ \\
+Type L long-exposure    & $-0.285$ & $-0.040$ & $+0.325$ \\
+Monochrome panchromatic & $0.000$ & $0.000$ & $0.000$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+\end{table}

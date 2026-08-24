@@ -1,0 +1,238 @@
+\section{Verification and Validation}
+\label{sec:validation}
+
+\subsection{Strategy}
+
+The application makes a falsifiable claim --- that its output is a physically
+motivated simulation rather than an aesthetic approximation --- and the test
+strategy is built to falsify it. Four layers:
+
+\begin{enumerate}
+\item \textbf{Unit tests} over \texttt{EmulsionCore}, which contains the
+mathematics and no GPU code. Fast, hermetic, run on every commit.
+\item \textbf{Reference implementation cross-check.} Every shader has a
+corresponding CPU implementation in Swift. Random inputs are pushed through both
+and compared. This catches the entire class of GPU-specific defects ---
+precision, edge clamping, indexing --- that visual inspection misses.
+\item \textbf{Golden image tests.} A corpus of source images rendered with a
+corpus of recipes, compared against stored references with a perceptual metric.
+\item \textbf{Sensitometric validation.} Synthetic step wedges transported
+through the pipeline and measured, compared against published and measured film
+data. This is what tests the claim itself.
+\end{enumerate}
+
+\subsection{Unit Test Coverage of the Model}
+
+\begin{table}[htbp]
+\caption{Model Unit Tests}
+\label{tab:unittests}
+\begin{center}
+\renewcommand{\arraystretch}{1.12}
+\begin{tabularx}{\columnwidth}{@{}l>{\raggedright\arraybackslash}X@{}}
+\toprule
+\textbf{ID} & \textbf{Assertion} \\
+\midrule
+V-01 & $\softp{a}{u} \to \max(u,0)$ as $a \to 0$; relative error $< 10^{-6}$ at $a = 10^{-4}$. \\
+V-02 & Stable and naive softplus agree to $10^{-6}$ for $|u/a| < 30$; stable form finite for $|u/a| < 10^{6}$. \\
+V-03 & \eqref{eq:charcurve} straight-line slope equals $\gamma$ to $10^{-4}$ at the curve midpoint. \\
+V-04 & \eqref{eq:charcurve} attains $\Dmax$ within $0.02$ when \eqref{eq:wellformed} holds, for 10{,}000 random valid parameter sets. \\
+V-05 & \eqref{eq:pointgamma} matches a central-difference derivative of \eqref{eq:charcurve} to $10^{-5}$. \\
+V-06 & Monotonicity: $D(x_{i+1}) \geq D(x_i)$ over a $10^4$-point sweep, for every reachable UI state (property test). \\
+V-07 & \eqref{eq:speedpoint} inverts \eqref{eq:charcurve}: $D(x_{\mathrm{sp}}) = \Dmin + 0.10 \pm 10^{-4}$. \\
+V-08 & Aim balance \eqref{eq:aimbalance} yields neutral print for every (negative, print) pair: $\Delta E_{00} < 0.5$. \\
+V-09 & Halation PSF integrates to unity: $\left|\int h - 1\right| < 10^{-3}$ under discretization. \\
+V-10 & Gaussian mixture \eqref{eq:gaussmix} matches \eqref{eq:halotf} to $< 3\%$ relative over $[0, 1/2\ell]$. \\
+V-11 & Grain variance at half resolution equals the Selwyn prediction from full resolution to $10\%$. \\
+V-12 & Grain field is bit-identical across two runs with the same seed. \\
+V-13 & Grain field is identical at the same film coordinate for render extents differing by $4\times$. \\
+V-14 & Interlayer operator is mean-preserving: uniform input is unchanged to $10^{-6}$. \\
+V-15 & Tetrahedral interpolation reproduces neutrals exactly: $|R - G|, |G - B| < 10^{-6}$ for neutral input. \\
+V-16 & Null test (AC-7): identity configuration matches direct color conversion, $\Delta E_{00} < 0.5$. \\
+V-17 & Recipe JSON round-trips through every migration version to an identical resolved parameter set. \\
+V-18 & Graph aliasing: no two live-overlapping resources share a heap offset (property test, $10^4$ random graphs). \\
+V-19 & Graph dirty propagation matches the specification table (generates Table~\ref{tab:dirtycost}). \\
+V-20 & Dead pass elimination removes exactly the expected passes for each bypass combination. \\
+\bottomrule
+\end{tabularx}
+\end{center}
+\end{table}
+
+\subsection{Sensitometric Validation}
+
+This is the acceptance test for the central claim, and it is run as a separate
+suite because it requires reference data.
+
+\paragraph{Method} A synthetic 21-step wedge spanning $4.0$ in $\logE$ is
+constructed in the working space, transported through the negative model, and
+the resulting densities read. The measured curve is compared point-by-point
+against the reference $D$--$\logE$ data digitized from the manufacturer's
+datasheet \cite{kodakportra,kodakektar,kodakvision3,kodaktrix,fujidata,ilfordhp5}
+and, where available, against densitometer readings of a physically exposed and
+processed step wedge measured under ISO~5-3 conditions \cite{iso5}.
+
+\paragraph{Metric} Maximum absolute density error over the range $\Dmin + 0.1$
+to $\Dmax - 0.1$, per record. AC-1 tolerance is $0.03$.
+
+\paragraph{Result format} Each stock reports a table of $(\Delta_R, \Delta_G,
+\Delta_B)$ maximum errors and an RMS error. A stock failing AC-1 does not ship;
+it returns to the profile fitter.
+
+The same procedure is applied end-to-end for AC-2: the wedge is transported
+through both negative and print, and the resulting print densities are compared
+against a reference print-through of the same wedge.
+
+\subsection{Grain Spectrum Validation}
+
+Grain is validated in the frequency domain, which is the only way to test it
+meaningfully.
+
+A uniform mid-density field is rendered with grain enabled. The output is
+converted to density, the mean removed, and a periodogram computed with a Hann
+window and radial averaging. The result is compared against
+\eqref{eq:wienerclosed} evaluated with the profile's parameters, and against
+published Wiener spectra where they exist.
+
+Two failure modes this catches that visual inspection does not:
+
+\begin{itemize}
+\item \textbf{Lattice aliasing.} If the grain lattice pitch is close to the
+pixel pitch, the spectrum shows a spike at the lattice frequency. Visually this
+reads as a faint regular texture that most reviewers will describe as "fine" but
+which is plainly wrong in the spectrum.
+\item \textbf{Insufficient decorrelation.} If the hash function has poor
+avalanche behavior in one bit position, adjacent lattice cells correlate and the
+spectrum shows directional structure. This is invisible at normal viewing
+distance and obvious at 400\%.
+\end{itemize}
+
+RMS granularity is validated separately by measuring $\sigma_D$ through a
+simulated $48\,\mu$m aperture across a density sweep and comparing the resulting
+curve against \eqref{eq:grainvar} and against published RMS granularity figures
+(AC-3). The equivalent measurement on the digital output path follows the noise
+methodology of ISO~15739 \cite{iso15739}, which is how the grain figure is
+compared against sensor noise rather than confused with it.
+
+\subsection{Halation Validation}
+
+A synthetic scene containing a small disc of known radiance on a black field is
+rendered. The radial profile of the resulting halo is extracted by azimuthal
+averaging, the direct component subtracted, and an exponential fitted. The fitted
+decay length is compared against $\ell_c$ (AC-4), and the ratio of peak halo
+intensities across channels against $\boldsymbol{\beta}$.
+
+Additionally, the energy conservation property of \eqref{eq:haladd} is tested:
+total scene energy before and after the halation stage must agree to $0.5\%$
+when the source term equals the full image.
+
+\subsection{Calibration}
+\label{sec:calibration}
+
+The constant $g_{\mathrm{cal}}$ of \eqref{eq:anchor} relates the decoded
+middle-gray value to the working-space unit, and it must be determined per
+device generation. The procedure:
+
+\begin{enumerate}
+\item Photograph a calibrated 18\% reflectance gray card under diffuse
+illumination, at a metered exposure, with a fixed manual setting.
+\item Decode with the configuration of Listing~\ref{lst:rawconfig} and convert
+to ACEScg.
+\item Measure the mean of a central patch. This value is
+$g_{\mathrm{cal}}$.
+\item Repeat across illuminants (D65, D50, tungsten, fluorescent) and confirm
+the value is stable to within $\pm 3\%$; a larger spread indicates the white
+balance path is contaminating the anchor.
+\end{enumerate}
+
+Measured $g_{\mathrm{cal}}$ values are stored in a device table keyed by
+\texttt{utsname.machine}, with a fallback derived from the device's reported
+color matrix for unknown devices. The fallback's accuracy is the reason unknown
+new devices are flagged in telemetry.
+
+\subsection{Perceptual Evaluation}
+
+Numerical validation establishes that the model is correct. It does not
+establish that the result is good, and the two are genuinely different
+questions.
+
+A panel of twelve evaluators --- six matching persona P1 (working
+photographers who shoot film) and six matching P2 (colorists) --- performs a
+two-alternative forced choice task. For each of forty scenes, the panel is shown
+the \EM{} render alongside a lab scan of the same scene shot on the
+corresponding real stock, in randomized order, and asked which is the
+photographic film. The target is a discrimination rate below 65\%; chance is
+50\%.
+
+This test is deliberately harsh, and failing it is expected in early rounds. Its
+value is diagnostic: the panel is asked, after each choice, what cue they used.
+The accumulated cue list is the prioritized defect list for the imaging team,
+and in early prototyping it is a far more efficient signal than open-ended
+critique.
+
+A secondary evaluation asks the panel to rank \EM{} against the leading desktop
+film emulation tools on the same source material, which establishes competitive
+position rather than absolute fidelity.
+
+\subsection{Device and Configuration Matrix}
+
+\begin{table}[htbp]
+\caption{Test Matrix}
+\label{tab:testmatrix}
+\begin{center}
+\renewcommand{\arraystretch}{1.15}
+\begin{tabularx}{\columnwidth}{@{}l>{\raggedright\arraybackslash}X@{}}
+\toprule
+\textbf{Dimension} & \textbf{Values} \\
+\midrule
+Device & iPhone 12 (A14), 13 Pro (A15), 15 Pro (A17 Pro), 16 Pro (A18 Pro), iPad Pro M4 \\
+OS & Minimum supported, current release, current beta \\
+Capture & ProRAW 12\,MP, ProRAW 48\,MP, Bayer RAW, imported DNG, imported TIFF \\
+Appearance & Light, dark, increased contrast, reduce transparency \\
+Dynamic Type & Default, XXL \\
+Locale & en-US, de-DE (long strings), ja-JP (CJK), ar-EG (RTL) \\
+Storage & Ample, near-full (cache eviction path) \\
+Thermal & Nominal, artificially induced serious \\
+\bottomrule
+\end{tabularx}
+\end{center}
+\end{table}
+
+\subsection{Continuous Integration}
+
+Every pull request runs: build for all configurations; \texttt{EmulsionCore}
+unit tests (target: under 30\,s); reference cross-check on the simulator;
+golden image tests on a physically attached A17 device in the build farm; a
+static analysis pass; and a performance smoke test that fails the build if the
+preview render regresses more than 10\% against the recorded baseline.
+
+Golden image comparison uses $\Delta E_{00}$ with a mask excluding the grain
+contribution --- computed by rendering the same recipe with $g = 0$ and
+comparing that --- since grain is stochastic across code changes that alter
+dispatch order even when statistically identical. The grain itself is validated
+by the spectral test rather than by image comparison, which is the correct
+division: deterministic parts compared by image, stochastic parts compared by
+statistic.
+
+\subsection{Known Limits of the Model}
+
+Honest specification requires stating what the model does not capture. These are
+accepted limitations for v1.0, documented so that they are not rediscovered as
+bugs:
+
+\begin{itemize}
+\item \textbf{Reciprocity failure} is not modelled. Very long exposures cause
+nonlinear speed loss that differs per layer. The parameter hooks exist
+(\eqref{eq:tungsten} accepts a per-layer offset) but no exposure-time-dependent
+model is fitted. This matters for simulated long exposures only.
+\item \textbf{True spectral rendering} is absent; the reduced spectral strategy
+bakes crosstalk at profile time against a reference illuminant. Scenes with
+strongly non-blackbody illuminants (sodium vapor, some LEDs) will render with
+crosstalk that is subtly wrong.
+\item \textbf{Emulsion MTF} is modelled only through the grain kernel and the
+interlayer effect; the light-scattering resolution loss within the emulsion is
+not separately modelled. The visible consequence is that \EM{} renders slightly
+sharper than the corresponding real stock at high enlargement.
+\item \textbf{Scanner characteristics} are not modelled. Most users' reference
+for "what film looks like" is a scan, and scanners impose their own transfer,
+sharpening, and color handling. The "bypass" print profile partially addresses
+this, but a proper scanner model is future work.
+\end{itemize}

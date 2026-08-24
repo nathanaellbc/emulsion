@@ -1,0 +1,300 @@
+\section{Persistence and Data Model}
+\label{sec:schema}
+
+\subsection{Storage Technology}
+
+SQLite via GRDB is used rather than Core Data or SwiftData. The reasons are
+specific and were weighed against the convenience cost:
+
+\begin{itemize}
+\item The schema is relational and query-heavy (library filtering, recipe
+usage counts, cache eviction by LRU), which is SQL's home ground.
+\item Migrations must be explicit and testable. The imaging model will evolve
+across releases and a user's edit history must survive it; an inferred
+migration is not acceptable for data the user cannot recreate.
+\item Write patterns include high-frequency small writes (edit autosave) that
+benefit from WAL mode and explicit transaction control.
+\item The domain layer is already plain Swift values
+(Section~\ref{sec:apparch}); an object graph framework would push framework
+types into the domain, violating the layering of Table~\ref{tab:layers}.
+\end{itemize}
+
+The database is opened in WAL mode \cite{sqlitewal} with
+\texttt{synchronous = NORMAL},
+\texttt{foreign\_keys = ON}, and a 20\,MB page cache.
+
+\subsection{Entity Relationship Overview}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[
+  font=\scriptsize,
+  ent/.style={draw=emLine, fill=emGray, rounded corners=2pt, minimum width=19mm, minimum height=6mm, align=center},
+  rel/.style={draw=emLine!70, -{Latex[length=1.3mm]}},
+  card/.style={font=\tiny, text=emLine, inner sep=1pt}
+]
+\node[ent] (roll)   at (0,3.2)   {roll};
+\node[ent] (asset)  at (0,1.9)   {asset};
+\node[ent] (edit)   at (0,0.6)   {edit};
+\node[ent] (hist)   at (0,-0.7)  {edit\_history};
+\node[ent] (rend)   at (3.3,1.9) {rendition};
+\node[ent] (recipe) at (3.3,0.6) {recipe};
+\node[ent] (stock)  at (3.3,-0.7){stock\_profile};
+\node[ent] (coll)   at (3.3,3.2) {collection};
+\node[ent] (memb)   at (1.65,3.2){collection\_item};
+
+\draw[rel] (roll)  -- (asset)  node[card, midway, right] {1:N};
+\draw[rel] (asset) -- (edit)   node[card, midway, right] {1:1};
+\draw[rel] (edit)  -- (hist)   node[card, midway, right] {1:N};
+\draw[rel] (asset) -- (rend)   node[card, midway, above] {1:N};
+\draw[rel] (edit)  -- (recipe) node[card, midway, above] {N:1};
+\draw[rel] (recipe)-- (stock)  node[card, midway, right] {N:1};
+\draw[rel] (coll)  -- (memb)   node[card, midway, above] {1:N};
+\draw[rel] (memb)  -- (asset.north) node[card, midway, left] {N:1};
+\end{tikzpicture}
+\caption{Entity relationships. \texttt{edit} carries the live recipe for an asset; \texttt{recipe} stores named, reusable parameter sets; \texttt{rendition} caches derived images keyed by content hash.}
+\label{fig:erd}
+\end{figure}
+
+\subsection{Schema}
+
+The complete DDL is given in Appendix~\ref{app:ddl}. The essential tables and
+their design rationale follow.
+
+\begin{lstlisting}[language=SQL, caption={Asset and roll tables.}, label={lst:ddl-asset}]
+CREATE TABLE roll (
+    id              TEXT PRIMARY KEY,          -- UUID
+    name            TEXT NOT NULL,
+    created_at      REAL NOT NULL,             -- Unix epoch, UTC
+    -- A roll may carry a default recipe applied to new captures,
+    -- which is how "shoot a roll of Portra" works as a workflow.
+    default_recipe_id TEXT REFERENCES recipe(id) ON DELETE SET NULL,
+    notes           TEXT
+) STRICT;
+
+CREATE TABLE asset (
+    id              TEXT PRIMARY KEY,
+    roll_id         TEXT REFERENCES roll(id) ON DELETE SET NULL,
+    -- Exactly one of these two is non-null.
+    file_relpath    TEXT,        -- managed store, relative to container
+    ph_local_id     TEXT,        -- Photos library asset identifier
+    content_hash    TEXT NOT NULL,             -- SHA-256 of source bytes
+    original_uti    TEXT NOT NULL,
+    pixel_width     INTEGER NOT NULL,
+    pixel_height    INTEGER NOT NULL,
+    captured_at     REAL,
+    imported_at     REAL NOT NULL,
+    -- Denormalized capture metadata for fast library filtering; the
+    -- authoritative copy remains in the file.
+    camera_model    TEXT,
+    lens_model      TEXT,
+    iso             INTEGER,
+    exposure_time   REAL,
+    f_number        REAL,
+    focal_length    REAL,
+    gps_lat         REAL,
+    gps_lon         REAL,
+    is_favorite     INTEGER NOT NULL DEFAULT 0,
+    deleted_at      REAL,                      -- soft delete, 30-day purge
+    CHECK ((file_relpath IS NULL) <> (ph_local_id IS NULL))
+) STRICT;
+
+CREATE INDEX idx_asset_roll     ON asset(roll_id, captured_at DESC);
+CREATE INDEX idx_asset_captured ON asset(captured_at DESC) WHERE deleted_at IS NULL;
+CREATE UNIQUE INDEX idx_asset_hash ON asset(content_hash) WHERE deleted_at IS NULL;
+\end{lstlisting}
+
+Three decisions in Listing~\ref{lst:ddl-asset} deserve comment. The
+\texttt{CHECK} constraint enforcing exactly one storage location prevents the
+ambiguous state where an asset is both managed and Photos-backed, which would
+otherwise produce duplicate-detection bugs. The unique index on
+\texttt{content\_hash} is partial, so soft-deleted assets do not block
+re-import of the same file. And capture metadata is denormalized deliberately:
+library filtering by camera or focal length must not require opening files.
+
+\begin{lstlisting}[language=SQL, caption={Edit and history tables.}, label={lst:ddl-edit}]
+CREATE TABLE edit (
+    asset_id        TEXT PRIMARY KEY REFERENCES asset(id) ON DELETE CASCADE,
+    -- The live recipe as canonical JSON. Stored as text rather than
+    -- decomposed columns because the parameter set is versioned and
+    -- evolves; a column-per-parameter schema would migrate on every
+    -- imaging change.
+    recipe_json     TEXT NOT NULL,
+    recipe_version  INTEGER NOT NULL,          -- schema version of the JSON
+    -- Hash of recipe_json; the rendition cache key.
+    recipe_hash     TEXT NOT NULL,
+    source_recipe_id TEXT REFERENCES recipe(id) ON DELETE SET NULL,
+    updated_at      REAL NOT NULL
+) STRICT;
+
+CREATE TABLE edit_history (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    asset_id        TEXT NOT NULL REFERENCES asset(id) ON DELETE CASCADE,
+    seq             INTEGER NOT NULL,          -- position in the stack
+    recipe_json     TEXT NOT NULL,
+    changed_key     TEXT,                      -- ParameterKey raw value
+    created_at      REAL NOT NULL
+) STRICT;
+
+CREATE UNIQUE INDEX idx_hist_asset_seq ON edit_history(asset_id, seq);
+\end{lstlisting}
+
+Storing the recipe as canonical JSON rather than as a wide table is the most
+consequential schema decision in the application. The alternative --- a column
+per parameter --- would require a migration on every imaging change, which will
+happen many times. The JSON approach requires an in-application version field
+and a migration chain for the JSON itself, which is code rather than schema, is
+unit-testable, and can be applied lazily on read. The cost is that SQL cannot
+query inside a recipe efficiently; this is mitigated by extracting the two
+fields that actually need querying (\texttt{recipe\_hash} and
+\texttt{source\_recipe\_id}) into real columns.
+
+\begin{lstlisting}[language=SQL, caption={Recipe and stock profile tables.}, label={lst:ddl-recipe}]
+CREATE TABLE recipe (
+    id              TEXT PRIMARY KEY,
+    name            TEXT NOT NULL,
+    recipe_json     TEXT NOT NULL,
+    recipe_version  INTEGER NOT NULL,
+    is_builtin      INTEGER NOT NULL DEFAULT 0,
+    -- Thumbnail rendered from a fixed reference image, so the recipe
+    -- browser shows what each recipe does without an active asset.
+    swatch_blob     BLOB,
+    use_count       INTEGER NOT NULL DEFAULT 0,
+    last_used_at    REAL,
+    created_at      REAL NOT NULL,
+    sort_order      INTEGER NOT NULL DEFAULT 0
+) STRICT;
+
+CREATE TABLE stock_profile (
+    id              TEXT PRIMARY KEY,          -- e.g. "neg.portra400"
+    kind            TEXT NOT NULL,             -- 'negative'|'print'|'mono'
+    display_name    TEXT NOT NULL,
+    -- Versioned so a profile correction can ship without silently
+    -- changing the appearance of the user's existing edits; the edit
+    -- records the profile version it was authored against.
+    profile_version INTEGER NOT NULL,
+    params_json     TEXT NOT NULL,             -- theta, A, C, grain, halation
+    is_builtin      INTEGER NOT NULL DEFAULT 1,
+    CHECK (kind IN ('negative','print','mono'))
+) STRICT;
+\end{lstlisting}
+
+The \texttt{profile\_version} column addresses a real hazard. If a shipped
+stock profile is later corrected --- and it will be, since profiles are fits to
+measurement --- every existing edit made with that stock would silently change
+appearance on update. \EM{} instead retains superseded profile versions and
+binds each edit to the version it was authored against, offering an explicit
+"update to corrected profile" action with a before/after preview. Silently
+altering a user's finished images is a violation of the non-destructive promise
+in FR-12, even though no file changed.
+
+\begin{lstlisting}[language=SQL, caption={Rendition cache.}, label={lst:ddl-rend}]
+CREATE TABLE rendition (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    asset_id        TEXT NOT NULL REFERENCES asset(id) ON DELETE CASCADE,
+    -- Cache key: (recipe_hash, size class, color space, profile versions)
+    cache_key       TEXT NOT NULL,
+    size_class      TEXT NOT NULL,   -- 'thumb'|'grid'|'screen'|'full'
+    pixel_width     INTEGER NOT NULL,
+    pixel_height    INTEGER NOT NULL,
+    color_space     TEXT NOT NULL,
+    file_relpath    TEXT NOT NULL,
+    byte_size       INTEGER NOT NULL,
+    created_at      REAL NOT NULL,
+    last_access_at  REAL NOT NULL,
+    CHECK (size_class IN ('thumb','grid','screen','full'))
+) STRICT;
+
+CREATE UNIQUE INDEX idx_rend_key ON rendition(cache_key);
+CREATE INDEX idx_rend_lru ON rendition(last_access_at);
+\end{lstlisting}
+
+Cache eviction (NFR-12) is a straightforward LRU over
+\texttt{idx\_rend\_lru}, with the constraint that \texttt{thumb} and
+\texttt{grid} renditions for non-deleted assets are evicted last, since
+regenerating them is what makes the library feel slow. Eviction runs on a
+background task when total \texttt{byte\_size} exceeds 3.5\,GB, targeting
+2.5\,GB.
+
+\subsection{Migration Strategy}
+
+Two independent version dimensions exist and must not be conflated:
+
+\begin{enumerate}
+\item \textbf{Schema version} --- the SQL structure, migrated by GRDB's
+\texttt{DatabaseMigrator} with one registered, named, immutable migration per
+change. Migrations are never edited after release; corrections ship as new
+migrations.
+\item \textbf{Recipe JSON version} --- the parameter model, migrated in Swift
+by a chain of pure functions $f_n: \mathrm{JSON}_n \to \mathrm{JSON}_{n+1}$.
+\end{enumerate}
+
+Recipe migration is lazy: a recipe is migrated on read and written back only
+when the asset is next edited. This avoids a long blocking migration on update
+for users with large libraries, which is a common source of one-star reviews.
+
+The migration chain is tested by a golden-file suite: for each historical
+version, a corpus of recipes is stored, migrated forward to current, rendered,
+and compared against a stored reference image with a $\Delta E_{00}$
+\cite{sharma2005} tolerance.
+This is the only mechanism that reliably catches a migration that parses
+successfully but changes appearance.
+
+\begin{lstlisting}[language=Swift, caption={Migration registration.}]
+var migrator = DatabaseMigrator()
+#if DEBUG
+migrator.eraseDatabaseOnSchemaChange = true    // development only
+#endif
+
+migrator.registerMigration("v1_initial") { db in
+    try db.execute(sql: ddlV1)
+}
+migrator.registerMigration("v2_rendition_lru") { db in
+    try db.alter(table: "rendition") { t in
+        t.add(column: "last_access_at", .double).notNull().defaults(to: 0)
+    }
+    try db.create(index: "idx_rend_lru", on: "rendition", columns: ["last_access_at"])
+}
+migrator.registerMigration("v3_profile_versioning") { db in
+    try db.alter(table: "stock_profile") { t in
+        t.add(column: "profile_version", .integer).notNull().defaults(to: 1)
+    }
+}
+\end{lstlisting}
+
+\subsection{Sidecar Format}
+
+FR-17 requires an interchangeable recipe file. The format is JSON with a
+documented schema:
+
+\begin{lstlisting}[language=Swift, caption={Sidecar structure (illustrative).}]
+{
+  "emulsion":       { "format": 1, "app": "1.0.0" },
+  "recipeVersion":  4,
+  "name":           "Portra 400 / 2383, warm",
+  "negativeStock":  { "id": "neg.portra400", "version": 3 },
+  "printStock":     { "id": "prt.2383",      "version": 2 },
+  "chemistry":      { "id": "chem.c41",      "version": 1 },
+  "format":         "135",
+  "seed":           874112035,
+  "parameters": {
+    "pushPull":        0.0,
+    "printerLightR":  25, "printerLightG": 25, "printerLightB": 27,
+    "printDensity":    3,
+    "grainAmount":     1.0,
+    "halationIntensity": 0.22
+  },
+  "provenance": {
+    "createdAt": "2026-03-14T09:22:41Z",
+    "sourceAsset": "5C1B...",
+    "note": "matched to lab scan of roll 04 frame 12"
+  }
+}
+\end{lstlisting}
+
+Only parameters that differ from the resolved defaults are written, which keeps
+sidecars small and, more importantly, means a sidecar authored against one stock
+applies sensibly to another --- the unspecified parameters take the new stock's
+defaults rather than the old stock's values. This is the correct semantics for a
+"look" and it falls directly out of the sparse-recipe design of
+Section~\ref{sec:apparch}.

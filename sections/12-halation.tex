@@ -1,0 +1,263 @@
+\section{Halation}
+\label{sec:halation}
+
+\subsection{Physical Origin}
+
+Light entering the emulsion is not entirely absorbed. Some fraction traverses
+all three sensitized layers, enters the transparent base, and is redirected back
+into the emulsion by two distinct mechanisms:
+
+\begin{enumerate}
+\item \textbf{Base reflection.} At the base--air interface on the rear surface,
+rays striking at angles beyond the critical angle
+$\theta_c = \arcsin(1/n)$ are totally internally reflected. Having crossed the
+base twice, they re-enter the emulsion displaced by
+\begin{equation}
+r = 2\, t_b \tan\theta,
+\label{eq:ringradius}
+\end{equation}
+where $t_b$ is base thickness. Because only $\theta > \theta_c$ reflects
+totally, the returned energy forms an \emph{annulus} of inner radius
+$r_{\min} = 2 t_b \tan\theta_c$, not a disc. For a $125\,\mu$m acetate base with
+$n = 1.50$, $\theta_c = 41.8^\circ$ and $r_{\min} \approx 224\,\mu$m --- roughly
+$0.6\%$ of the width of a 135 frame, which is a visible ring.
+\item \textbf{Diffuse scattering.} Light scatters from silver halide crystals
+and from layer interfaces, producing a monotone, heavy-tailed spread with no
+characteristic ring.
+\end{enumerate}
+
+Modern films carry an antihalation undercoat or a rem-jet backing that absorbs
+most light reaching the base, suppressing the ring almost entirely and leaving
+the diffuse component. \EM{} models both and lets the stock profile weight
+them, because the ring is exactly what makes certain older stocks and certain
+motion picture negatives look the way they do, while the diffuse component is
+what modern stocks exhibit.
+
+\subsection{Wavelength Dependence}
+
+Halation is strongly red-biased, for two compounding reasons. First, the
+red-sensitive layer sits deepest in the stack, so returning light passes through
+it first and most strongly. Second, longer wavelengths are absorbed less by the
+emulsion and by the antihalation layer, so more red light survives the round
+trip. The result is that the characteristic halo around a bright highlight is
+orange-red, and this is the single most recognizable film cue in the entire
+pipeline.
+
+Scattering lengths therefore satisfy $\ell_R > \ell_G > \ell_B$, with typical
+ratios $\ell_R : \ell_G : \ell_B \approx 1.00 : 0.62 : 0.44$, and channel
+weights $\boldsymbol{\beta} \approx (1.00, 0.42, 0.22)$.
+
+\subsection{The Source Term}
+
+Halation is driven by scene exposure above a threshold, evaluated in the
+\emph{linear scene-referred domain} before the characteristic curve, per the
+ordering derivation of Section~\ref{sec:arch}. A hard threshold
+$\max(0, E - \tau)$ has a discontinuous derivative and produces a visible
+contour where the halo begins. \EM{} reuses the softplus primitive of
+\eqref{eq:softplus}:
+
+\begin{equation}
+\boxed{\;S(\mathbf{p}) \;=\; \left[\softp{\kappa_h}{E_Y(\mathbf{p}) - \tau}\right]^{\,q}\;}
+\label{eq:halsource}
+\end{equation}
+
+where $E_Y$ is the luminance-weighted exposure, $\tau$ is the threshold in
+relative exposure units (default $\tau = 1.6$, i.e. about $3.2$ stops above
+middle gray), $\kappa_h$ is the knee softness (default $0.15$), and $q$ is the
+source exponent (default $1.0$; $q = 2$ concentrates the effect into the very
+brightest sources, which suits point highlights such as street lamps).
+
+Using luminance rather than per-channel exposure is deliberate: the source of the
+scattered light is the total radiance at that point, and the channel dependence
+enters through the transport, not the source. Per-channel thresholding produces
+colored source regions and looks wrong.
+
+\subsection{The Point Spread Function}
+
+The diffuse component is modelled with a normalized isotropic exponential:
+
+\begin{equation}
+\boxed{\;h_\ell(r) \;=\; \frac{1}{2\pi \ell^2}\, e^{-r/\ell}, \qquad \int_{\Rspace^2} h_\ell \, dA = 1\;}
+\label{eq:halpsf}
+\end{equation}
+
+whose two-dimensional Fourier transform is available in closed form,
+
+\begin{equation}
+H_\ell(f) \;=\; \left[1 + (2\pi \ell f)^2\right]^{-3/2}.
+\label{eq:halotf}
+\end{equation}
+
+Equation \eqref{eq:halotf} is what makes the model verifiable: it is the optical
+transfer function of the scattering layer, and it can be compared directly
+against a measured MTF degradation or against the radial profile of a
+photographed point source (AC-4).
+
+The exponential is chosen over a Gaussian because it is heavy-tailed. A Gaussian
+halo has a definite edge; an exponential halo has a bright core and a long,
+faint skirt, which is what the eye reads as "glow inside the film" rather than
+"blur applied to the highlights." This distinction is perceptually decisive and
+costs nothing to get right.
+
+The ring component uses
+
+\begin{equation}
+h^{\mathrm{ring}}(r) \;=\; \frac{1}{Z}\exp\!\left[-\frac{(r - r_{\min})^2}{2 w_r^2}\right],
+\label{eq:halring}
+\end{equation}
+
+with $r_{\min}$ from \eqref{eq:ringradius}, $w_r$ the ring width set by the
+angular spread, and $Z$ the normalization $\int h^{\mathrm{ring}} dA = 1$. The
+composite PSF is
+
+\begin{equation}
+h(r) = (1 - \omega)\, h_\ell(r) + \omega\, h^{\mathrm{ring}}(r),
+\end{equation}
+
+with $\omega$ the base-reflection weight, near zero for modern stocks and up to
+$0.35$ for stocks without effective antihalation.
+
+\subsection{Recombination and Energy Conservation}
+
+The scattered light must be added to the direct exposure --- and, strictly,
+removed from it, since it is the same photons. The energy-conserving form is
+
+\begin{equation}
+\boxed{\;E'_c \;=\; \left(1 - \alpha_h \beta_c\right) E_c \;+\; \alpha_h \beta_c \left(h_{\ell_c} * S\right)\;}
+\label{eq:haladd}
+\end{equation}
+
+where $\alpha_h$ is the halation intensity ($0$ to $1$, default $0.18$) and
+$\beta_c$ the channel bias. Because $\int h = 1$, \eqref{eq:haladd} preserves
+total energy exactly when $S = E_c$, and the attenuation term correctly darkens
+the core of an extremely bright highlight as its energy is redistributed
+outward. Omitting the attenuation term --- as an additive glow does --- inflates
+total scene energy and makes strong halation settings brighten the entire image,
+a defect that manifests as "the halation slider is also an exposure slider."
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}
+\begin{axis}[
+  width=\columnwidth, height=4.6cm,
+  xlabel={radius $r$ ($\mu$m at film plane)},
+  ylabel={normalized $h(r)$},
+  xmin=0, xmax=400, ymin=0, ymax=1.05,
+  grid=both, grid style={draw=emLine!20},
+  legend style={font=\scriptsize, at={(0.98,0.98)}, anchor=north east, draw=emLine!40},
+  label style={font=\scriptsize}, tick label style={font=\scriptsize},
+  samples=250,
+]
+\addplot[emAcc, very thick, domain=0:400] {exp(-x/95)};
+\addlegendentry{$\ell_R = 95\,\mu$m}
+\addplot[emGreen, very thick, domain=0:400] {exp(-x/59)};
+\addlegendentry{$\ell_G = 59\,\mu$m}
+\addplot[emBlue, very thick, domain=0:400] {exp(-x/42)};
+\addlegendentry{$\ell_B = 42\,\mu$m}
+\addplot[emLine, thick, dashed, domain=0:400] {exp(-(x*x)/(2*95*95))};
+\addlegendentry{Gaussian, same $\sigma$}
+\end{axis}
+\end{tikzpicture}
+\caption{Halation point spread functions. The dashed Gaussian falls to negligible values by $250\,\mu$m; the exponential retains a visible skirt far beyond. That skirt is the visual signature of halation and is why a Gaussian bloom does not read as film.}
+\label{fig:halpsf}
+\end{figure}
+
+\subsection{Real-Time Evaluation}
+\label{sec:recursive-blur}
+
+A direct convolution with $h_\ell$ at $\ell = 95\,\mu$m on a 48\,MP render
+corresponds to a kernel radius of roughly $150$ pixels, which is
+$\sim\!70{,}000$ taps per pixel. This is not viable. Three strategies were
+evaluated.
+
+\paragraph{FFT convolution} Exact and $O(N \log N)$, but requires two complex
+transforms of a 48\,MP image, which exceeds the memory budget of NFR-03 and is
+awkward to tile.
+
+\paragraph{Recursive IIR filtering} A separable first-order recursive filter
+realizes $e^{-|x|/\ell}$ exactly in one dimension at $O(1)$ per pixel. Applied
+separably it produces $e^{-(|x|+|y|)/\ell}$, which is not isotropic --- it has
+visible diamond-shaped anisotropy that is objectionable on point highlights.
+Deriche's third-order approximation \cite{deriche1993,young1995} improves
+isotropy but not enough at these radii.
+
+\paragraph{Fitted mip pyramid (chosen)} The isotropic exponential is
+approximated as a weighted sum of Gaussians,
+
+\begin{equation}
+h_\ell(r) \;\approx\; \sum_{j=1}^{J} w_j\, \mathcal{N}\!\left(r;\, s_j \ell\right),
+\qquad \sum_j w_j = 1,
+\label{eq:gaussmix}
+\end{equation}
+
+each of which is separable, isotropic, and --- critically --- can be evaluated
+at a mip level chosen so that its kernel is only a few pixels wide. With $J = 4$
+levels spaced by factors of four in $\sigma$, the frequency-domain fit of
+\eqref{eq:gaussmix} to \eqref{eq:halotf} has a maximum relative error below
+$3\%$ over $[0, 1/(2\ell)]$, which is far below AC-4 tolerance.
+
+The coefficients $(w_j, s_j)$ are produced by an offline least-squares fit in the
+frequency domain, stored in the stock profile, and regenerated by the profile
+authoring tool whenever the target PSF changes. Representative values for the
+$J = 4$ fit are given in Table~\ref{tab:gaussmix}.
+
+\begin{table}[htbp]
+\caption{Representative Gaussian Mixture Fit to \eqref{eq:halotf}}
+\label{tab:gaussmix}
+\begin{center}
+\renewcommand{\arraystretch}{1.15}
+\begin{tabular}{@{}lccc@{}}
+\toprule
+\textbf{Term $j$} & $s_j$ ($\times\ell$) & $w_j$ & \textbf{Mip level} \\
+\midrule
+1 & $0.42$ & $0.451$ & 0 \\
+2 & $1.15$ & $0.318$ & 1 \\
+3 & $3.30$ & $0.163$ & 3 \\
+4 & $9.60$ & $0.068$ & 5 \\
+\bottomrule
+\multicolumn{4}{@{}p{0.92\columnwidth}@{}}{\footnotesize Produced by the offline frequency-domain fitter; regenerate rather than hand-edit. Mip level is chosen so each Gaussian has $\sigma \le 3$ pixels at that level.}
+\end{tabular}
+\end{center}
+\end{table}
+
+The resulting pass structure is: build a five-level pyramid of the source term
+$S$ by successive $2\times$ box-plus-tent downsamples; apply a small separable
+Gaussian at each retained level; upsample with bilinear filtering and accumulate
+with weights $w_j$; combine per \eqref{eq:haladd}. Total cost is approximately
+$1.33\times$ the base-resolution pass count due to the geometric series, and the
+memory overhead is one-third of a full-resolution single-channel texture.
+
+The ring component, when $\omega > 0$, is evaluated on the level-3 pyramid tap
+using a small annular kernel of 16 taps arranged on a Poisson-disc ring, since
+the ring is spatially large but the mip level makes it only a few pixels wide.
+
+\subsection{Parameter Summary}
+
+\begin{table}[htbp]
+\caption{Halation Parameters}
+\label{tab:halparams}
+\begin{center}
+\renewcommand{\arraystretch}{1.15}
+\begin{tabularx}{\columnwidth}{@{}ll>{\raggedright\arraybackslash}X@{}}
+\toprule
+\textbf{Symbol} & \textbf{Default} & \textbf{Meaning} \\
+\midrule
+$\tau$        & $1.6$   & Threshold, relative exposure \\
+$\kappa_h$    & $0.15$  & Threshold knee softness \\
+$q$           & $1.0$   & Source exponent \\
+$\ell_R$      & $95\,\mu$m & Red scattering length \\
+$\ell_G/\ell_R$ & $0.62$ & Green ratio \\
+$\ell_B/\ell_R$ & $0.44$ & Blue ratio \\
+$\alpha_h$    & $0.18$  & Intensity \\
+$\boldsymbol{\beta}$ & $(1.0, 0.42, 0.22)$ & Channel bias \\
+$\omega$      & $0.05$  & Base-reflection ring weight \\
+$t_b$         & $125\,\mu$m & Base thickness (drives $r_{\min}$) \\
+\bottomrule
+\end{tabularx}
+\end{center}
+\end{table}
+
+The user-facing controls are threshold, radius (a multiplier on $\ell_R$ with the
+ratios held fixed), intensity, and color bias (a single warm--cool parameter that
+moves $\boldsymbol{\beta}$ along a locus rather than exposing three channels).
+The remaining parameters live in the stock profile.

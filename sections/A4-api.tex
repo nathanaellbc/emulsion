@@ -1,0 +1,369 @@
+\section{Module Interfaces}
+\label{app:api}
+
+This appendix specifies the public surface of each module of
+Table~\ref{tab:layers}. It is the contract that makes the layering of
+Section~\ref{sec:apparch} enforceable: a symbol not listed here is
+\texttt{internal}, and the dependency rules below are checked in CI by a script
+that parses the module manifests, because a layering violation costs nothing to
+introduce and is expensive to unwind two releases later.
+
+\begin{center}
+\renewcommand{\arraystretch}{1.1}
+\footnotesize
+\begin{tabular}{@{}ll@{}}
+\toprule
+\textbf{Module} & \textbf{May import} \\
+\midrule
+\texttt{EmulsionCore}    & Foundation only \\
+\texttt{EmulsionRender}  & \texttt{EmulsionCore}, Metal, MetalKit \\
+\texttt{EmulsionStore}   & \texttt{EmulsionCore}, GRDB \\
+\texttt{EmulsionCapture} & \texttt{EmulsionCore}, AVFoundation, CoreImage \\
+\texttt{EmulsionUI}      & \texttt{EmulsionCore}, \texttt{EmulsionRender}, SwiftUI \\
+\texttt{EmulsionApp}     & all of the above \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent \texttt{EmulsionCore} importing Foundation only is the load-bearing
+constraint. It means the imaging model can be exercised by a command-line test
+harness on any platform, which is what makes the validation suite of
+Section~\ref{sec:validation} runnable in CI without a device.
+
+\subsection{EmulsionCore}
+
+\begin{lstlisting}[language=Swift, caption={\texttt{EmulsionCore} public interface.}, label={lst:api-core}]
+// MARK: - Identity
+
+public struct StockRef: Codable, Hashable, Sendable {
+    public let id: String            // e.g. "neg.portra400"
+    public let version: Int          // profile version bound to this edit
+}
+public typealias PrintStockRef = StockRef
+public typealias ChemistryRef  = StockRef
+
+public enum FilmFormat: String, Codable, CaseIterable, Sendable {
+    case format135, format645, format66, format45
+    case super35, super16, standard8
+    /// Simulated frame width in millimetres; drives all physical scaling.
+    public var frameWidthMM: Double { get }
+}
+
+// MARK: - Recipe
+
+public struct Recipe: Codable, Hashable, Sendable {
+    public var negativeStock: StockRef
+    public var printStock:    PrintStockRef
+    public var chemistry:     ChemistryRef
+    public var capture:    CaptureStage
+    public var develop:    DevelopStage
+    public var interlayer: InterlayerStage
+    public var printing:   PrintStage
+    public var grain:      GrainStage
+    public var halation:   HalationStage
+    public var optical:    OpticalStage
+    public var aging:      AgingStage
+    public var output:     OutputStage
+    public var format:     FilmFormat
+    public var seed:       UInt32
+
+    public init(negativeStock: StockRef, printStock: PrintStockRef,
+                chemistry: ChemistryRef)      // all stages default-valued
+
+    /// Canonical JSON: sorted keys, fixed number formatting, defaults
+    /// omitted. Two recipes that render identically hash identically.
+    public func canonicalJSON() throws -> Data
+    public var contentHash: String { get }
+
+    public subscript(key: ParameterKey) -> ParameterValue? { get set }
+}
+
+public enum ParameterValue: Codable, Hashable, Sendable {
+    case scalar(Double)
+    case integer(Int)
+    case boolean(Bool)
+    case vector3(SIMD3<Double>)
+}
+
+// MARK: - Profiles
+
+public struct StockProfile: Codable, Hashable, Sendable {
+    public let id: String
+    public let profileVersion: Int
+    public let kind: StockKind          // .negative | .print | .mono | .chemistry
+    public let displayName: String
+    public let fitStatus: FitStatus     // .measured | .partial | .estimated
+    public let curve: CurveParameters
+    public let interlayer: InterlayerParameters
+    public let grain: GrainParameters
+    public let halation: HalationParameters
+    public let defaultPrint: String?
+
+    /// Rejects a profile violating the well-formedness condition
+    /// deltaD >= 4(kappaT + kappaS) on any record, among other checks.
+    public func validate() throws
+}
+
+public protocol StockProfileProviding: Sendable {
+    func profile(id: String, version: Int?) throws -> StockProfile
+    func currentProfiles(kind: StockKind) throws -> [StockProfile]
+}
+
+// MARK: - Resolution
+
+/// Layers profile defaults, chemistry modulation, recipe, and transient
+/// overrides into the dense value the renderer consumes.
+public struct ParameterResolver: Sendable {
+    public init(profiles: any StockProfileProviding)
+    public func resolve(_ recipe: Recipe,
+                        overrides: TransientOverrides = .none)
+        throws -> ResolvedParameters
+}
+
+/// Flat, contiguous, no optionals. Layout-compatible with EMFrameParams.
+public struct ResolvedParameters: Hashable, Sendable {
+    public var negative:   CurveParameters
+    public var interlayer: InterlayerParameters
+    public var grain:      GrainParameters
+    public var halation:   HalationParameters
+    public var print:      PrintParameters
+    public var optical:    OpticalParameters
+    public var aging:      AgingParameters
+    public var colour:     ColourParameters
+    public var scale:      PhysicalScale     // um -> px, from format + extent
+}
+
+// MARK: - Sensitometry (host-side diagnostics)
+
+public enum Sensitometry {
+    public static func density(logE: Double, _ p: CurveParameters,
+                               record: Record) -> Double
+    public static func pointGamma(logE: Double, _ p: CurveParameters,
+                                  record: Record) -> Double
+    public static func speedPoint(_ p: CurveParameters, record: Record) -> Double
+    public static func isoSpeed(_ p: CurveParameters) -> Double
+    public static func contrastIndex(_ p: CurveParameters,
+                                     record: Record) -> Double
+    public static func latitude(_ p: CurveParameters, record: Record,
+                                fraction: Double = 0.5) -> Double
+}
+
+// MARK: - Development
+
+public enum Development {
+    /// Collapses time, temperature, agitation, and concentration into A.
+    public static func activity(_ d: DevelopStage,
+                                _ chem: ChemistryProfile) -> Double
+    /// Applies the parameter modulation; pure, host-side, no GPU cost.
+    public static func modulate(_ curve: CurveParameters,
+                                activity: Double,
+                                chemistry: ChemistryProfile) -> CurveParameters
+}
+
+// MARK: - History
+
+public struct History: Sendable {
+    public private(set) var canUndo: Bool
+    public private(set) var canRedo: Bool
+    public mutating func record(_ r: Recipe, key: ParameterKey?,
+                                now: ContinuousClock.Instant)
+    public mutating func undo() -> Recipe?
+    public mutating func redo() -> Recipe?
+}
+\end{lstlisting}
+
+\subsection{EmulsionRender}
+
+\begin{lstlisting}[language=Swift, caption={\texttt{EmulsionRender} public interface.}, label={lst:api-render}]
+public struct RenderRequest: Sendable {
+    public let source: SourceImage        // decoded, scene-referred
+    public let parameters: ResolvedParameters
+    public let extent: SIMD2<Int>
+    public let quality: QualityTier
+    public let colorSpace: OutputColorSpace
+    public let purpose: Purpose           // .preview | .export | .thumbnail
+}
+
+public enum QualityTier: Int, Sendable, Comparable {
+    case draft = 0     // half extent, 2-level halation, grain off
+    case interactive   // full preview extent, reduced pyramid
+    case refined       // everything on, preview extent
+    case full          // export path; tiled if memory requires
+}
+
+public actor RenderCoordinator {
+    public init(device: MTLDevice) throws
+
+    /// Latest-wins. Never blocks; intermediate values during a drag are
+    /// dropped, the final value is always rendered.
+    public func submit(_ request: RenderRequest,
+                       completion: @Sendable @escaping (RenderResult) -> Void)
+
+    /// Export path: tiled, deterministic, cancellable, progress-reporting.
+    public func render(_ request: RenderRequest,
+                       progress: @Sendable (Double) -> Void) async throws
+        -> RenderedImage
+
+    public func invalidateCaches()          // device loss recovery
+    public var statistics: RenderStatistics { get }
+}
+
+public struct RenderStatistics: Sendable {
+    public let lastGPUTime: Duration
+    public let passesExecuted: Int
+    public let passesSkipped: Int          // dead-pass elimination
+    public let lutRebuilt: Bool
+    public let heapBytesLive: Int
+}
+
+/// Exposed for testing and for the diagnostics screen: a graph can be
+/// compiled and inspected without a command buffer ever being encoded.
+public struct RenderGraph: Sendable {
+    public init(passes: [any RenderPass])
+    public func compile(extent: SIMD2<Int>,
+                        enabled: Set<PassID>) throws -> CompiledGraph
+}
+public struct CompiledGraph: Sendable {
+    public let order: [PassID]
+    public let fusedGroups: [[PassID]]
+    public let peakHeapBytes: Int
+    public let barriers: [BarrierDescription]
+}
+\end{lstlisting}
+
+The presence of \texttt{CompiledGraph} in the public surface is deliberate. It
+is what allows the graph tests of Section~\ref{sec:rendergraph} to assert
+topological order, dead-pass elimination, fusion grouping, and peak memory
+without a GPU --- which means those properties are covered on every CI run
+rather than only when someone remembers to profile on a device.
+
+\subsection{EmulsionStore}
+
+\begin{lstlisting}[language=Swift, caption={\texttt{EmulsionStore} public interface.}, label={lst:api-store}]
+public protocol AssetRepository: Sendable {
+    func insert(_ asset: Asset) async throws
+    func asset(id: String) async throws -> Asset?
+    func assets(in roll: String?, matching: LibraryQuery)
+        async throws -> [LibraryRow]
+    func softDelete(id: String) async throws
+    func purgeDeleted(olderThan: Duration) async throws -> Int
+}
+
+public protocol EditRepository: Sendable {
+    func edit(for assetID: String) async throws -> Edit?
+    /// Writes the edit, its profile bindings, and one history entry in a
+    /// single transaction. Partial writes here are how libraries corrupt.
+    func save(_ recipe: Recipe, for assetID: String,
+              changedKey: ParameterKey?) async throws
+    func history(for assetID: String, limit: Int) async throws -> [HistoryEntry]
+}
+
+public protocol RenditionCache: Sendable {
+    func url(for key: RenditionKey) async throws -> URL?
+    func store(_ data: Data, for key: RenditionKey) async throws
+    func evict(targetBytes: Int) async throws -> Int
+}
+
+/// The cache key. Constructed only here, so it cannot be built with a
+/// missing component; profile versions are included by construction.
+public struct RenditionKey: Hashable, Sendable {
+    public init(recipeHash: String, sizeClass: SizeClass,
+                colorSpace: OutputColorSpace, profileVersions: [String: Int])
+}
+
+public enum Sidecar {
+    public static func encode(_ recipe: Recipe, name: String,
+                              provenance: Provenance) throws -> Data
+    /// Unknown keys are preserved and round-tripped, so a sidecar written
+    /// by a newer version is not silently degraded by an older one.
+    public static func decode(_ data: Data) throws -> (Recipe, Provenance)
+}
+
+public struct StoreMigrator: Sendable {
+    public static var schemaVersion: Int { get }
+    public static var recipeVersion: Int { get }
+    public func migrate(_ db: DatabaseWriter) throws
+}
+\end{lstlisting}
+
+\subsection{EmulsionCapture}
+
+\begin{lstlisting}[language=Swift, caption={\texttt{EmulsionCapture} public interface.}, label={lst:api-capture}]
+public actor CaptureSession {
+    public init() async throws
+    public var capabilities: CaptureCapabilities { get }   // ProRAW, lenses
+
+    public func start() async throws
+    public func stop() async
+
+    public func setExposure(_ mode: ExposureMode) async throws
+    public func setFocus(_ mode: FocusMode) async throws
+    public func setWhiteBalance(temperature: Double, tint: Double) async throws
+
+    /// Delivers a scene-referred decode plus the metadata needed to
+    /// anchor exposure; never a display-referred image.
+    public func capture(recipe: Recipe) async throws -> CapturedFrame
+
+    /// Preview frames for the live approximation path.
+    public var previewFrames: AsyncStream<PreviewFrame> { get }
+}
+
+public struct CapturedFrame: Sendable {
+    public let rawURL: URL
+    public let decoded: SourceImage
+    public let metadata: CaptureMetadata
+    public let calibration: DeviceCalibration   // g_cal for this lens
+}
+
+public enum RawDecoder {
+    /// The scene-referred decode configuration: no tone curve, no
+    /// sharpening, no extra noise reduction, linear extended-range output.
+    public static func decodeSceneReferred(url: URL,
+                                           extent: SIMD2<Int>?) throws
+        -> SourceImage
+}
+\end{lstlisting}
+
+\subsection{Error Domain}
+
+Every module surfaces errors through one enumeration, classified by the policy
+of Table~\ref{tab:errors}. The classification is a property of the error, not
+of the call site, so a new error cannot be introduced without deciding how it is
+handled.
+
+\begin{lstlisting}[language=Swift, caption={Unified error type.}, label={lst:api-error}]
+public enum EmulsionError: Error, Sendable {
+    case programmer(String)                    // trap in debug
+    case resourceExhausted(needed: Int, available: Int)
+    case deviceLost(underlying: Error?)
+    case unsupportedSource(uti: String)
+    case corruptSource(url: URL, detail: String)
+    case profileInvalid(id: String, reason: String)
+    case migrationFailed(from: Int, to: Int, detail: String)
+    case permissionDenied(Permission)
+    case cancelled
+    case transient(underlying: Error)
+
+    public var classification: ErrorClass { get }
+    /// Present only for .userData-class errors; nil means "do not show a
+    /// dialog", which is enforced by the presentation layer.
+    public var userMessage: String? { get }
+}
+\end{lstlisting}
+
+\subsection{Stability Commitment}
+
+The interfaces above are stable within a major version. Two deliberate
+exceptions are recorded here so that they are not discovered later as
+surprises:
+
+\begin{itemize}
+\item \texttt{ParameterKey} is additive-only. Cases are never removed or
+renamed, because a case's raw value appears in persisted recipes and in
+sidecars; a removed case would silently drop a user's setting. Deprecated
+parameters are migrated by the recipe version chain and their keys retained.
+\item \texttt{ResolvedParameters} is explicitly \emph{not} stable and is not
+persisted anywhere. It is layout-coupled to the shader ABI of
+Listing~\ref{lst:abi} and changes whenever the imaging model does. Anything
+that needs durability stores a \texttt{Recipe}.
+\end{itemize}

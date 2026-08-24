@@ -1,0 +1,201 @@
+\section{Risk Register}
+\label{sec:risks}
+
+\subsection{Method}
+
+Each risk is scored on likelihood $L$ and impact $I$, both $1$--$5$, with
+exposure $E = L \times I$. Risks with $E \geq 12$ require an owner, a named
+mitigation, and a trigger condition that converts the mitigation into action.
+Risks are reviewed at every phase boundary.
+
+\subsection{Technical Risks}
+
+\begin{table}[htbp]
+\caption{Technical Risk Register}
+\label{tab:techrisk}
+\begin{center}
+\renewcommand{\arraystretch}{1.15}
+\begin{tabularx}{\columnwidth}{@{}l>{\raggedright\arraybackslash}Xccc@{}}
+\toprule
+\textbf{ID} & \textbf{Risk} & $L$ & $I$ & $E$ \\
+\midrule
+T-01 & Reference sensitometric data is unavailable or inconsistent for target stocks, preventing AC-1 validation. & 4 & 5 & 20 \\
+T-02 & Model is numerically correct but perceptually unconvincing; discrimination rate stays high. & 3 & 5 & 15 \\
+T-03 & Apple changes \texttt{CIRAWFilter} behavior so that scene-referred decode is no longer achievable. & 2 & 5 & 10 \\
+T-04 & Performance targets unreachable on A14/A15, forcing a raised minimum device. & 2 & 4 & 8 \\
+T-05 & Memory budget exceeded on 6\,GB devices during export, causing jetsam. & 3 & 4 & 12 \\
+T-06 & Grain lattice produces visible aliasing at some format/resolution combinations. & 3 & 3 & 9 \\
+T-07 & Profile version migration silently changes users' existing edits. & 2 & 5 & 10 \\
+T-08 & Device calibration constant $g_{\mathrm{cal}}$ varies within a device model, breaking the exposure anchor. & 2 & 4 & 8 \\
+T-09 & Halation pyramid produces visible seams at ROI tile boundaries under extreme radii. & 3 & 3 & 9 \\
+T-10 & Thermal throttling makes sustained editing unpleasant on older devices. & 3 & 3 & 9 \\
+\bottomrule
+\end{tabularx}
+\end{center}
+\end{table}
+
+\paragraph{T-01 (E = 20), owner: imaging scientist}
+The highest-exposure technical risk. Published sensitometric data varies in
+completeness; some stocks publish full $D$--$\logE$ families, others publish
+only a summary. Digitizing a printed curve introduces its own error.
+
+\emph{Mitigation.} Budget for physical measurement (Table~\ref{tab:cost}):
+acquire film, expose calibrated step wedges under controlled conditions, process
+at a professional laboratory with documented chemistry, and measure with a
+transmission densitometer. This produces primary data. \emph{Trigger:} if by
+month 4 fewer than six of the ten target stocks have data adequate for AC-1
+validation, reduce the launch stock list to those that do and reallocate. A
+smaller library of stocks that are demonstrably correct is a better product than
+a larger library of guesses, and it is a better story.
+
+\paragraph{T-02 (E = 15), owner: product lead}
+It is entirely possible to build a model that matches every measurement and
+still produces images that do not read as film, because the cues the eye uses may
+not be the ones measured. This is the risk that the whole enterprise is
+subtly aimed at the wrong target.
+
+\emph{Mitigation.} The cue-elicitation protocol in
+Section~\ref{sec:validation}: the panel names what tipped them off, and that list
+drives development priority. \emph{Trigger:} if round-2 discrimination exceeds
+80\% and the cue list is dominated by a phenomenon not in the model, escalate to
+a model extension decision at the phase boundary rather than continuing to
+refine existing stages.
+
+\paragraph{T-05 (E = 12), owner: GPU engineer}
+Table~\ref{tab:memory} shows an 878\,MB peak against a 900\,MB budget. That is
+not enough margin.
+
+\emph{Mitigation.} Export tiling is implemented in v1.0 rather than deferred,
+and the tiling threshold is set conservatively --- tiling engages whenever the
+projected live set exceeds 600\,MB, not 900\,MB. Additionally, the decoded
+source is released before the encode staging buffer is allocated, which the
+naive ordering does not do. \emph{Trigger:} any jetsam observed during Phase 2
+device testing forces the tiling threshold down a further 100\,MB.
+
+\subsection{Product and Market Risks}
+
+\begin{table}[htbp]
+\caption{Product Risk Register}
+\label{tab:prodrisk}
+\begin{center}
+\renewcommand{\arraystretch}{1.15}
+\begin{tabularx}{\columnwidth}{@{}l>{\raggedright\arraybackslash}Xccc@{}}
+\toprule
+\textbf{ID} & \textbf{Risk} & $L$ & $I$ & $E$ \\
+\midrule
+P-01 & The addressable audience for physical accuracy is smaller than modelled; conversion falls below 2\%. & 3 & 5 & 15 \\
+P-02 & The laboratory vocabulary is a barrier rather than a differentiator for the P3 persona. & 3 & 4 & 12 \\
+P-03 & A well-resourced competitor ships an adequate approximation first and defines the category. & 3 & 4 & 12 \\
+P-04 & Apple ships comparable film simulation as a system feature. & 2 & 5 & 10 \\
+P-05 & Trademark or brand objection to descriptive use of stock names. & 3 & 3 & 9 \\
+P-06 & Subscription fatigue suppresses conversion regardless of quality. & 3 & 3 & 9 \\
+\bottomrule
+\end{tabularx}
+\end{center}
+\end{table}
+
+\paragraph{P-01 (E = 15)}
+Addressed in Section~\ref{sec:business}. The mitigation is early measurement
+with a non-expert cohort during Phase 1, and the prepared response is
+repositioning toward the professional tier with adjusted pricing, which the
+architecture supports without rework.
+
+\paragraph{P-02 (E = 12), owner: product designer}
+The vocabulary is a core commitment, and abandoning it would hollow out the
+product. But if a user cannot find the brightness control because it is called
+print density, the commitment has failed in execution rather than in principle.
+
+\emph{Mitigation.} The explanation affordance (long-press) is not optional
+polish; it is the mechanism that makes the vocabulary teachable, and it is
+scheduled in Phase 4 with dedicated content authoring. Additionally, search
+within the develop workspace accepts colloquial terms and navigates to the
+corresponding laboratory control, showing both names --- this teaches rather
+than aliases. \emph{Trigger:} if beta task-completion testing shows more than
+25\% of P3-persona users failing to locate a lightness control within 60
+seconds, add a first-run guided tour before ship.
+
+\paragraph{P-05 (E = 9), owner: product lead}
+Film stock names are used descriptively to identify a modelled response, which
+is a recognized nominative use, and no proprietary profile data is
+redistributed (CR-04). Nonetheless the risk is nonzero.
+
+\emph{Mitigation.} Legal review before launch (budgeted). A prepared fallback
+naming scheme exists in which each profile carries a descriptive name
+("Daylight Portrait 400") with the reference stock identified only in the
+profile's technical notes. The fallback is designed now, so that adopting it
+later is a data change and not an engineering change.
+
+\subsection{Programme Risks}
+
+\begin{table}[htbp]
+\caption{Programme Risk Register}
+\label{tab:progrisk}
+\begin{center}
+\renewcommand{\arraystretch}{1.15}
+\begin{tabularx}{\columnwidth}{@{}l>{\raggedright\arraybackslash}Xccc@{}}
+\toprule
+\textbf{ID} & \textbf{Risk} & $L$ & $I$ & $E$ \\
+\midrule
+G-01 & Imaging scientist role cannot be filled, or is filled late. & 4 & 5 & 20 \\
+G-02 & Phase 1 overruns, compressing everything downstream. & 4 & 4 & 16 \\
+G-03 & Scope expansion into video before v1.0 ships. & 3 & 4 & 12 \\
+G-04 & Key-person dependency on the GPU architecture. & 3 & 4 & 12 \\
+\bottomrule
+\end{tabularx}
+\end{center}
+\end{table}
+
+\paragraph{G-01 (E = 20), owner: product lead}
+The single highest-exposure risk in the programme. The required skill
+combination is scarce.
+
+\emph{Mitigation.} Begin recruiting before Phase 0. Structure the role to be
+fillable by two adjacent profiles working together --- a color scientist without
+strong implementation skills paired with an engineer without domain background
+--- since that pair is far easier to hire than the unicorn. Engage the colorist
+consultant early to provide domain review in the interim. \emph{Trigger:} if the
+role is unfilled at month 2, activate the pair structure and extend Phase 1 by
+six weeks in the plan of record rather than absorbing the slip silently.
+
+\paragraph{G-02 (E = 16)}
+Phase 1 is already given twice an optimistic estimate, which is the primary
+mitigation. The secondary mitigation is the designated cut list in
+Section~\ref{sec:roadmap} (optical, aging, inspector), which provides
+approximately ten weeks of recoverable schedule in later phases without touching
+any MUST requirement.
+
+\paragraph{G-04 (E = 12)}
+The render graph is subtle and, written by one person, becomes a bus factor of
+one.
+
+\emph{Mitigation.} The graph's design is documented in
+Section~\ref{sec:rendergraph} at implementation detail, its properties are
+enforced by the property-based tests of V-18 through V-20, and a second engineer
+is assigned to Phase 2 explicitly for knowledge distribution rather than
+throughput.
+
+\subsection{Risk Summary}
+
+\begin{table}[htbp]
+\caption{Top Risks by Exposure}
+\label{tab:toprisk}
+\begin{center}
+\renewcommand{\arraystretch}{1.15}
+\begin{tabular}{@{}llc@{}}
+\toprule
+\textbf{ID} & \textbf{Risk} & $E$ \\
+\midrule
+T-01 & Reference data unavailable & 20 \\
+G-01 & Imaging scientist hire & 20 \\
+G-02 & Phase 1 overrun & 16 \\
+T-02 & Perceptually unconvincing & 15 \\
+P-01 & Audience smaller than modelled & 15 \\
+\bottomrule
+\end{tabular}
+\end{center}
+\end{table}
+
+Four of the top five risks concern the imaging model or the people who build it.
+That concentration is not a defect of the analysis; it is the accurate shape of
+this programme, and it is the reason the schedule, the budget, and the staffing
+plan all front-load the same area.

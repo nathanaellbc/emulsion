@@ -1,0 +1,209 @@
+%=====================================================================
+%  EMULSION — Software Design Document
+%  Formatting: IEEEtran (conference), per conference_101719.tex
+%  Build:  pdflatex main -> bibtex/none -> pdflatex main -> pdflatex main
+%=====================================================================
+\documentclass[conference]{IEEEtran}
+\IEEEoverridecommandlockouts
+
+% ---- Core template packages (inherited from conference_101719.tex) ----
+\usepackage{cite}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{algorithmic}
+\usepackage{graphicx}
+\usepackage{textcomp}
+\usepackage{xcolor}
+
+% ---- Additions required by this design document ----
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{multirow}
+\usepackage{tabularx}
+\usepackage{listings}
+\usepackage{tikz}
+\usepackage{pgfplots}
+\usepackage{float}
+\usepackage{url}
+\usepackage{enumitem}
+\usepackage[hidelinks,breaklinks=true]{hyperref}
+
+\usetikzlibrary{arrows.meta,positioning,fit,backgrounds,calc,shapes.geometric,shapes.misc,decorations.pathreplacing,patterns}
+\pgfplotsset{compat=1.16}
+
+\def\BibTeX{{\rm B\kern-.05em{\sc i\kern-.025em b}\kern-.08em
+    T\kern-.1667em\lower.7ex\hbox{E}\kern-.125emX}}
+
+%---------------------------------------------------------------------
+%  Document-wide styling helpers
+%---------------------------------------------------------------------
+\definecolor{emGray}{RGB}{242,242,244}
+\definecolor{emLine}{RGB}{120,120,128}
+\definecolor{emAcc}{RGB}{176,74,44}     % halation orange-red
+\definecolor{emBlue}{RGB}{40,90,150}
+\definecolor{emGreen}{RGB}{40,110,70}
+\definecolor{emKey}{RGB}{100,30,120}
+\definecolor{emCmt}{RGB}{90,110,90}
+\definecolor{emStr}{RGB}{150,60,40}
+
+\lstdefinelanguage{Swift}{
+  morekeywords={associatedtype,class,deinit,enum,extension,func,import,init,
+    inout,internal,let,operator,private,protocol,public,static,struct,subscript,
+    typealias,var,break,case,continue,default,defer,do,else,fallthrough,for,
+    guard,if,in,repeat,return,switch,where,while,as,catch,is,nil,rethrows,super,
+    self,Self,throw,throws,try,async,await,some,any,actor,@MainActor,@Observable,
+    true,false,final,lazy,mutating,nonmutating,override,required,weak,unowned,
+    indirect,convenience,open,fileprivate,willSet,didSet,get,set},
+  sensitive=true,
+  morecomment=[l]{//},
+  morecomment=[s]{/*}{*/},
+  morestring=[b]",
+}
+\lstdefinelanguage{Metal}{
+  morekeywords={kernel,vertex,fragment,constant,device,threadgroup,thread,
+    using,namespace,struct,float,float2,float3,float4,half,half2,half3,half4,
+    int,uint,uint2,uint3,bool,void,return,if,else,for,while,const,inline,
+    template,typename,texture2d,texture3d,sampler,access,read,write,read_write,
+    buffer,thread_position_in_grid,threadgroup_position_in_grid,
+    thread_position_in_threadgroup,threads_per_threadgroup,
+    thread_index_in_threadgroup,static,auto,else,break,continue},
+  sensitive=true,
+  morecomment=[l]{//},
+  morecomment=[s]{/*}{*/},
+  morestring=[b]",
+}
+\lstdefinestyle{emcode}{
+  basicstyle=\ttfamily\scriptsize,
+  keywordstyle=\color{emKey}\bfseries,
+  commentstyle=\color{emCmt}\itshape,
+  stringstyle=\color{emStr},
+  numbers=left,
+  numberstyle=\ttfamily\tiny\color{emLine},
+  numbersep=5pt,
+  frame=leftline,
+  framesep=5pt,
+  rulecolor=\color{emLine},
+  showstringspaces=false,
+  breaklines=true,
+  breakatwhitespace=true,
+  columns=fullflexible,
+  keepspaces=true,
+  tabsize=2,
+  aboveskip=6pt,
+  belowskip=4pt,
+  captionpos=b,
+}
+\lstset{style=emcode}
+
+% Shorthand macros used throughout
+\newcommand{\EM}{\textsc{Emulsion}}
+\newcommand{\logE}{\log_{10}\!E}
+\newcommand{\Dmin}{D_{\min}}
+\newcommand{\Dmax}{D_{\max}}
+\newcommand{\softp}[2]{\mathrm{sp}_{#1}\!\left(#2\right)}
+\newcommand{\vecx}{\mathbf{x}}
+\newcommand{\Rspace}{\mathbb{R}}
+\newcommand{\reqid}[1]{\textbf{\small #1}}
+\newcommand{\stage}[1]{\textsf{#1}}
+
+% Compact bullet lists (two-column space is precious)
+\setlist[itemize]{leftmargin=1.1em,itemsep=1pt,topsep=2pt,parsep=0pt}
+\setlist[enumerate]{leftmargin=1.4em,itemsep=1pt,topsep=2pt,parsep=0pt}
+
+% Allow deeper float pages; this is a long design document, not a 6-page paper.
+\renewcommand{\topfraction}{0.9}
+\renewcommand{\bottomfraction}{0.8}
+\renewcommand{\textfraction}{0.07}
+\renewcommand{\floatpagefraction}{0.8}
+\setcounter{topnumber}{3}
+\setcounter{bottomnumber}{2}
+\setcounter{totalnumber}{5}
+
+\begin{document}
+
+\title{EMULSION: A Physically Inspired Digital Film Laboratory\\ for Mobile Computational Photography\\
+{\footnotesize Software Design Document --- Revision 1.0}
+\thanks{This document is an engineering design specification prepared for
+implementation planning and investor technical due diligence. Film stock names
+and print stock names are used descriptively to identify the photographic
+response being modelled; all trademarks are the property of their respective
+owners and no affiliation or endorsement is implied.}
+}
+
+\author{\IEEEauthorblockN{Systems and Imaging Architecture}
+\IEEEauthorblockA{\textit{\EM{} Project} \\
+\textit{ChromaLab}\\
+Design Document Revision 1.0 \\
+2026}
+}
+
+\maketitle
+
+\begin{abstract}
+Mobile film simulation applications overwhelmingly implement aesthetic
+approximation: a lookup table, a grain overlay, and a contrast curve applied to
+an already-rendered display-referred image. This design document specifies
+EMULSION, an iOS application architected instead as a digital film laboratory,
+in which a scene-referred RAW capture is transported through a chain of
+physically motivated transforms that mirror the stages of analog photographic
+processing: latent image formation, characteristic-curve density mapping,
+chemical development, interlayer inhibition, optical print exposure, print
+stock reproduction, stochastic grain formation, subsurface light scattering,
+and lens rendering. The document supplies closed-form mathematical models for
+each stage, including a differentiable toe-and-shoulder density formulation
+built from softplus primitives, a Campbell-theorem filtered-Poisson grain
+synthesis model with density-dependent Selwyn granularity, an exponential-PSF
+halation model with per-channel scattering lengths and an infinite impulse
+response approximation suitable for real-time evaluation, and a printer-light
+color control surface calibrated in industry-standard 0.025 log-exposure
+increments. It further specifies the Metal rendering architecture, including
+the render graph, texture allocation strategy, precision policy, tile-memory
+fusion, and 3D lookup table baking scheme required to sustain interactive
+preview on 48-megapixel captures; the SwiftUI application architecture and user
+interface; the persistence schema for a non-destructive editing model; the
+verification methodology; and a phased twenty-four month engineering roadmap
+with staffing, cost, and risk analysis.
+\end{abstract}
+
+\begin{IEEEkeywords}
+computational photography, film emulation, color science, Metal, GPU rendering,
+characteristic curve, halation, grain synthesis, RAW processing, iOS
+\end{IEEEkeywords}
+
+%=====================================================================
+\input{sections/01-introduction}
+\input{sections/02-background}
+\input{sections/03-requirements}
+\input{sections/04-architecture}
+\input{sections/05-colorspace}
+\input{sections/06-negative}
+\input{sections/07-development}
+\input{sections/08-interlayer}
+\input{sections/09-print}
+\input{sections/10-printerlights}
+\input{sections/11-grain}
+\input{sections/12-halation}
+\input{sections/13-optical}
+\input{sections/14-aging}
+\input{sections/15-metal}
+\input{sections/16-rendergraph}
+\input{sections/17-apparch}
+\input{sections/18-ui}
+\input{sections/19-schema}
+\input{sections/20-performance}
+\input{sections/21-validation}
+\input{sections/22-roadmap}
+\input{sections/23-business}
+\input{sections/24-risks}
+\input{sections/25-future}
+\input{sections/26-conclusion}
+
+\appendices
+\input{sections/A1-stockparams}
+\input{sections/A2-shaders}
+\input{sections/A3-ddl}
+\input{sections/A4-api}
+\input{sections/A5-glossary}
+
+\input{sections/99-bib}
+
+\end{document}

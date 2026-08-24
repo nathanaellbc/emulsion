@@ -1,0 +1,153 @@
+\section{Requirements Specification}
+\label{sec:requirements}
+
+\subsection{Stakeholders and Personas}
+
+Three personas drive requirement priority. They are listed in order of
+decision-making weight for v1.0.
+
+\begin{itemize}
+\item \textbf{P1 --- The Working Photographer.} Shoots both film and digital.
+Owns a scanner or pays for lab scans. Can name the difference between Portra
+400 and Gold 200. Wants the iPhone frames in a project to intercut with the
+film frames. Will not tolerate a result that ``looks like a filter'' and will
+detect a wrong grain structure at 100\% magnification immediately.
+\item \textbf{P2 --- The Filmmaker / Colorist.} Uses DaVinci Resolve
+professionally. Understands printer lights, print emulation, and log
+workflows. Wants the mobile result to be a legitimate starting point that can
+be handed to a desktop timeline. Judges the product by whether its vocabulary
+is used correctly.
+\item \textbf{P3 --- The Serious Enthusiast.} Does not know what a shoulder is
+but knows what looks good and is willing to learn. Is the volume of the
+business. Requires that the default path from capture to good result be short,
+and that the vocabulary be teachable rather than merely present.
+\end{itemize}
+
+The product tension across these personas is the central UX problem, and the
+resolution is specified in Section~\ref{sec:ui}: a two-tier control surface in
+which every P3 control is a named point on a P1/P2 parameter manifold, not a
+separate simplified code path.
+
+\subsection{Functional Requirements}
+
+\begin{table}[htbp]
+\caption{Functional Requirements, v1.0}
+\label{tab:fr}
+\begin{center}
+\renewcommand{\arraystretch}{1.12}
+\begin{tabularx}{\columnwidth}{@{}l>{\raggedright\arraybackslash}X c@{}}
+\toprule
+\textbf{ID} & \textbf{Requirement} & \textbf{Pri} \\
+\midrule
+FR-01 & Capture Apple ProRAW (DNG) at maximum supported resolution with user-selectable ISO, shutter, focus, and white balance. & MUST \\
+FR-02 & Import DNG, Apple ProRAW, and 16-bit TIFF from Photos and Files. & MUST \\
+FR-03 & Decode RAW to scene-referred linear working space with no vendor tone curve applied. & MUST \\
+FR-04 & Provide $\geq 10$ negative stock profiles at launch spanning color negative, transparency, and monochrome. & MUST \\
+FR-05 & Provide $\geq 4$ print stock profiles plus a bypass (scan-look) mode. & MUST \\
+FR-06 & Expose development controls: push/pull in $1/3$ stop increments over $[-2,+3]$, contrast index, and agitation/temperature proxies. & MUST \\
+FR-07 & Expose printer lights per channel in integer points over $[-12,+12]$ with a linked master. & MUST \\
+FR-08 & Synthesize grain procedurally with per-stock structure, ISO dependence, and resolution-aware scaling. & MUST \\
+FR-09 & Render halation with threshold, radius, intensity, and channel bias controls. & MUST \\
+FR-10 & Provide optical simulation: diffusion, vignetting, chromatic aberration, bloom, and distortion. & SHOULD \\
+FR-11 & Provide aging effects: dust, scratches, edge fog, expired-stock shift, light leaks. & SHOULD \\
+FR-12 & All edits non-destructive; original RAW never modified. & MUST \\
+FR-13 & Full edit history with undo/redo to arbitrary depth within a session and at least 50 steps persisted. & MUST \\
+FR-14 & Save, name, and apply recipes (complete parameter graphs) across images. & MUST \\
+FR-15 & Copy/paste individual stage parameters between images. & SHOULD \\
+FR-16 & Export to HEIC, JPEG, 16-bit TIFF, and 16-bit PNG with selectable output color space. & MUST \\
+FR-17 & Export a sidecar recipe file (JSON) and import same. & SHOULD \\
+FR-18 & Batch apply a recipe to a selection of images. & SHOULD \\
+FR-19 & Before/after comparison with split, toggle, and pin-to-stage modes. & MUST \\
+FR-20 & Pipeline inspector showing per-stage input and output previews. & SHOULD \\
+FR-21 & Preserve and write capture metadata (EXIF) plus a custom development-parameter block into exports. & SHOULD \\
+FR-22 & Histogram in both scene-referred log and output display domains. & SHOULD \\
+\bottomrule
+\end{tabularx}
+\end{center}
+\end{table}
+
+\subsection{Non-Functional Requirements}
+
+\begin{table}[htbp]
+\caption{Non-Functional Requirements}
+\label{tab:nfr}
+\begin{center}
+\renewcommand{\arraystretch}{1.12}
+\begin{tabularx}{\columnwidth}{@{}l>{\raggedright\arraybackslash}X@{}}
+\toprule
+\textbf{ID} & \textbf{Requirement} \\
+\midrule
+NFR-01 & Parameter change to updated preview: $\leq 16$\,ms at preview resolution on A17 Pro or later; $\leq 33$\,ms on A15. \\
+NFR-02 & Full-resolution 48\,MP render to export: $\leq 2.5$\,s on A17 Pro. \\
+NFR-03 & Peak GPU memory during full-resolution render: $\leq 900$\,MB. \\
+NFR-04 & Application cold launch to camera-ready: $\leq 1.2$\,s. \\
+NFR-05 & Capture shutter latency: $\leq 250$\,ms to shutter confirmation. \\
+NFR-06 & No visible banding: quantization error $\leq 1$ code value at 16-bit output for any monotone ramp. \\
+NFR-07 & Preview and export must be perceptually identical: $\Delta E_{00} \leq 1.0$ mean, $\leq 2.0$ 99th percentile, excluding grain. \\
+NFR-08 & Grain must be deterministic given a seed: identical parameters yield identical output. \\
+NFR-09 & Thermal: sustained editing for 10 minutes must not trigger severe thermal state on a device at 25\textdegree C ambient. \\
+NFR-10 & Crash-free session rate $\geq 99.7\%$ at GA. \\
+NFR-11 & Accessibility: all controls reachable by VoiceOver with meaningful labels; Dynamic Type support to XXL in all text UI. \\
+NFR-12 & Storage: application-managed cache never exceeds 4\,GB and is evictable under system pressure. \\
+NFR-13 & Offline-first: no network required for any v1.0 feature. \\
+\bottomrule
+\end{tabularx}
+\end{center}
+\end{table}
+
+\subsection{Constraints}
+
+\begin{itemize}
+\item \textbf{CR-01.} iOS 17.0 minimum deployment target; devices with A14
+Bionic or later. This is driven by Metal 3 feature availability, specifically
+mesh-free tile shading and the fast resource heap aliasing the render graph
+depends on.
+\item \textbf{CR-02.} All processing on device. No image data leaves the
+device in v1.0. This is both a privacy commitment and a latency requirement.
+\item \textbf{CR-03.} No use of private API. The application must be
+App Store distributable without entitlement exceptions.
+\item \textbf{CR-04.} Film and print stock names are used descriptively.
+Profiles are derived from published sensitometric data and from measurements of
+physical reference material; no proprietary profile data is redistributed.
+\item \textbf{CR-05.} The half-precision (\texttt{half}) format may not be used
+to carry scene-referred linear radiance in any stage prior to the density
+transform, because its 11-bit significand is insufficient across the required
+$18$-stop working range. See Section~\ref{sec:precision}.
+\end{itemize}
+
+\subsection{Acceptance Criteria for the Imaging Model}
+
+The following criteria define ``correct'' for the imaging pipeline and are the
+basis of the verification plan in Section~\ref{sec:validation}. They are
+stricter than the non-functional requirements because they govern whether the
+product's central claim is true.
+
+\begin{enumerate}
+\item \textbf{AC-1 (Sensitometric fidelity).} For each shipped negative stock,
+the modelled characteristic curve must match the reference $D$--$\logE$ data to
+within $\pm 0.03$ density units over the exposure range spanning $\Dmin + 0.1$
+to $\Dmax - 0.1$, for all three color records.
+\item \textbf{AC-2 (Print chain fidelity).} A synthetic 21-step gray wedge
+transported through negative and print must reproduce the reference print
+density scale to within $\pm 0.04$ density units and $\pm 0.02$ in the
+red-minus-green and blue-minus-green color balance differences.
+\item \textbf{AC-3 (Grain spectrum).} The synthesized grain Wiener spectrum
+must match the reference stock's measured spectrum to within $\pm 15\%$ of
+integrated power over $[0, 50]$ cycles/mm, and RMS granularity must follow the
+reference density dependence to within $\pm 10\%$.
+\item \textbf{AC-4 (Halation geometry).} For a point source of known
+irradiance, the radial falloff of the modelled halo must match the reference
+exponential decay length to within $\pm 20\%$ per channel, and the
+red:green:blue intensity ratio must match to within $\pm 15\%$.
+\item \textbf{AC-5 (Neutrality).} With default parameters and correct white
+balance, an 18\% gray card must render neutral to within $\Delta E_{00} \leq
+1.5$ against the intended print aim point.
+\item \textbf{AC-6 (Monotonicity).} The composite pointwise transfer must be
+monotonically non-decreasing in each channel over the full working range for
+all reachable parameter combinations. Any parameter combination that violates
+this must be unreachable through the UI.
+\item \textbf{AC-7 (Reversibility of ordering).} Disabling every optional
+stage and setting all stock-independent parameters to identity must produce an
+output that differs from a direct working-space-to-output-space conversion by
+$\Delta E_{00} \leq 0.5$. This is the pipeline's null test.
+\end{enumerate}

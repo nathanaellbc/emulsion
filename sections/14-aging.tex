@@ -1,0 +1,177 @@
+\section{Aging, Damage, and Imperfection}
+\label{sec:aging}
+
+\subsection{Design Stance}
+
+This stage is the one most likely to make the product look cheap, and it is
+therefore governed by a stricter rule than the rest of the pipeline: \emph{every
+artifact must be off by default, must be physically parameterized, and must be
+capable of subtlety}. The failure mode of consumer film apps is not that they
+have light leaks; it is that their light leaks are a fixed PNG at fixed opacity
+in a fixed corner.
+
+Two structural decisions follow. First, all artifacts are procedural and seeded,
+so they never repeat across frames. Second, all artifacts are applied in the
+domain where the corresponding physical damage occurs, which for most of them is
+the negative, not the print --- meaning a scratch in the negative prints
+\emph{light}, not dark, and dust on the negative prints as white specks. Getting
+this polarity right is a small detail that separates a considered
+implementation from a texture overlay, since almost every consumer application
+renders dust as dark.
+
+\subsection{Artifact Taxonomy and Domain}
+
+\begin{table}[htbp]
+\caption{Aging Artifacts, Domain, and Polarity}
+\label{tab:aging}
+\begin{center}
+\renewcommand{\arraystretch}{1.15}
+\begin{tabularx}{\columnwidth}{@{}l l l >{\raggedright\arraybackslash}X@{}}
+\toprule
+\textbf{Artifact} & \textbf{Domain} & \textbf{Polarity} & \textbf{Mechanism} \\
+\midrule
+Dust           & neg. $D$   & $+D$ & Opaque particle blocks printing light; prints white. \\
+Scratch (emulsion) & neg. $D$ & $-D$ & Emulsion removed; prints dark. \\
+Scratch (base) & neg. $D$   & $+D$ & Base abraded, scatters; prints light. \\
+Chemical streak & neg. $D$  & $\pm D$ & Uneven development; direction-aligned. \\
+Edge fog       & lin. $E$   & $+E$ & Light leaked at the edges pre-development. \\
+Light leak     & lin. $E$   & $+E$ & Broad exposure through a body seam. \\
+Halide fog     & neg. $\Dmin$ & $+\Dmin$ & Age/heat/radiation; raises base fog. \\
+Expired shift  & $\theta$   & --- & Differential layer speed and gamma loss. \\
+Frame jitter   & geometry   & --- & Registration error in transport. \\
+Gate weave     & geometry   & --- & Low-frequency lateral drift (video only). \\
+\bottomrule
+\end{tabularx}
+\end{center}
+\end{table}
+
+\subsection{Expired Film}
+
+The most rewarding of these to model correctly, because it is entirely a
+parameter modulation and costs nothing at render time.
+
+Aging degrades an emulsion in three ways: overall speed loss, differential speed
+loss between layers (blue-sensitive layers degrade fastest), and a rise in base
+fog. All three are captured by modulating the parameters already defined:
+
+\begin{align}
+x_{0,c} &\leftarrow x_{0,c} + \varsigma_a\, \left(0.30 + \upsilon_c\right), \\
+\Dmin{}_{,c} &\leftarrow \Dmin{}_{,c} + \varsigma_a\, \phi_a\, \psi_c, \\
+\gamma_c &\leftarrow \gamma_c \left(1 - 0.18\,\varsigma_a\right),
+\label{eq:expired}
+\end{align}
+
+where $\varsigma_a \in [0, 1]$ is the age parameter (interpreted as
+"decades past expiry under uncontrolled storage"), $\boldsymbol{\upsilon} =
+(0.00, 0.06, 0.19)$ is the differential speed loss, and $\boldsymbol{\psi} =
+(0.4, 0.7, 1.0)$ the differential fogging. The result is the familiar look of
+expired color negative --- muddy, cyan-shifted shadows, reduced contrast, and a
+loss of speed requiring overexposure --- produced entirely by the existing
+model. There is no "expired film LUT."
+
+\subsection{Dust and Scratches}
+
+Dust is generated as a Poisson point process with intensity
+$\lambda_{\mathrm{dust}}$ particles per square millimetre of film, each particle
+given a random radius from a log-normal distribution
+$\ln r \sim \mathcal{N}(\mu_r, \sigma_r^2)$ with $\mu_r$ corresponding to a
+median particle of $18\,\mu$m. The particle is rendered as a soft-edged disc
+adding density:
+
+\begin{equation}
+\Delta D_{\mathrm{dust}}(\mathbf{p}) = D_{\mathrm{op}} \sum_i \mathrm{smoothstep}\!\left(r_i, r_i(1-\epsilon), \|\mathbf{p} - \mathbf{p}_i\|\right),
+\end{equation}
+
+applied to all three records equally (dust is neutral) and clamped so a particle
+cannot exceed the printing system's black.
+
+Because the process is defined in film-plane coordinates with the same
+lattice-hashing scheme as the grain (Section~\ref{sec:grain}), dust is
+resolution-independent and deterministic under a seed --- and its size relative
+to the frame follows the format selection automatically. Dust on 8\,mm is
+enormous; dust on 4$\times$5 is invisible. This is correct and free.
+
+Scratches are line segments with a random start point, a strongly
+vertically-biased orientation (matching film transport direction), a length drawn
+from an exponential distribution, and a width of one to three grains. Each
+scratch is rendered with a small perpendicular density profile that is negative
+at the core (emulsion removed) and slightly positive at the shoulders (displaced
+emulsion), which is what a real scratch looks like under a loupe.
+
+\subsection{Light Leaks and Edge Fog}
+
+Both are applied in the linear exposure domain, which matters: a leak adds
+\emph{light}, so it is compressed by the film's shoulder in bright areas and
+dominates in dark areas. An overlay applied at the end is uniformly visible and
+looks pasted on.
+
+Edge fog is a distance-from-edge falloff,
+
+\begin{equation}
+E' = E + \Phi_e \exp\!\left(-\frac{d(\mathbf{p})}{\ell_e}\right)\boldsymbol{\chi}_e,
+\end{equation}
+
+with $d$ the distance to the nearest frame edge, $\ell_e$ the penetration depth
+in millimetres of film, and $\boldsymbol{\chi}_e$ the leak color (warm, since
+light entering a camera body is usually filtered by the body's interior).
+
+Light leaks use a procedural model rather than textures: a leak is parameterized
+by an entry point on the frame boundary, a direction, an angular spread, and a
+falloff, and is rendered as an anisotropic exponential wedge. Three to five such
+wedges with randomized parameters, seeded from the frame seed, produce
+non-repeating and physically plausible leaks. A "seam" preset places the entry
+points along a line, reproducing the look of a failed back-door light seal, which
+is the most common real cause.
+
+\subsection{Chemical Streaking}
+
+Uneven development produces streaks aligned with the direction of development
+flow. Model: a one-dimensional noise field $\varpi(y)$ along the transport axis,
+smoothed with a long kernel, modulating development activity $A$ from
+\eqref{eq:activity}:
+
+\begin{equation}
+A(\mathbf{p}) = A \cdot \left(1 + \varsigma_{\mathrm{streak}}\, \varpi(y)\right).
+\end{equation}
+
+Because it modulates $A$ rather than density directly, streaking correctly
+produces \emph{contrast} variation as well as density variation --- streaks are
+not merely lighter or darker bands, they have different gamma. This is the
+detail that makes it read as chemistry rather than as a gradient overlay.
+Evaluating a spatially varying $A$ requires the parameter modulation of
+Section~\ref{sec:development} to be evaluated per-pixel rather than on the host,
+so this effect (and only this effect) forces a shader-side evaluation of
+\eqref{eq:gammatime} and \eqref{eq:fog}. It is consequently gated behind an
+"enable" that recompiles the pipeline variant; see
+Section~\ref{sec:specialization}.
+
+\subsection{Frame Geometry Artifacts}
+
+Frame jitter is a per-frame random translation and rotation applied at the
+geometric warp stage, with magnitude specified in micrometres of film so that it
+scales with format. For still photography a single frame's jitter is
+indistinguishable from a crop offset and is therefore disabled by default; it
+exists in v1.0 only so that the parameter and its persistence are in place for
+the video release, where gate weave --- a low-frequency correlated drift modelled
+as a two-octave value-noise walk --- becomes the visible and important effect.
+
+\subsection{Ordering Within the Stage}
+
+Within the aging stage, artifacts are applied in the order:
+
+\begin{enumerate}
+\item Parameter-domain (expired shift, halide fog) --- these modify $\theta$ and
+are consumed by earlier stages, so they are technically evaluated first despite
+being authored here.
+\item Exposure-domain (edge fog, light leaks) --- before the characteristic
+curve.
+\item Density-domain (dust, scratches, streaking) --- after the characteristic
+curve, before printing.
+\item Geometric (jitter) --- fused into the optical warp.
+\end{enumerate}
+
+This ordering means the "Aging" panel in the UI is not a pipeline stage in the
+render-graph sense; it is a control panel whose parameters are injected at four
+different points. Section~\ref{sec:rendergraph} explains how the graph handles
+this, and it is the principal reason the render graph is a graph rather than an
+array.

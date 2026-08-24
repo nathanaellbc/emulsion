@@ -1,0 +1,25 @@
+# --- dependencies & build output ---
+node_modules/
+web/node_modules/
+web/dist/
+web/verify-shots/
+web/sample-compare/
+*.local
+
+# --- LaTeX build artifacts ---
+*.aux
+*.log
+*.out
+*.pdf
+*.synctex.gz
+*.fdb_latexmk
+*.fls
+
+# --- large image / RAW samples (kept locally, not in git) ---
+web/sample/
+sections/*.dng
+
+# --- OS / editor ---
+.DS_Store
+Thumbs.db
+*.swp

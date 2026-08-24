@@ -1,0 +1,205 @@
+\section{Optical Simulation}
+\label{sec:optical}
+
+\subsection{The Placement Problem}
+
+Lens artifacts belong to the taking lens and therefore occur \emph{before} the
+film is exposed. Diffusion filters, however, may sit on the taking lens or may
+be a property of the projection and viewing chain, and bloom in a projected
+print is a property of the projector and the screen. \EM{} therefore splits the
+optical stage into two passes at different points in the pipeline:
+
+\begin{itemize}
+\item \textbf{Pre-exposure optics} (before \eqref{eq:charcurve}): geometric
+distortion, vignetting, chromatic aberration, and taking-lens diffusion. These
+modify the exposure that forms the latent image, so they interact correctly with
+the characteristic curve --- a vignetted corner falls further down the toe and
+loses shadow detail, which is what actually happens.
+\item \textbf{Post-print optics} (after \eqref{eq:printtodisplay}): bloom and
+veiling glare associated with viewing. These act on the rendered image.
+\end{itemize}
+
+Applications that apply all optical effects at the end get vignetting
+qualitatively wrong: a post-hoc darkening multiplies the output, whereas a real
+vignette reduces exposure and therefore changes contrast and color in the
+corners, not merely brightness.
+
+\subsection{Geometric Distortion}
+
+The Brown--Conrady model is used, with radial and tangential terms. For a
+normalized image coordinate $\mathbf{x} = (x, y)$ measured from the optical
+center with $r^2 = x^2 + y^2$:
+
+\begin{align}
+\mathbf{x}_d &= \mathbf{x}\left(1 + k_1 r^2 + k_2 r^4 + k_3 r^6\right) \nonumber \\
+&\quad + \begin{pmatrix} 2 p_1 x y + p_2 (r^2 + 2x^2) \\ p_1 (r^2 + 2y^2) + 2 p_2 x y \end{pmatrix}.
+\label{eq:distortion}
+\end{align}
+
+$k_1 < 0$ gives barrel distortion, $k_1 > 0$ pincushion. The tangential terms
+$p_1, p_2$ model decentering and are exposed only in the "vintage lens" presets,
+where a small asymmetry is a large part of the character.
+
+Distortion is implemented as an inverse warp: for each output pixel, compute the
+source coordinate and sample with a Catmull--Rom kernel. Forward warping would
+require scatter and produce holes. Note that Apple's lens correction is
+\emph{enabled} at decode (Listing~\ref{lst:rawconfig}), so the input is
+rectilinear and \eqref{eq:distortion} adds the simulated lens's distortion to a
+clean base rather than fighting the phone lens's own.
+
+\subsection{Vignetting}
+
+Two mechanisms are modelled and summed in the illumination domain.
+
+\paragraph{Natural (cos-fourth) falloff} An unavoidable consequence of the
+geometry of an ideal lens:
+
+\begin{equation}
+V_{\mathrm{nat}}(\theta) = \cos^4 \theta, \qquad \tan\theta = \frac{r\, d}{f},
+\end{equation}
+
+where $d$ is half the frame diagonal and $f$ the focal length. Selecting a
+shorter simulated focal length therefore automatically produces stronger
+falloff, which is correct and which links the vignette control to the format
+and lens selection rather than leaving it free-floating.
+
+\paragraph{Mechanical vignetting} Aperture obstruction by the lens barrel,
+which is strongly aperture-dependent and vanishes on stopping down:
+
+\begin{equation}
+V_{\mathrm{mech}}(r) = 1 - v\,\max\!\left(0, \frac{r - r_0}{1 - r_0}\right)^{\!\eta} \cdot \varsigma_N,
+\end{equation}
+
+with $\varsigma_N = \mathrm{clamp}\!\left((N_{\max}/N)^2, 0, 1\right)$ the
+aperture dependence, $N$ the f-number, $r_0$ the onset radius, and $\eta$ the
+falloff exponent (default $2.2$). The combined operator is
+
+\begin{equation}
+\boxed{\;E' = E \cdot V_{\mathrm{nat}}\cdot V_{\mathrm{mech}}\;}
+\label{eq:vignette}
+\end{equation}
+
+applied to linear exposure, pre-characteristic-curve.
+
+\subsection{Chromatic Aberration}
+
+Lateral chromatic aberration is a wavelength-dependent magnification. It is
+modelled as a per-channel radial scale about the optical center:
+
+\begin{equation}
+\mathbf{x}_c = \mathbf{x}\left(1 + \varkappa\, \delta_c\, r^2\right),
+\qquad \boldsymbol{\delta} = (+1, 0, -1),
+\label{eq:ca}
+\end{equation}
+
+so the red and blue records are scaled oppositely and the green record is the
+reference. $\varkappa$ is the aberration strength. The quadratic $r^2$
+dependence rather than a constant scale is important: real lateral CA is
+negligible at the center and grows toward the corners, and a constant scale
+produces visible fringing on center subjects where there should be none.
+
+Longitudinal chromatic aberration --- the shift of focal plane with wavelength,
+which produces the green/magenta fringing on out-of-focus edges --- requires
+depth information and is implemented only when a depth map is available from
+capture, as a per-channel defocus radius offset.
+
+\subsection{Diffusion Filters}
+
+A diffusion filter (Pro-Mist, Hollywood Black Magic, and similar) contains
+particles that scatter a small fraction of the light over a wide angle. The
+visible effects are a soft halo around highlights and, characteristically, a
+lifting of shadows \emph{adjacent to} highlights --- a local, not global, black
+lift. Modelling it as a global blur-and-blend loses that locality and simply
+looks out of focus.
+
+The model is a two-term veiling glare:
+
+\begin{equation}
+\boxed{\;E' = (1 - w_d) E \;+\; w_d \left[(1-\varrho_d)\, G_{\sigma_1} * E \;+\; \varrho_d\, G_{\sigma_2} * E\right]\;}
+\label{eq:diffusion}
+\end{equation}
+
+with $\sigma_1$ small (a few pixels, the tight halo), $\sigma_2$ very large (the
+broad veil), $\varrho_d$ the split, and $w_d$ the filter strength ($1/8$, $1/4$,
+$1/2$, $1$, $2$ presets mapping to $w_d \in \{0.03, 0.06, 0.11, 0.19, 0.30\}$).
+Because the operation is in linear exposure, a bright highlight contributes far
+more to the veil than a mid-tone, which localizes the effect around highlights
+automatically --- the essential behavior, obtained without a threshold.
+
+Diffusion is applied \emph{pre-exposure} when the user selects "taking lens
+filter" and \emph{post-print} when they select "projection glare." The two look
+meaningfully different: pre-exposure diffusion is compressed by the film's
+shoulder and looks restrained; post-print diffusion is not and looks stronger.
+Both are offered, and the difference is a small piece of photographic education
+delivered by a toggle.
+
+\subsection{Bloom}
+
+Bloom is the post-print counterpart of halation: the spread of very bright areas
+in the viewing chain. It uses the same pyramid machinery as
+Section~\ref{sec:recursive-blur} with a Gaussian rather than exponential target
+and a higher threshold, and is applied to display-linear values. It is disabled
+by default, since halation already supplies the film-side glow and stacking both
+is a common way to make an image look cheap.
+
+\subsection{Depth-Dependent Effects}
+
+When the capture provides a depth map (available on devices with a LiDAR
+scanner or through the dual-camera disparity estimate), three additional effects
+become available:
+
+\paragraph{Synthetic defocus} A depth-varying circle of confusion,
+\begin{equation}
+c(z) = \frac{f^2}{N\,(z_f - f)}\cdot\frac{|z - z_f|}{z},
+\end{equation}
+with $z_f$ the focus distance. Gathered with a scatter-as-gather approach at
+half resolution.
+
+\paragraph{Cat-eye (optical vignetting) bokeh} Off-axis bokeh discs are
+truncated by the lens barrel, producing the characteristic lemon shape. The
+aperture shape at image radius $r$ is the intersection of two circles of radius
+$R$ whose centers are separated by $\varsigma_{\mathrm{cat}}\, r$; the sampling
+kernel is masked by that intersection, oriented along the radial direction.
+
+\paragraph{Aperture blade shape} An $n$-gon mask with optional blade curvature,
+producing polygonal bokeh for $n \le 9$.
+
+These are marked SHOULD (FR-10) rather than MUST, since depth is not available
+for imported files and the quality of phone depth maps at object boundaries is
+the limiting factor rather than the optical model.
+
+\subsection{Deferred: Lens Breathing}
+
+Lens breathing --- the change of field of view with focus --- is a temporal
+phenomenon with no meaning for a single still frame. It is listed in the
+original proposal and is correctly deferred to the video release, where it will
+be implemented as a focus-driven scale animation applied before distortion. It
+is recorded here so that the omission from v1.0 is deliberate and documented
+rather than an oversight.
+
+\subsection{Cost Summary}
+
+\begin{table}[htbp]
+\caption{Optical Stage Costs at 12\,MP}
+\label{tab:opticalcost}
+\begin{center}
+\renewcommand{\arraystretch}{1.15}
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{Effect} & \textbf{Passes} & \textbf{Cost} \\
+\midrule
+Distortion + CA (fused)  & 1 warp    & $1.0\times$ base \\
+Vignetting               & fused     & negligible \\
+Diffusion                & pyramid   & $1.4\times$ base \\
+Bloom                    & pyramid   & $1.4\times$ base \\
+Synthetic defocus        & 3 (half)  & $1.1\times$ base \\
+\bottomrule
+\end{tabular}
+\end{center}
+\end{table}
+
+Distortion, chromatic aberration, and vignetting are fused into a single warp
+kernel: the kernel computes the distorted coordinate once, applies the
+per-channel CA scale to it, performs three filtered samples, and multiplies by
+the vignette factor. Three separate passes would cost three full-resolution
+round trips to memory for no benefit.

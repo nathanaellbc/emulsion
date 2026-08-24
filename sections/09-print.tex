@@ -1,0 +1,223 @@
+\section{Optical Printing and Print Stock}
+\label{sec:print}
+
+\subsection{Why the Print Stage Is Not Optional}
+
+The negative is a low-contrast, orange-masked, inverted record with a gamma near
+$0.6$. Nothing about it resembles a photograph. Every visual quality that people
+mean when they say ``film look'' --- the contrast, the highlight roll-off, the
+specific way saturated colors desaturate as they approach white, the black point
+--- is created in the \emph{second} transfer, when the negative is projected onto
+print stock.
+
+Simulations that stop at the negative and then apply a contrast curve produce a
+result that is qualitatively wrong in a way that is easy to see and hard to
+name. The reason is that the print transfer is not a curve applied to the
+negative's \emph{output}; it is a curve applied to the negative's
+\emph{transmittance}, mediated by a crosstalk matrix, with the negative's three
+records interacting. That composition is not expressible as three independent
+one-dimensional curves.
+
+\subsection{Negative Transmittance and Printing Density}
+
+The negative's transmittance in record $k$ is, by definition of density,
+
+\begin{equation}
+T_k = 10^{-D_k}.
+\end{equation}
+
+The print stock's red-sensitive layer, however, does not see $T_R$. It sees the
+integral of the enlarger's spectral power distribution, the negative's total
+spectral transmittance (all three dyes overlap), and the layer's own spectral
+sensitivity. Reducing that integral to three channels yields a
+\emph{printing density} matrix $\mathbf{C}$ that maps the negative's measured
+densities to the effective densities seen by each print layer:
+
+\begin{equation}
+D^{\mathrm{eff}}_c \;=\; \sum_{k} C_{ck}\, D_k .
+\label{eq:printdensity}
+\end{equation}
+
+The off-diagonal terms of $\mathbf{C}$ are the \emph{unwanted absorptions}: the
+cyan dye absorbs some green, the magenta dye absorbs some blue, and so on. For a
+modern color negative printed on a modern print stock,
+
+\begin{equation}
+\mathbf{C} \approx
+\begin{pmatrix}
+1.000 & 0.086 & 0.028 \\
+0.041 & 1.000 & 0.113 \\
+0.017 & 0.052 & 1.000
+\end{pmatrix}.
+\label{eq:cmatrix}
+\end{equation}
+
+$\mathbf{C}$ is derived offline from spectral dye absorption data
+\cite{kodak2383,james1977} and print
+stock spectral sensitivities; it is the principal artifact of the reduced
+spectral strategy announced in Section~\ref{sec:background}.
+
+The print exposure is then
+
+\begin{equation}
+\logE'_c \;=\; \log_{10} L_c \;-\; D^{\mathrm{eff}}_c \;+\; \log_{10} t_{\mathrm{print}},
+\label{eq:printexposure}
+\end{equation}
+
+where $L_c$ is the enlarger channel intensity (set by the printer lights of
+Section~\ref{sec:printerlights}) and $t_{\mathrm{print}}$ is the print exposure
+time, which is the overall density control.
+
+\subsection{Automatic Mask Removal}
+
+Observe that the negative's $\Dmin$ enters \eqref{eq:printdensity} as a constant
+vector, hence enters \eqref{eq:printexposure} as a constant offset in
+$\logE'$. It is therefore exactly compensable by a constant adjustment of $L_c$
+--- which is precisely what a laboratory does when it establishes the printer
+light values for a given stock. The orange mask is not removed by a special
+operation; it is removed by \emph{balancing}, and the model reproduces that
+automatically.
+
+\EM{} computes the neutral printer lights $L_c^{\mathrm{aim}}$ at profile-load
+time by requiring that a scene-referred neutral at $E = 0.18$ reproduce the
+print stock's aim density $\mathbf{D}'_{\mathrm{aim}}$:
+
+\begin{equation}
+\log_{10} L_c^{\mathrm{aim}} \;=\; D'^{-1}_{\mathrm{print},c}\!\left(D'_{\mathrm{aim},c}\right) \;+\; D^{\mathrm{eff}}_c\big|_{E=0.18},
+\label{eq:aimbalance}
+\end{equation}
+
+where $D'^{-1}_{\mathrm{print},c}$ is the numerical inverse of the print stock's
+characteristic curve, obtained by four Newton iterations from the straight-line
+estimate. This calculation is performed once per (negative stock, print stock)
+pair and cached, and is what guarantees AC-5 across all $10 \times 4$ shipping
+combinations without hand-tuning each one.
+
+\subsection{The Print Characteristic Curve}
+
+The print stock uses the identical formulation of \eqref{eq:charcurve}, with
+substantially different parameters:
+
+\begin{equation}
+D'_c = D'_{\min,c} + \softp{\kappa'_{t,c}}{u'_c} - \softp{\kappa'_{s,c}}{u'_c - \Delta D'_c},
+\label{eq:printcurve}
+\end{equation}
+
+with $u'_c = \gamma'_c(\logE'_c - x'_{0,c})$. Typical print stock parameters
+are $\gamma' \in [2.4, 3.2]$, $\Delta D' \in [2.2, 2.6]$, and a
+\emph{much} harder shoulder than the negative, $\kappa'_s \approx 0.06$, which
+is what produces the abrupt, characteristic approach to maximum black.
+
+Because the print inverts, the negative's shoulder (scene highlights, high
+negative density, low print exposure) maps to the print's \emph{toe}. The
+graceful highlight roll-off that film is celebrated for is therefore the
+composition of two soft regions --- the negative's shoulder and the print's toe
+--- and reproducing it requires both. Applications that model only one produce
+highlights that roll off half as gracefully, which reads as "digital."
+
+The overall system gamma is the product of the straight-line gammas modulated by
+the crosstalk matrix; for the representative pairing,
+
+\begin{equation}
+\gamma_{\mathrm{sys}} = \gamma_{\mathrm{neg}} \cdot \gamma_{\mathrm{print}} \approx 0.61 \times 2.80 \approx 1.71,
+\end{equation}
+
+consistent with the $1.5$--$1.8$ range appropriate for a dark-surround viewing
+condition \cite{hunt2004}.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}
+\begin{axis}[
+  width=\columnwidth, height=5.2cm,
+  xlabel={scene $\logE$ (relative)},
+  ylabel={print density $D'$},
+  xmin=-2.6, xmax=1.4, ymin=0, ymax=2.8,
+  grid=both, grid style={draw=emLine!20},
+  legend style={font=\scriptsize, at={(0.98,0.98)}, anchor=north east, draw=emLine!40},
+  label style={font=\scriptsize}, tick label style={font=\scriptsize},
+  samples=250,
+]
+% Composite: print curve driven by (aim - gamma_neg*(x - x0n)) as effective print logE
+% Effective print logE' = k - gamma_neg*(x + 2.10)   (negative density rises with x)
+\addplot[emAcc, very thick, domain=-2.6:1.4]
+  {0.06 + 0.07*ln(1+exp((2.80*((1.05 - 0.61*(x+2.10)) + 0.55))/0.07))
+        - 0.06*ln(1+exp((2.80*((1.05 - 0.61*(x+2.10)) + 0.55) - 2.45)/0.06))};
+\addlegendentry{print density $D'$}
+\end{axis}
+\end{tikzpicture}
+\caption{Composite scene-to-print transfer, obtained by driving \eqref{eq:printcurve} with the negative density of \eqref{eq:charcurve}. The rising left portion is scene shadow rendered as print black; the falling right portion is scene highlight rendered as print white. The soft knee at the right is the composition of the negative's shoulder with the print's toe.}
+\label{fig:printcomposite}
+\end{figure}
+
+\subsection{Print Stock Profiles}
+
+\begin{table}[htbp]
+\caption{Shipping Print Stock Profiles}
+\label{tab:printstocks}
+\begin{center}
+\renewcommand{\arraystretch}{1.15}
+\begin{tabularx}{\columnwidth}{@{}l>{\raggedright\arraybackslash}X@{}}
+\toprule
+\textbf{Profile} & \textbf{Character} \\
+\midrule
+Standard 2383-type & The default. $\gamma' = 2.80$, moderate saturation, warm-leaning neutral axis, gentle toe. The reference against which everything else is judged. \\
+Premium 2393-type & $\gamma' = 3.05$, higher saturation via steeper cross-terms, deeper maximum density, harder shoulder. More contrast, less latitude. \\
+Fuji 3513-type & $\gamma' = 2.72$, cooler neutral axis, distinctly different green and cyan rendering, softer approach to maximum density. \\
+Fuji 3521-type & $\gamma' = 2.90$, higher saturation Fuji rendering, characteristic magenta handling. \\
+Bypass (scan look) & No print transfer. Negative density is inverted and normalized only. Produces the flat, low-contrast look of an unadjusted lab scan --- included deliberately, because it is what many users have actually seen and expect. \\
+\bottomrule
+\end{tabularx}
+\end{center}
+\end{table}
+
+\subsection{Silver Retention (Bleach Bypass and ENR)}
+
+Skipping or shortening the bleach step leaves metallic silver in the print
+alongside the dye image. Silver is spectrally neutral, so the result is a
+neutral density image added to the color image: contrast rises sharply,
+saturation falls, and blacks become very dense.
+
+The model is direct. Let $\bar{D}'$ be the neutral (silver) density, which is
+proportional to total development:
+
+\begin{equation}
+\bar{D}' = \frac{1}{3}\sum_c \frac{D'_c - D'_{\min,c}}{\Delta D'_c} \cdot \Delta D'_{\mathrm{Ag}},
+\end{equation}
+
+and the retained-silver print density is
+
+\begin{equation}
+D'^{\mathrm{Ag}}_c = D'_c + \varrho\, \bar{D}',
+\label{eq:silverretention}
+\end{equation}
+
+with $\varrho \in [0, 1]$ the retention fraction. $\varrho = 1$ is full bleach
+bypass; intermediate values correspond to the ENR and ACE processes, which
+retain a controlled fraction. This single scalar reproduces the entire family
+of silver-retention looks, and it reproduces their characteristic property ---
+that desaturation is strongest in the shadows, where $\bar{D}'$ is largest
+relative to the color record --- automatically.
+
+\subsection{Print Density to Display}
+
+The print is viewed by transmission (projection) or reflection. In either case
+the luminance reaching the eye is proportional to $10^{-D'}$, so the display
+transform is
+
+\begin{equation}
+Y_c = \frac{10^{-D'_c} - 10^{-D'_{\max,c}}}{10^{-D'_{\min,c}} - 10^{-D'_{\max,c}}},
+\label{eq:printtodisplay}
+\end{equation}
+
+which normalizes the print's own $\Dmin$ to display white and its $\Dmax$ to
+display black. The subtraction of the $\Dmax$ term is important: without it, the
+print's finite maximum density leaves a lifted black that compounds with the
+display's own black level and looks washed out on an OLED panel.
+
+The resulting linear $Y$ is converted from the print stock's primaries to
+Display P3 and encoded. A viewing-condition parameter applies an optional
+surround compensation exponent \cite{fairchild2013} (default $1.0$ for a phone
+screen viewed in
+normal room light, $0.9$ available for a simulated dark-surround projection
+look).

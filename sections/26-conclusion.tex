@@ -1,0 +1,58 @@
+\section{Conclusion}
+
+\subsection{What This Document Specifies}
+
+\EM{} is specified here as a mobile application that treats a photograph as a
+latent image awaiting development rather than as a finished picture awaiting a
+filter. The specification is complete enough to build from: the imaging model is
+given in closed form with numerical defaults and validation tolerances; the GPU
+architecture is given with the fusion strategy, precision policy, and memory
+budget that make it meet its latency targets; the application architecture,
+interface, and persistence schema are given at implementation detail; and the
+programme is given with phases, staffing, cost, and a risk register that names
+owners and triggers.
+
+The technical argument reduces to a single structural claim. A lookup table is a
+pointwise function, and the phenomena that identify photographic film ---
+halation, grain, interlayer inhibition, shoulder compression of scene highlights
+--- are not pointwise. They are spatial, stochastic, or dependent on radiometric
+information that a display-referred image no longer contains. No amount of
+refinement to a pointwise operator on a rendered image closes that gap, because
+the gap is one of representational class rather than of quality.
+
+Carrying scene-referred data through a chain of physically motivated transforms
+does close it, and the performance analysis in
+Section~\ref{sec:performance} shows that doing so costs 2\,ms of GPU time per
+preview frame on current mobile silicon. The obstacle was never computational.
+
+\subsection{What Would Falsify It}
+
+A design document that cannot be wrong is not a design document. Three concrete
+outcomes would invalidate the approach as specified:
+
+\begin{enumerate}
+\item \textbf{The measurements do not close.} If AC-1 through AC-4 cannot be
+met for a majority of target stocks with available or obtainable reference data,
+then the model is being fitted to guesses and its claim to physical grounding is
+rhetorical. Risk T-01, checked at month 4.
+\item \textbf{Correctness does not produce conviction.} If the perceptual panel
+continues to identify the renders reliably while every numerical acceptance
+criterion passes, the model is measuring the wrong things. Risk T-02, checked at
+month 7 and again at month 15.
+\item \textbf{The distinction does not matter commercially.} If non-expert users
+show no preference between a physically simulated render and a strong LUT
+baseline, the product is correctly built and incorrectly aimed. Risk P-01,
+checked during Phase 1.
+\end{enumerate}
+
+Each has a defined trigger and a prepared response. That is the difference
+between a plan and an intention.
+
+\subsection{The Argument in One Sentence}
+
+Every quantity in this document that a user can adjust corresponds to something
+that exists in a photographic laboratory, and every equation that consumes those
+quantities can be checked against a densitometer. If both remain true through
+implementation, the product's claim is not a marketing position but a
+verifiable property --- and a photograph made with it will not have been
+filtered. It will have been developed.

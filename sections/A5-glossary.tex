@@ -1,0 +1,181 @@
+\section{Notation and Glossary}
+\label{app:glossary}
+
+\subsection{Symbols}
+
+Where a symbol is primed it refers to the print stock; unprimed symbols refer
+to the negative. A subscript $c$ or $k$ indexes a color record in
+$\{R, G, B\}$; a subscript $j$ indexes a term of the halation Gaussian mixture.
+
+\begin{table}[htbp]
+\caption{Symbol Table}
+\label{tab:symbols}
+\begin{center}
+\renewcommand{\arraystretch}{1.18}
+\footnotesize
+\begin{tabularx}{\columnwidth}{@{}ll>{\raggedright\arraybackslash}X@{}}
+\toprule
+\textbf{Sym.} & \textbf{Defined} & \textbf{Meaning} \\
+\midrule
+$x, \logE$ & \eqref{eq:ucoord} & Log$_{10}$ exposure, lux-seconds at the film plane \\
+$D$ & \eqref{eq:charcurve} & Optical density (Status M negative, Status A print) \\
+$\Dmin$ & \eqref{eq:charcurve} & Base plus fog density; for color negative, the orange mask \\
+$\Dmax$ & \eqref{eq:charcurve} & Maximum attainable density, $\Dmin + \Delta D$ \\
+$\Delta D$ & \eqref{eq:charcurve} & Density range \\
+$\gamma$ & \eqref{eq:ucoord} & Straight-line gamma; negative for reversal stocks \\
+$\gamma(x)$ & \eqref{eq:pointgamma} & Point gamma, the local slope $dD/dx$ \\
+$x_0$ & \eqref{eq:ucoord} & Extrapolated speed point \\
+$x_{\mathrm{sp}}$ & \eqref{eq:speedpoint} & Speed point, $\logE$ at $\Dmin + 0.10$ \\
+$\kappa_t, \kappa_s$ & \eqref{eq:charcurve} & Toe and shoulder softness \\
+$\softp{a}{u}$ & \eqref{eq:softplus} & Softplus with sharpness $a$ \\
+$\sigma(t)$ & \eqref{eq:softplus} & Logistic function, derivative of softplus \\
+$m_c$ & \eqref{eq:maskdepletion} & Mask depletion coefficient \\
+$\mathrm{CI}$ & \eqref{eq:ci} & Contrast index \\
+$S$ & Sec.~\ref{sec:negative} & Arithmetic ISO speed \\
+$\varepsilon$ & \eqref{eq:anchor} & Exposure compensation, stops \\
+$g_{\mathrm{cal}}$ & \eqref{eq:anchor} & Per-device middle-gray calibration \\
+$\mathbf{M}_{\mathrm{in}}$ & \eqref{eq:min} & Display P3 to ACEScg transform \\
+$\boldsymbol{\rho}$ & \eqref{eq:vonkries} & Cone responses, von Kries adaptation \\
+$\Delta x^{\mathrm{(bal)}}$ & \eqref{eq:tungsten} & Per-layer speed balance \\
+$A$ & \eqref{eq:activity} & Development activity; $A = 1$ is normal process \\
+$E_a/R$ & \eqref{eq:activity} & Apparent activation energy over gas constant \\
+$\eta(a_g)$ & \eqref{eq:activity} & Agitation efficiency \\
+$\gamma_\infty$ & \eqref{eq:gammatime} & Asymptotic gamma of emulsion + developer \\
+$\phi_0, \beta_f$ & \eqref{eq:fog} & Fog growth magnitude and exponent \\
+$\alpha_s$ & \eqref{eq:speedshift} & Speed recovery coefficient \\
+$\rho$ & Sec.~\ref{sec:development} & Activity multiplier per stop of push \\
+$I_k$ & \eqref{eq:inhibitor} & Diffused development inhibitor concentration \\
+$H_\sigma$ & Sec.~\ref{sec:interlayer} & Highpass operator, $D - G_\sigma * D$ \\
+$\mathbf{A} = [a_{ck}]$ & \eqref{eq:dirmatrix} & DIR coupling matrix \\
+$\Lambda_c$ & \eqref{eq:activityweight} & Activity weight, normalized point gamma \\
+$\lambda$ & \eqref{eq:shotnoise} & Grain intensity, grains per unit area \\
+$g(\mathbf{p})$ & \eqref{eq:grainkernel} & Dye cloud profile \\
+$W(\mathbf{f})$ & \eqref{eq:wiener} & Wiener (noise power) spectrum \\
+$G_S$ & \eqref{eq:selwyn} & Selwyn granularity \\
+$p$ & \eqref{eq:grainvar} & Fractional density $(D - \Dmin)/\Delta D$ \\
+$\nu_1, \nu_2$ & Sec.~\ref{sec:grain} & Granularity shape exponents \\
+$\chi, \zeta$ & \eqref{eq:grainkernel} & Grain clustering fraction and scale ratio \\
+$\varphi$ & \eqref{eq:graincorr} & Inter-record grain correlation \\
+$g$ & \eqref{eq:grainapply} & User grain amount; $1$ is physically correct \\
+$W_{\mathrm{mm}}$ & \eqref{eq:formatscale} & Simulated frame width, millimetres \\
+$\tau, \kappa_h$ & Tab.~\ref{tab:halparams} & Halation threshold and knee \\
+$\ell_c$ & Tab.~\ref{tab:halparams} & Per-record scattering length \\
+$\alpha_h, \omega$ & Tab.~\ref{tab:halparams} & Halation intensity, base-reflection weight \\
+$\mathbf{C}$ & \eqref{eq:cmatrix} & Printing density (crosstalk) matrix \\
+$L_c$ & \eqref{eq:printexposure} & Enlarger channel intensity \\
+$p_c$ & \eqref{eq:printerlights} & Printer light offset, integer points \\
+$t_{\mathrm{print}}$ & \eqref{eq:printexposure} & Print exposure time \\
+$\varsigma$ & \eqref{eq:satdensity} & Saturation density control \\
+$\delta_{RG}, \delta_{BG}$ & \eqref{eq:neutralaxis} & Neutral axis tilt \\
+$\varrho$ & \eqref{eq:silverretention} & Silver retention fraction \\
+\bottomrule
+\end{tabularx}
+\end{center}
+\end{table}
+
+\subsection{Glossary}
+
+\begin{description}[leftmargin=0pt,labelindent=0pt,style=nextline,itemsep=2pt]
+
+\item[ACEScg] The linear working space adopted internally: ACES AP1 primaries,
+D60 white point. Chosen for gamut headroom, not for interchange.
+
+\item[Acutance] Apparent edge sharpness, distinct from resolution. In film it
+arises largely from interlayer inhibition rather than from the MTF.
+
+\item[Aim density] The print density a correctly balanced neutral is required
+to reproduce. Fixing it is what determines the neutral printer lights and
+therefore removes the orange mask.
+
+\item[Characteristic curve] The transfer from log exposure to density; the
+$D$--$\logE$ curve. The mathematical core of the pipeline.
+
+\item[Contrast index] The slope of the chord from the speed point to a point
+two log-exposure units higher; the practical measure of development contrast.
+
+\item[Crossover] Non-parallelism of the three records' characteristic curves,
+producing a color cast that varies with luminance and cannot be corrected by a
+global balance change.
+
+\item[DIR coupler] Development Inhibitor Releasing coupler. Releases a
+diffusing inhibitor in proportion to local development, producing both acutance
+and the inter-image effect.
+
+\item[Eberhard effect] The light rim appearing on the low-density side of a
+dense region, caused by inhibitor diffusion; the intra-layer adjacency effect.
+
+\item[ECN-2, C-41, E-6] Motion picture negative, still color negative, and
+color reversal processes respectively. Modelled as chemistry profiles that
+supply the development modulation constants.
+
+\item[Halation] Light that passes through the emulsion, reflects at the
+film base or its backing, and re-exposes the emulsion from below, producing a
+red-biased glow around bright sources.
+
+\item[Inter-image effect] Cross-layer inhibition: strong development in one
+layer suppresses development in the others, locally increasing saturation in a
+way no global saturation control reproduces.
+
+\item[LAD] Laboratory Aim Density. The reference print density triple used to
+establish printer lights.
+
+\item[Latent image] The invisible, developable change produced in silver halide
+crystals by exposure. The conceptual object the application treats a capture as
+being.
+
+\item[Orange mask] The colored-coupler layer of color negative film that
+corrects unwanted dye absorptions. It is calibrated to be removed by printing,
+and modelling it without modelling its removal is a recognizable failure mode.
+
+\item[Point gamma] The derivative of the characteristic curve at a given
+exposure; the local contrast. Consumed by the grain, interlayer, and printer
+light models.
+
+\item[Printer point] The industry unit of printing light adjustment: $0.025$ in
+log exposure, twelve points to the stop.
+
+\item[ProRAW] Apple's linear DNG format carrying the computational
+photography stack applied to the mosaic while remaining scene-referred.
+
+\item[Push / pull processing] Deliberate over- or under-development,
+conventionally quoted in stops. Modelled through development activity, which is
+why the simulated result has empty contrasty shadows rather than brighter ones.
+
+\item[Recipe] The complete, self-contained value describing how to develop one
+image. The unit of persistence, undo, sharing, and cache identity.
+
+\item[Remjet] The carbon backing on motion picture negative stock, which
+suppresses halation. Its removal for still-camera use is what produces the
+familiar strong red halo of repurposed cine film.
+
+\item[Rendition] A cached derived image at a given size class, color space, and
+recipe hash. Never a source of truth.
+
+\item[Scene-referred] Image data proportional to scene radiance, with no
+rendering intent applied. The required input state for every model in this
+document.
+
+\item[Selwyn granularity] $\sigma_A\sqrt{2A}$, a constant of the emulsion
+independent of measuring aperture; the published RMS granularity figure.
+
+\item[Silver retention] Bleach bypass, ENR, and related processes that leave
+metallic silver in the print, adding a neutral density that raises contrast and
+lowers saturation, most strongly in shadow.
+
+\item[Softplus] The smooth relaxation of $\max(u,0)$ from which the
+characteristic curve is built.
+
+\item[Speed point] The log exposure producing $\Dmin + 0.10$; the anchor from
+which ISO speed is computed.
+
+\item[Status M / Status A] Standardized densitometric responses for measuring
+camera negative and print materials respectively.
+
+\item[Tile memory] On-chip storage on Apple GPUs that allows consecutive
+passes to exchange data without a round trip to device memory. The mechanism
+behind the pipeline's fusion strategy.
+
+\item[Wiener spectrum] The power spectral density of granularity; the
+quantity against which the grain model is validated.
+
+\end{description}

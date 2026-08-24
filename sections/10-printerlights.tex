@@ -1,0 +1,216 @@
+\section{Printer Lights and the Color Science Engine}
+\label{sec:printerlights}
+
+\subsection{The Printer Light Unit}
+
+In an optical printer, each of three channels of the printing beam is attenuated
+by a calibrated filter wheel. The industry-standard increment --- the
+\emph{printer point} --- is
+
+\begin{equation}
+1 \text{ point} \;=\; 0.025 \text{ in } \log_{10} \text{ exposure},
+\end{equation}
+
+so that exactly twelve points make one stop, since $12 \times 0.025 = 0.30
+\approx \log_{10} 2$. Printer lights are specified as an integer triple, and a
+grade is communicated between laboratory and client as three numbers such as
+$(28, 25, 26)$.
+
+\EM{} adopts this unit exactly, as an offset from the computed aim balance of
+\eqref{eq:aimbalance}:
+
+\begin{equation}
+\boxed{\;\log_{10} L_c \;=\; \log_{10} L_c^{\mathrm{aim}} \;+\; 0.025\, p_c\;}
+\label{eq:printerlights}
+\end{equation}
+
+with $p_c \in [-12, +12]$ integer, giving a $\pm 1$ stop range per channel. The
+control is deliberately \emph{integer-valued}: printer points are integers in
+practice, the quantization is finer than the visual threshold, and integer
+values are what makes a grade communicable. A continuous slider here would be a
+small betrayal of parameter honesty for no benefit.
+
+\subsection{Sign Convention}
+
+Increasing a printer light increases the exposure of the print stock in that
+record, which develops more of the complementary dye, which \emph{subtracts}
+that color from the print. Raising the red printer light makes the print
+\emph{more cyan}, and raising all three makes the print darker.
+
+This is counterintuitive to anyone who has used a digital color balance control,
+and it is correct. \EM{} defaults to the laboratory convention and labels it
+unambiguously, with the direction indicated on the control itself
+(Section~\ref{sec:ui}). A preference exists to invert the sign for users who
+prefer the digital convention; the underlying parameter is unchanged and
+recipes remain interchangeable.
+
+\subsection{Why Printer Lights Are Not RGB Gain}
+
+This is the central claim of the section and the justification for exposing the
+control at all.
+
+An RGB gain applied to a display-referred image multiplies the output. A printer
+light offsets the print stock's \emph{input} in log exposure, before the print
+characteristic curve. Composing \eqref{eq:printerlights} with
+\eqref{eq:printcurve}, the change in print density resulting from a small
+printer light change is
+
+\begin{equation}
+\frac{\partial D'_c}{\partial p_c} \;=\; 0.025\;\gamma'_c(\logE'_c),
+\label{eq:plsensitivity}
+\end{equation}
+
+where $\gamma'_c(\cdot)$ is the print stock's \emph{point} gamma from
+\eqref{eq:pointgamma}. The sensitivity is therefore proportional to the local
+slope of the print curve: large in the mid-scale, and vanishing in both the toe
+and the shoulder.
+
+The consequences are exactly the behaviors that photographers describe as
+"filmic":
+
+\begin{itemize}
+\item \textbf{Color balance changes do not tint the highlights.} Near the
+print's toe (scene highlights), $\gamma' \to 0$, so
+$\partial D'/\partial p \to 0$. Whites stay white no matter how far the balance
+is pushed. An RGB gain tints them immediately.
+\item \textbf{Color balance changes do not tint the deep blacks.} The same
+argument at the shoulder.
+\item \textbf{The effect is strongest exactly where the eye judges color} ---
+the mid-scale, skin tones, foliage.
+\end{itemize}
+
+Figure~\ref{fig:plresponse} shows the sensitivity curve. Reproducing this shape
+is impossible with any pointwise gain applied after tone mapping, which is the
+practical reason a print-domain model earns its complexity.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}
+\begin{axis}[
+  width=\columnwidth, height=4.2cm,
+  xlabel={scene $\logE$ (relative)},
+  ylabel={$\partial D' / \partial p$},
+  xmin=-2.6, xmax=1.4, ymin=0, ymax=0.09,
+  grid=both, grid style={draw=emLine!20},
+  label style={font=\scriptsize}, tick label style={font=\scriptsize},
+  samples=250,
+]
+\addplot[emKey, very thick, domain=-2.6:1.4]
+  {0.025*2.80*( 1/(1+exp(-(2.80*((1.05 - 0.61*(x+2.10)) + 0.55))/0.07))
+              - 1/(1+exp(-(2.80*((1.05 - 0.61*(x+2.10)) + 0.55) - 2.45)/0.06)) )};
+\end{axis}
+\end{tikzpicture}
+\caption{Printer light sensitivity \eqref{eq:plsensitivity} as a function of scene exposure. Color balance authority is concentrated in the mid-scale and vanishes at both extremes. This self-protecting behavior is a property of the model, not a safeguard added on top of it.}
+\label{fig:plresponse}
+\end{figure}
+
+\subsection{Density (Overall Print Exposure)}
+
+The print exposure time $t_{\mathrm{print}}$ of \eqref{eq:printexposure} is the
+lightness control, and is exposed as \emph{print density} in the same printer
+point unit applied to all three channels simultaneously:
+
+\begin{equation}
+\log_{10} t_{\mathrm{print}} = 0.025\, p_{\mathrm{master}}, \quad p_{\mathrm{master}} \in [-24, +24].
+\end{equation}
+
+Increasing density darkens the print. This control replaces "brightness" and
+"exposure" in the develop workspace; the capture-time exposure compensation of
+\eqref{eq:anchor} remains separate and available, and the distinction between
+them is real and worth teaching: exposure compensation changes where the image
+sits on the \emph{negative}'s curve (affecting shadow detail and grain), while
+print density changes where it sits on the \emph{print}'s curve (affecting only
+the print rendering). Users discover this because the two controls genuinely
+behave differently.
+
+\subsection{Additional Color Science Controls}
+
+Beyond printer lights, four controls operate in the print domain. Each is
+defined mathematically here and mapped to its UI representation in
+Table~\ref{tab:controlmap}.
+
+\paragraph{Saturation density} Rather than a chroma multiplier, saturation is
+controlled by scaling the off-diagonal terms of the printing density matrix
+$\mathbf{C}$ of \eqref{eq:cmatrix}:
+
+\begin{equation}
+\mathbf{C}(\varsigma) = \mathbf{I} + \varsigma\,(\mathbf{C} - \mathbf{I}) + (1-\varsigma)\,\varpi\,\mathbf{J},
+\label{eq:satdensity}
+\end{equation}
+
+where $\mathbf{J}$ is the matrix of ones scaled to preserve neutrals and
+$\varsigma$ is the control. Reducing $\varsigma$ reduces the unwanted-absorption
+crosstalk, \emph{increasing} apparent saturation; raising it above unity adds
+crosstalk and desaturates. Because the operator lives before the print curve, its
+effect is again density-dependent: saturated shadows and saturated highlights
+behave differently, which a chroma multiplier cannot express.
+
+\paragraph{Highlight roll-off} Directly modifies the print stock's toe softness
+$\kappa'_t$ over $[0.5, 2.0]\times$ nominal. This is the honest control for what
+other applications call "highlights."
+
+\paragraph{Shadow lift} Modifies $\Dmax'$, which is the print's maximum density
+and therefore its black level. Reducing $\Dmax'$ produces the lifted,
+low-contrast black of a print made on aged paper or a flashed negative.
+
+\paragraph{Neutral axis} A pair of parameters $(\delta_{RG}, \delta_{BG})$
+applying a density-dependent tilt to the neutral axis:
+
+\begin{equation}
+D'_R \mathrel{+}= \delta_{RG}\, \psi(D'), \qquad
+D'_B \mathrel{+}= \delta_{BG}\, \psi(D'),
+\label{eq:neutralaxis}
+\end{equation}
+
+with $\psi(D') = (D' - \Dmin')/\Delta D' - \tfrac{1}{2}$ an antisymmetric
+weighting. This is split toning expressed as an axis tilt: positive
+$\delta_{RG}$ warms shadows and cools highlights simultaneously, exactly as a
+tilted neutral axis in a real print does, and unlike independent
+shadow/highlight tint controls it cannot produce a physically impossible
+non-monotone neutral.
+
+\subsection{Control Mapping Table}
+
+Table~\ref{tab:controlmap} is normative. It is the authoritative translation
+between the user-visible vocabulary, the internal parameter, and the equation
+that consumes it. Any control added to the product must be added to this table
+or it does not ship.
+
+\begin{table}[htbp]
+\caption{Control Mapping: User Term to Model Parameter}
+\label{tab:controlmap}
+\begin{center}
+\renewcommand{\arraystretch}{1.12}
+\begin{tabularx}{\columnwidth}{@{}>{\raggedright\arraybackslash}X l l@{}}
+\toprule
+\textbf{User control} & \textbf{Parameter} & \textbf{Eq.} \\
+\midrule
+Exposure compensation & $\varepsilon$ & \eqref{eq:anchor} \\
+Film speed / rating & $S$ & \eqref{eq:isoshift} \\
+Push / pull & $n \to A$ & \eqref{eq:activity} \\
+Development time & $t/t_0$ & \eqref{eq:activity} \\
+Development temperature & $T$ & \eqref{eq:activity} \\
+Agitation & $a_g$ & \eqref{eq:activity} \\
+Contrast index (readout) & CI & \eqref{eq:ci} \\
+Coupler activity & $\|\mathbf{A}\|$ & \eqref{eq:interlayer} \\
+Printer lights R/G/B & $p_R, p_G, p_B$ & \eqref{eq:printerlights} \\
+Print density & $p_{\mathrm{master}}$ & \eqref{eq:printexposure} \\
+Saturation density & $\varsigma$ & \eqref{eq:satdensity} \\
+Highlight roll-off & $\kappa'_t$ & \eqref{eq:printcurve} \\
+Shadow lift & $\Dmax'$ & \eqref{eq:printcurve} \\
+Neutral axis warm/cool & $\delta_{RG}, \delta_{BG}$ & \eqref{eq:neutralaxis} \\
+Silver retention & $\varrho$ & \eqref{eq:silverretention} \\
+Grain amount & $g$ & \eqref{eq:grainapply} \\
+Grain size & $r_g$ & \eqref{eq:grainkernel} \\
+Halation threshold & $\tau$ & \eqref{eq:halsource} \\
+Halation radius & $\ell$ & \eqref{eq:halpsf} \\
+Halation intensity & $\alpha_h$ & \eqref{eq:haladd} \\
+Halation color bias & $\boldsymbol{\beta}$ & \eqref{eq:haladd} \\
+Diffusion & $w_d, \sigma_d$ & \eqref{eq:diffusion} \\
+Vignetting & $v$ & \eqref{eq:vignette} \\
+Chromatic aberration & $\varkappa$ & \eqref{eq:ca} \\
+Barrel / pincushion & $k_1, k_2$ & \eqref{eq:distortion} \\
+\bottomrule
+\end{tabularx}
+\end{center}
+\end{table}
