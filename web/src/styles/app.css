@@ -1118,21 +1118,73 @@
     gap: var(--s2);
   }
 
+  /* The four stage buttons must fit the bar, never force the page wider. In
+     the stacked bar the control becomes a full-width block flex, so its buttons
+     divide the *available* width (their intrinsic min-width is what used to
+     hold the page at 368px). Labels truncate rather than overflow. */
+  .viewport__bar {
+    min-width: 0;
+  }
+
+  /* In the stacked bar the segmented must not be allowed to size itself to its
+     content (which holds the page at 368px). Capping it at the viewport's
+     content box forces its buttons to divide the space that actually exists. */
   .segmented {
-    justify-content: space-between;
+    display: flex;
+    width: 100%;
+    max-width: calc(100vw - 2 * var(--s3));
+    min-width: 0;
+    overflow: visible;
   }
 
   .segmented button {
-    flex: 1;
+    flex: 1 1 0;
+    min-width: 0;
     padding: 5px 4px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* The Compare/Clipping chips share the stacked bar; let them wrap rather
+     than hold a fixed row that widens the page. */
+  .viewport__bar-right {
+    flex-wrap: wrap;
+    min-width: 0;
   }
 
   .readout {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  /* The empty state must fit the viewport too: the wordmark and the facts grid
+     cap at the screen width, and the letter-spaced title gives up some of its
+     tracking so it wraps instead of overflowing. */
+  .dropzone__inner,
+  .dropzone__facts {
+    max-width: 100%;
+  }
+
+  .dropzone__title {
+    max-width: 100%;
+    font-size: 21px;
+    letter-spacing: 0.2em;
+    text-indent: 0.2em;
+    overflow-wrap: break-word;
+  }
+
   .dropzone__facts > div {
     grid-template-columns: minmax(0, 1fr);
     gap: 2px;
+  }
+
+  /* The bar never lets the three actions plus the wordmark force a wider page. */
+  .topbar {
+    flex-wrap: wrap;
+  }
+
+  .topbar__actions {
+    flex-shrink: 1;
+    min-width: 0;
   }
 }

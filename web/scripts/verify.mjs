@@ -148,6 +148,32 @@ await run('mobile', { width: 390, height: 844 }, async (page) => {
   if (overflow > 1) problems.push(`[mobile] the page scrolls horizontally by ${overflow}px`);
 });
 
+// Narrow phones: the page must never scroll horizontally, and the four stage
+// buttons must stay visible rather than be pushed off the right edge. This is
+// the regression guard for the segmented-control fix: below ~366px the buttons
+// used to hold the page at 368px and scroll it.
+for (const width of [320, 360]) {
+  await run(`mobile-${width}`, { width, height: 760 }, async (page) => {
+    // Empty state: the wordmark and facts grid must fit too.
+    await page.waitForSelector('.dropzone');
+    const emptyOver = await page.evaluate(
+      () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    );
+    if (emptyOver > 1) problems.push(`[mobile-${width}] empty state scrolls by ${emptyOver}px`);
+
+    await loadChart(page);
+    const m = await page.evaluate(() => {
+      const last = document.querySelector('.segmented button:last-child')?.getBoundingClientRect();
+      return {
+        over: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+        lastBtnVisible: last ? last.right <= document.documentElement.clientWidth : false,
+      };
+    });
+    if (m.over > 1) problems.push(`[mobile-${width}] loaded state scrolls by ${m.over}px`);
+    if (!m.lastBtnVisible) problems.push(`[mobile-${width}] the last stage button is pushed off-screen`);
+  });
+}
+
 await browser.close();
 
 if (problems.length) {
