@@ -16,6 +16,19 @@ The repository holds two artifacts of the same model:
 | **`main.tex` → `main.pdf`** | The design document — a 60-page IEEEtran software design specification: closed-form models for every stage, the render architecture, the persistence schema, verification methodology, and a 24-month engineering roadmap. |
 | **`web/`** | A browser implementation of that document. The whole chain runs on the GPU in the page (WebGL2); no file ever leaves the machine. |
 
+The print stage has two engines: the **calculated model** from the document,
+and — where a measurement exists — the **stock's own measured LUT** (Kodak
+2383 and Fujifilm 3513 in D55/D60/D65, Kodak 2393; see
+`web/public/luts/SOURCES.md`). The measurement is the default; the model is
+one toggle away, and 3521 renders through it because no redistributable
+measurement exists. Everything negative-side — exposure, development, grain,
+halation, printer lights — stays physical under either engine, and a
+**subtractive bench** (CMY dye offsets plus a density master) grades the
+print identically under both. Where the paper had to be extended to make the
+LUT engine honest (the Cineon anchor, the reversal-print polarity, the
+Color-Finale-style control mappings), that is recorded in
+[`web/DEVIATIONS.md`](web/DEVIATIONS.md), findings 12 and 13.
+
 ## What it is not
 
 It is not a LUT with a grain overlay. Three things are load-bearing:
@@ -94,9 +107,12 @@ npm run build      # production bundle in web/dist/
 
 The suite checks the implementation against the design document, not against
 itself: the push/pull ladder, the ISO round trip for every stock, the analytic
-curve derivative against a central difference, the aim balance across the stock
-pairings, and — for the spatial stages — mean preservation, edge polarity, and
-cross-record transfer over a field.
+curve derivative against a central difference, the aim balance across the
+stock pairings, and — for the spatial stages — mean preservation, edge
+polarity, and cross-record transfer over a field. The LUT print engine is
+held to its own contract: the Cineon anchor, the encode round trip, the
+measured interpolation error of each bundled table, and the measured stock's
+response to lights and density.
 
 Headless render verification (catches GLSL compile failures, which TypeScript
 cannot):
@@ -105,6 +121,7 @@ cannot):
 cd web
 npm run build && npm run preview &   # serve the build on :4173
 node scripts/verify.mjs              # loads it in Chromium, fails on any error
+node scripts/compare-engines.mjs     # renders both print engines, reports the delta
 ```
 
 ## The design document

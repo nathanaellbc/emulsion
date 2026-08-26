@@ -24,7 +24,9 @@ import { resolve } from '../resolve';
 import { IDEAL_NEGATIVE_ID } from '../profiles/negatives';
 
 const ctx = { renderWidthPx: 2048, sourceSpace: 'linearAP1' } as const;
-const params = resolve(defaultRecipe(), ctx);
+// This suite measures the calculated chain's own bake; the measured-stock
+// engine is tested in engine.test.ts.
+const params = resolve({ ...defaultRecipe(), printEngine: 'model' }, ctx);
 
 function parse(cube: string) {
   const lines = cube.split('\n');
@@ -240,12 +242,12 @@ describe('measured accuracy', () => {
   });
 
   it('is far worse for a reversal stock than for a negative at the same size', () => {
-    const velvia = resolve({ ...defaultRecipe(), negativeId: 'rev.velvia50' }, ctx);
+    const velvia = resolve({ ...defaultRecipe(), negativeId: 'rev.velvia50', printEngine: 'model' }, ctx);
     expect(measureCubeError(velvia, 33)).toBeGreaterThan(measureCubeError(params, 33) * 3);
   });
 
   it('chooses a grid that meets the tolerance rather than a fixed one', () => {
-    const velvia = resolve({ ...defaultRecipe(), negativeId: 'rev.velvia50' }, ctx);
+    const velvia = resolve({ ...defaultRecipe(), negativeId: 'rev.velvia50', printEngine: 'model' }, ctx);
     const gentle = bakeCube(params);
     const steep = bakeCube(velvia);
     expect(steep.size).toBeGreaterThan(gentle.size);
@@ -260,7 +262,7 @@ describe('measured accuracy', () => {
   });
 
   it('says so in the file when no available grid meets the tolerance', () => {
-    const velvia = resolve({ ...defaultRecipe(), negativeId: 'rev.velvia50' }, ctx);
+    const velvia = resolve({ ...defaultRecipe(), negativeId: 'rev.velvia50', printEngine: 'model' }, ctx);
     const baked = bakeCube(velvia);
     if (baked.worstError * 255 > 1) {
       expect(baked.cube).toMatch(/exceeds|cannot|coarser/i);

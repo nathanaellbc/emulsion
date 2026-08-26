@@ -381,6 +381,8 @@ describe('aim balance across every stock pair', () => {
       negativeId,
       printId,
       chemistryId: negativeById(negativeId).chemistryId,
+      // The aim balance is the model's guarantee, and this suite tests it.
+      printEngine: 'model',
     };
     const p = resolve(recipe, ctx);
     expect(p.warnings).toEqual([]);
@@ -405,7 +407,7 @@ describe('aim balance across every stock pair', () => {
 
   it('the residual warmth is exactly what the aim gradient predicts', () => {
     // 0.03 more red density than green, carried through the display transform.
-    const p = resolve(defaultRecipe(), ctx);
+    const p = resolve({ ...defaultRecipe(), printEngine: 'model' }, ctx);
     const out = evaluateSceneLinear([0.18, 0.18, 0.18], p);
     const predicted = (d: number) => {
       const dMax = p.printCurve.dMin[1] + p.printCurve.deltaD[1];
@@ -441,7 +443,9 @@ function printDensitiesFrom(
 }
 
 describe('the chain end to end', () => {
-  const base = defaultRecipe();
+  // The model, pinned: this suite holds the calculated chain against the
+  // document, and the engine default is the measurement.
+  const base: Recipe = { ...defaultRecipe(), printEngine: 'model' };
 
   it('is monotone in scene exposure', () => {
     const p = resolve(base, ctx);

@@ -23,8 +23,32 @@ import {
 import type { ResolvedParameters } from './resolve';
 import { RECORDS, matMulVec, triAdd, triFill, type Triple } from './triple';
 
-/** Stages 1-9, from film log exposure to display-linear RGB in the print's primaries. */
-export function evaluateLogExposure(logExposure: Triple, p: ResolvedParameters): Triple {
+/** Stages 1-2 — the layer balance and the log exposure the film receives. */
+export function sceneLogExposure(sceneLinear: Triple, p: ResolvedParameters): Triple {
+  let e = matMulVec(p.inputMatrix, sceneLinear);
+  e = RECORDS.map((c) => Math.max(e[c] * p.exposureGain, 0)) as unknown as Triple;
+  if (p.monochrome) {
+    const y = p.panWeights[0] * e[0] + p.panWeights[1] * e[1] + p.panWeights[2] * e[2];
+    e = triFill(y);
+  }
+  return RECORDS.map((c) => safeLog10(e[c]) + p.anchorShift) as unknown as Triple;
+}
+
+/** Stage 3 — the negative's density, orange mask and all. */
+export function negativeDensity(logExposure: Triple, p: ResolvedParameters): Triple {
+  return densityWithMask(triAdd(logExposure, p.balanceShift), p.curve);
+}
+
+/** The viewing-condition exponent, kept separate so the subtractive grade —
+ * a print-dye operation — can sit between the print and the surround. */
+export function applySurround(Y: Triple, p: ResolvedParameters): Triple {
+  if (Math.abs(p.surroundExponent - 1) < 1e-4) return Y;
+  return RECORDS.map((c) => Math.pow(Math.max(Y[c], 0), p.surroundExponent)) as unknown as Triple;
+}
+
+/** Stages 1-9, from film log exposure to display-linear RGB in the print's
+ * primaries, before the surround. */
+export function evaluateLogExposureStages(logExposure: Triple, p: ResolvedParameters): Triple {
   // Stage 1 — layer balance.
   const x = triAdd(logExposure, p.balanceShift);
 
@@ -62,9 +86,12 @@ export function evaluateLogExposure(logExposure: Triple, p: ResolvedParameters):
   Dp = RECORDS.map((c) => Dp[c] + p.neutralAxis[c] * psi) as unknown as Triple;
 
   // Stage 9 — display.
-  const Y = printToDisplay(Dp, p.printCurve);
-  if (Math.abs(p.surroundExponent - 1) < 1e-4) return Y;
-  return RECORDS.map((c) => Math.pow(Math.max(Y[c], 0), p.surroundExponent)) as unknown as Triple;
+  return printToDisplay(Dp, p.printCurve);
+}
+
+/** Stages 1-9 plus the surround: the calculated model, complete. */
+export function evaluateLogExposure(logExposure: Triple, p: ResolvedParameters): Triple {
+  return applySurround(evaluateLogExposureStages(logExposure, p), p);
 }
 
 /**
@@ -74,13 +101,7 @@ export function evaluateLogExposure(logExposure: Triple, p: ResolvedParameters):
  * before the log would let a white-balance change silently invalidate it.
  */
 export function evaluateSceneLinear(sceneLinear: Triple, p: ResolvedParameters): Triple {
-  let e = matMulVec(p.inputMatrix, sceneLinear);
-  e = RECORDS.map((c) => Math.max(e[c] * p.exposureGain, 0)) as unknown as Triple;
-  if (p.monochrome) {
-    const y = p.panWeights[0] * e[0] + p.panWeights[1] * e[1] + p.panWeights[2] * e[2];
-    e = triFill(y);
-  }
-  const logE = RECORDS.map((c) => safeLog10(e[c]) + p.anchorShift) as unknown as Triple;
+  const logE = sceneLogExposure(sceneLinear, p);
   return evaluateLogExposure(logE, p);
 }
 

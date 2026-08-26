@@ -156,6 +156,14 @@ export class Program {
     return this;
   }
 
+  texture3d(name: string, unit: number, tex: WebGLTexture) {
+    const gl = this.gl;
+    gl.activeTexture(gl.TEXTURE0 + unit);
+    gl.bindTexture(gl.TEXTURE_3D, tex);
+    this.int(name, unit);
+    return this;
+  }
+
   dispose() {
     this.gl.deleteProgram(this.program);
   }

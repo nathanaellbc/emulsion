@@ -64,6 +64,23 @@ export interface PrintStage {
   silverRetention: number;
 }
 
+/**
+ * Subtractive grading (§IX's dye primaries): the colourist's subtractive
+ * bench, acting on the print's dye amounts rather than through the negative.
+ * Cyan removes red, magenta removes green, yellow removes blue — each slider
+ * is a density offset on the dye that absorbs the complementary primary.
+ * `density` with mode 'suppress' adds neutral density (a denser, quieter
+ * print); with mode 'multiply' it thins the dyes (a brighter, airier one).
+ */
+export interface SubtractiveStage {
+  /** Density of cyan dye added (positive) or pulled (negative). */
+  cyan: number;
+  magenta: number;
+  yellow: number;
+  density: number;
+  densityMode: 'suppress' | 'multiply';
+}
+
 export interface InterlayerStage {
   /**
    * 0–2; 1 is the stock's own DIR signature. Not called "sharpness": it is the
@@ -78,6 +95,17 @@ export interface GrainStage {
   amount: number;
   /** Multiplier on the grain kernel size. */
   size: number;
+  /**
+   * Where in the tone scale the grain shows: −1 piles it into the print's
+   * shadows (a negative scan's look), +1 into its highlights (a positive
+   * scan's). 0 is the stock's own density dependence.
+   */
+  response: number;
+  /**
+   * 0–1; 0 is silver-mono grain (all three records identical), 1 is the
+   * stock's own per-record chroma grain.
+   */
+  colorMix: number;
   /** The preset that set these, or null once the user moves a slider by hand. */
   preset: string | null;
 }
@@ -89,6 +117,14 @@ export interface HalationStage {
   radius: number;
   /** Threshold in relative exposure. */
   threshold: number;
+  /**
+   * How far the recombined halo leans into the base's orange transmission.
+   * 0 keeps the transport's own per-channel weights; 1 tints the halo fully
+   * toward the base's amber.
+   */
+  dyeTransmission: number;
+  /** Saturation boost of the recombined halo. */
+  boost: number;
   /** The preset that set these, or null once a slider is moved by hand. */
   preset: string | null;
 }
@@ -122,10 +158,19 @@ export interface Recipe {
   chemistryId: string;
   format: FilmFormat;
   seed: number;
+  /**
+   * Which print engine renders: the calculated model, or the stock's measured
+   * LUT where one exists. A stock without a measurement renders through the
+   * model regardless of this setting.
+   */
+  printEngine: 'model' | 'lut';
+  /** Which print illuminant the measured stock is balanced for. */
+  printIlluminant: 'D55' | 'D60' | 'D65';
   capture: CaptureStage;
   develop: DevelopStage;
   interlayer: InterlayerStage;
   printing: PrintStage;
+  subtractive: SubtractiveStage;
   grain: GrainStage;
   halation: HalationStage;
   glow: GlowStage;
@@ -139,6 +184,10 @@ export function defaultRecipe(): Recipe {
     chemistryId: 'chem.c41',
     format: 'format135',
     seed: 1,
+    // The measurement is the default where it exists: the calculated model is
+    // what this project adds to the measured print, not a substitute for it.
+    printEngine: 'lut',
+    printIlluminant: 'D65',
     capture: {
       exposureCompensation: 0,
       filmSpeedOverride: null,
@@ -159,8 +208,22 @@ export function defaultRecipe(): Recipe {
       neutralAxisTint: 0,
       silverRetention: 0,
     },
-    grain: { amount: 1, size: 1, preset: 'grain.135' },
-    halation: { intensity: null, radius: 1, threshold: 1.6, preset: 'hal.stock' },
+    subtractive: {
+      cyan: 0,
+      magenta: 0,
+      yellow: 0,
+      density: 0,
+      densityMode: 'suppress',
+    },
+    grain: { amount: 1, size: 1, response: 0, colorMix: 0.35, preset: 'grain.135' },
+    halation: {
+      intensity: null,
+      radius: 1,
+      threshold: 1.6,
+      dyeTransmission: 0.55,
+      boost: 0.3,
+      preset: 'hal.stock',
+    },
     glow: { strength: 0, sigma1Um: 24, sigmaRatio: 8, broad: 0.6 },
     output: { surroundExponent: 1 },
   };
@@ -171,6 +234,11 @@ export function clampRecipe(r: Recipe): Recipe {
   const cl = (v: number, lo: number, hi: number) => Math.min(Math.max(v, lo), hi);
   return {
     ...r,
+    // A persisted recipe from before the engine choice existed carries no
+    // field; it degrades to the default rather than to undefined.
+    printEngine: r.printEngine === 'model' ? 'model' : 'lut',
+    printIlluminant:
+      r.printIlluminant === 'D55' || r.printIlluminant === 'D60' ? r.printIlluminant : 'D65',
     capture: {
       ...r.capture,
       exposureCompensation: cl(r.capture.exposureCompensation, -5, 5),
@@ -197,15 +265,27 @@ export function clampRecipe(r: Recipe): Recipe {
       neutralAxisTint: cl(r.printing.neutralAxisTint, -0.3, 0.3),
       silverRetention: cl(r.printing.silverRetention, 0, 1),
     },
+    subtractive: {
+      // A persisted recipe from before the stage existed carries no block.
+      cyan: cl(r.subtractive?.cyan ?? 0, -0.3, 0.3),
+      magenta: cl(r.subtractive?.magenta ?? 0, -0.3, 0.3),
+      yellow: cl(r.subtractive?.yellow ?? 0, -0.3, 0.3),
+      density: cl(r.subtractive?.density ?? 0, 0, 1),
+      densityMode: r.subtractive?.densityMode === 'multiply' ? 'multiply' : 'suppress',
+    },
     grain: {
       amount: cl(r.grain.amount, 0, 2),
       size: cl(r.grain.size, 0.4, 3),
+      response: cl(r.grain?.response ?? 0, -1, 1),
+      colorMix: cl(r.grain?.colorMix ?? 0, 0, 1),
       preset: r.grain.preset ?? null,
     },
     halation: {
       intensity: r.halation.intensity === null ? null : cl(r.halation.intensity, 0, 1),
       radius: cl(r.halation.radius, 0.2, 4),
       threshold: cl(r.halation.threshold, 0.2, 6),
+      dyeTransmission: cl(r.halation?.dyeTransmission ?? 0, 0, 1),
+      boost: cl(r.halation?.boost ?? 0, 0, 1),
       preset: r.halation.preset ?? null,
     },
     glow: {

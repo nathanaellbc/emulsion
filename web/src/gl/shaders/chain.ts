@@ -34,7 +34,13 @@ uniform bool  uReversal;
 
 // --- grain ---
 uniform bool  uGrainOn;
-uniform float uGrainAmount, uSigmaRef, uNu1, uNu2, uNuPeak;
+uniform float uGrainAmount, uSigmaRef, uNu1, uNu2, uNuPeak, uResponseGamma;
+
+// --- subtractive grading: dye-density offsets on the print, and the master ---
+uniform bool  uSubtractive;
+uniform vec3  uSubCmy;
+uniform float uSubDensity;
+uniform int   uSubMode; // 0 suppress (neutral density in), 1 multiply (dyes thinned)
 
 // --- print ---
 uniform bool  uBypass;
@@ -43,6 +49,16 @@ uniform vec3  uPrintOffset;
 uniform vec3  uPDMin, uPDeltaD, uPGamma, uPKappaT, uPKappaS;
 uniform float uSilver, uSilverRange;
 uniform vec3  uNeutralAxis;
+
+// --- the measured print stock ---
+// The LUT is indexed on the negative the way a film scanner delivers it:
+// Cineon printing density, five hundred code values per density unit, the
+// stock's own correctly exposed neutral at code 445. Output is Rec.709 at
+// gamma 2.4, decoded here and handed to the shared output matrix.
+uniform bool          uLutOn;
+uniform highp sampler3D uPrintLut;
+uniform vec3          uLutAnchor;   // the stock's own neutral density
+uniform mat3          uSRGBToAP1;   // sRGB/709 primaries -> working space
 
 // --- output ---
 uniform mat3  uOutMatrix;
@@ -62,9 +78,12 @@ vec3 printDensityAt(vec3 logEPrime) {
 }
 
 /// Selwyn granularity with the inverted-U density dependence of eq. grainvar,
-/// generalised by the stock's shape exponents.
+/// generalised by the stock's shape exponents. The response bias
+/// reparameterises p -> p^gamma: the shape stays normalised (its argument
+/// still sweeps [0,1]) while the peak moves along the tone scale.
 vec3 grainSigma(vec3 D) {
   vec3 p = clamp((D - uDMin) / uDeltaD, 0.0, 1.0);
+  p = pow(p, vec3(uResponseGamma));
   vec3 shape = pow(p, vec3(uNu1)) * pow(1.0 - p, vec3(uNu2)) / max(uNuPeak, 1e-6);
   return uSigmaRef * sqrt(max(shape, 0.0));
 }
@@ -93,6 +112,19 @@ void main() {
     vec3 t = clamp((D - uDMin) / uDeltaD, 0.0, 1.0);
     vec3 v = uReversal ? (1.0 - t) : t;
     Y = eotf3(v);
+  } else if (uLutOn) {
+    // The measured stock. The printer lights fold in as a density offset —
+    // the measurement carries its own balance, so nothing else moves the
+    // print before the table is read.
+    vec3 dEff = D - uPrintOffset;
+    vec3 cine = clamp((vec3(445.0) + 500.0 * (dEff - uLutAnchor)) / 1023.0, vec3(0.0), vec3(1.0));
+    if (uViewMode == 2) {
+      // Print D for a measured stock is the encoded print exposure itself:
+      // the density the print layers receive, in Cineon code.
+      fragColor = vec4(oetf3(cine), 1.0);
+      return;
+    }
+    Y = uSRGBToAP1 * pow(texture(uPrintLut, cine).rgb, vec3(2.4));
   } else {
     // Stage 4.
     vec3 dEff = uCrosstalk * D;
@@ -137,6 +169,21 @@ void main() {
   }
 
   Y = max(Y, 0.0);
+
+  // Subtractive grading: a dye-density offset is a transmittance multiply in
+  // linear light, so the CMY bench and the density master act on Y here —
+  // after the print, before the viewing condition, identically for either
+  // engine. 'suppress' adds neutral density; 'multiply' thins the dyes,
+  // and a dye scale of k is transmittance^k.
+  if (uSubtractive && !uBypass) {
+    Y *= exp10_3(-uSubCmy);
+    if (uSubMode == 0) {
+      Y *= exp10_3(vec3(-0.6 * uSubDensity));
+    } else {
+      Y = pow(Y, vec3(1.0 - uSubDensity));
+    }
+  }
+
   if (abs(uSurround - 1.0) > 1e-4) Y = pow(Y, vec3(uSurround));
 
   vec3 rgb = uOutMatrix * Y;

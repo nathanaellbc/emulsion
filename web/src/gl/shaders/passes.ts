@@ -129,6 +129,11 @@ uniform sampler2D uL6;
 // Per level, the weight for each of the three records.
 uniform vec3 uW[7];
 uniform vec3 uWeight;
+// Dye transmission: how far the halo leans into the base's amber (the
+// red-and-green mix of dye penetrating the base). Boost: the halo's
+// saturation.
+uniform float uTint;
+uniform float uBoost;
 
 void main() {
   vec3 e = texture(uScene, vUv).rgb;
@@ -141,9 +146,20 @@ void main() {
     + uW[5] * texture(uL5, vUv).r
     + uW[6] * texture(uL6, vUv).r;
 
+  // Dye transmission: the halo's colour collapses toward the base's own
+  // amber transmission — red and green carried, blue suppressed — instead of
+  // the transport's per-channel split.
+  float lum = dot(scattered, vec3(0.2722, 0.6741, 0.0537));
+  vec3 amber = lum * vec3(1.0, 0.58, 0.24);
+  vec3 halo = mix(scattered, amber, uTint);
+
+  // Boost: saturation of the halo about its own luminance.
+  float hl = dot(halo, vec3(0.2722, 0.6741, 0.0537));
+  halo = hl + (halo - hl) * (1.0 + uBoost);
+
   // Energy conserving: the scattered photons are removed from the direct path
   // and added back where they landed.
-  vec3 outE = (1.0 - uWeight) * e + uWeight * scattered;
+  vec3 outE = (1.0 - uWeight) * e + uWeight * halo;
   fragColor = vec4(max(outE, 0.0), 1.0);
 }
 `;

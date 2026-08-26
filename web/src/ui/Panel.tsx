@@ -15,7 +15,7 @@ import { FORMAT_LABEL, FRAME_WIDTH_MM, type FilmFormat, type Recipe } from '../c
 import { GRAIN_PRESETS, grainPresetById } from '../core/grainPresets';
 import { HALATION_PRESETS, halationPresetById } from '../core/halationPresets';
 import type { ResolvedParameters } from '../core/resolve';
-import { Choice, PointStepper, Section, Slider } from './controls';
+import { Choice, PointStepper, Section, SegmentedControl, Slider } from './controls';
 
 export interface PanelProps {
   recipe: Recipe;
@@ -35,6 +35,10 @@ export function Panel({ recipe, resolved, update, measuredGrey }: PanelProps) {
   const marginTight = sensitometry.margin < 0.25;
 
   const ei = recipe.capture.filmSpeedOverride ?? negative.iso;
+  const lutIlluminantLive =
+    resolved.printEngine === 'lut' &&
+    resolved.printLut !== null &&
+    resolved.printLut.illuminants.length > 1;
 
   // §V's g_cal, made visible instead of guessed at. Offered, never applied.
   const anchorSuggestion =
@@ -262,17 +266,97 @@ export function Panel({ recipe, resolved, update, measuredGrey }: PanelProps) {
         </p>
       </Section>
 
-      <Section title="Print">
+      <Section
+        title="Print"
+        meta={
+          resolved.printLut ? (
+            resolved.printEngine === 'lut' ? (
+              <>
+                measured · {resolved.printLut.displayName} · {recipe.printIlluminant}
+              </>
+            ) : (
+              <>calculated</>
+            )
+          ) : (
+            <>calculated · no measurement</>
+          )
+        }
+      >
+        {resolved.printLut ? (
+          <div className="control">
+            <div className="control__row">
+              <span className="control__label">Engine</span>
+            </div>
+            <SegmentedControl
+              label="Print engine"
+              value={recipe.printEngine}
+              options={[
+                {
+                  value: 'lut',
+                  label: 'Measured',
+                  title: `The stock's own measured response — ${resolved.printLut.source}`,
+                },
+                {
+                  value: 'model',
+                  label: 'Calculated',
+                  title: 'The document’s print model: crosstalk matrix, aim balance, print curve',
+                },
+              ]}
+              onChange={(v) => update((d) => (d.printEngine = v))}
+            />
+            <p className="control__hint">
+              {resolved.printEngine === 'lut'
+                ? 'Saturation, roll-off, shadow lift, neutral axis and silver are inside the measurement — they describe the print stock itself, and this LUT is that stock, measured.'
+                : 'The print is computed from the stock’s published curve parameters. The measured LUT for this stock is one toggle away.'}
+            </p>
+          </div>
+        ) : (
+          <p className="control__hint">
+            No measured LUT ships for this stock, so it renders through the calculated model.
+          </p>
+        )}
+
         <Choice
           label="Print stock"
           value={recipe.printId}
           options={PRINT_STOCKS.map((p) => ({
             value: p.id,
-            label: p.displayName,
+            label: p.id === 'prt.3521' ? `${p.displayName} · model only` : p.displayName,
             detail: p.character,
           }))}
           onChange={(id) => update((d) => (d.printId = id))}
         />
+
+        {resolved.printLut ? (
+          <div className={`control${lutIlluminantLive ? '' : ' is-disabled'}`}>
+            <div className="control__row">
+              <span className="control__label">Print illuminant</span>
+            </div>
+            <SegmentedControl
+              label="Print illuminant"
+              value={
+                lutIlluminantLive
+                  ? recipe.printIlluminant
+                  : resolved.printLut.illuminants[0] ?? 'D65'
+              }
+              options={resolved.printLut.illuminants.map((i) => ({
+                value: i,
+                label: i,
+                title: `The measurement balanced for ${i} projection`,
+              }))}
+              onChange={(v) =>
+                lutIlluminantLive && update((d) => (d.printIlluminant = v as 'D55' | 'D60' | 'D65'))
+              }
+            />
+            <p className="control__hint">
+              {lutIlluminantLive
+                ? 'The white point the print was measured under: 5500 K daylight, 6000 K, or 6500 K.'
+                : resolved.printLut.illuminants.length > 1
+                  ? 'The illuminant follows the measurement — switch the engine to Measured to choose it.'
+                  : 'This measurement ships in a single white point, so there is nothing to switch.'}
+            </p>
+          </div>
+        ) : null}
 
         <div className={`lights${print.bypass ? ' is-inert' : ''}`}>
           <div className="lights__head">
@@ -331,7 +415,7 @@ export function Panel({ recipe, resolved, update, measuredGrey }: PanelProps) {
           step={0.01}
           format={(v) => `${v.toFixed(2)}×`}
           detents={[1]}
-          disabled={print.bypass}
+          disabled={print.bypass || resolved.printEngine === 'lut'}
           hint="Scales the unwanted absorptions in the printing density matrix. Lower means less crosstalk, which reads as more saturation — and it acts before the print curve, so shadows and highlights respond differently."
           onChange={(v) => update((d) => (d.printing.saturationDensity = v))}
         />
@@ -343,7 +427,7 @@ export function Panel({ recipe, resolved, update, measuredGrey }: PanelProps) {
           step={0.01}
           format={(v) => `${v.toFixed(2)}×`}
           detents={[1]}
-          disabled={print.bypass}
+          disabled={print.bypass || resolved.printEngine === 'lut'}
           hint="The print stock's toe softness. Film's celebrated highlight roll-off is this composed with the negative's shoulder; you need both."
           onChange={(v) => update((d) => (d.printing.highlightRolloff = v))}
         />
@@ -355,7 +439,7 @@ export function Panel({ recipe, resolved, update, measuredGrey }: PanelProps) {
           step={0.01}
           format={(v) => v.toFixed(2)}
           detents={[0]}
-          disabled={print.bypass}
+          disabled={print.bypass || resolved.printEngine === 'lut'}
           hint="Reduces the print's Dmax — the lifted black of a print on aged paper."
           onChange={(v) => update((d) => (d.printing.shadowLift = v))}
         />
@@ -367,7 +451,7 @@ export function Panel({ recipe, resolved, update, measuredGrey }: PanelProps) {
           step={0.005}
           format={(v) => (v > 0 ? `+${v.toFixed(3)}` : v.toFixed(3))}
           detents={[0]}
-          disabled={print.bypass}
+          disabled={print.bypass || resolved.printEngine === 'lut'}
           hint="Tilts the neutral axis: warms shadows and cools highlights at once, the way a real print does. It cannot produce a non-monotone neutral, which independent shadow and highlight tints can."
           onChange={(v) => update((d) => (d.printing.neutralAxisWarm = v))}
         />
@@ -379,7 +463,7 @@ export function Panel({ recipe, resolved, update, measuredGrey }: PanelProps) {
           step={0.005}
           format={(v) => (v > 0 ? `+${v.toFixed(3)}` : v.toFixed(3))}
           detents={[0]}
-          disabled={print.bypass}
+          disabled={print.bypass || resolved.printEngine === 'lut'}
           onChange={(v) => update((d) => (d.printing.neutralAxisTint = v))}
         />
         <Slider
@@ -392,10 +476,95 @@ export function Panel({ recipe, resolved, update, measuredGrey }: PanelProps) {
             v < 0.005 ? 'None' : v > 0.995 ? 'Bleach bypass' : Math.abs(v - 0.45) < 0.005 ? 'ENR' : v.toFixed(2)
           }
           detents={[0, 0.45, 1]}
-          disabled={print.bypass}
+          disabled={print.bypass || resolved.printEngine === 'lut'}
           hint="Silver is spectrally neutral, so retaining it adds neutral density on top of the dye image. Desaturation comes out strongest in the shadows on its own."
           onChange={(v) => update((d) => (d.printing.silverRetention = v))}
         />
+      </Section>
+
+      <Section
+        title="Subtractive"
+        meta={
+          print.bypass ? (
+            <>no print</>
+          ) : (
+            <>
+              C {fmtD(recipe.subtractive.cyan)} · M {fmtD(recipe.subtractive.magenta)} · Y{' '}
+              {fmtD(recipe.subtractive.yellow)}
+            </>
+          )
+        }
+      >
+        <Slider
+          label="Cyan"
+          value={recipe.subtractive.cyan}
+          min={-0.3}
+          max={0.3}
+          step={0.005}
+          detents={[0]}
+          disabled={print.bypass}
+          format={fmtD}
+          hint="Density of the dye that absorbs red. Pulling it (negative) warms the print; adding it cools. Neutrals stay neutral under equal amounts of all three."
+          onChange={(v) => update((d) => (d.subtractive.cyan = v))}
+        />
+        <Slider
+          label="Magenta"
+          value={recipe.subtractive.magenta}
+          min={-0.3}
+          max={0.3}
+          step={0.005}
+          detents={[0]}
+          disabled={print.bypass}
+          format={fmtD}
+          hint="Density of the dye that absorbs green."
+          onChange={(v) => update((d) => (d.subtractive.magenta = v))}
+        />
+        <Slider
+          label="Yellow"
+          value={recipe.subtractive.yellow}
+          min={-0.3}
+          max={0.3}
+          step={0.005}
+          detents={[0]}
+          disabled={print.bypass}
+          format={fmtD}
+          hint="Density of the dye that absorbs blue."
+          onChange={(v) => update((d) => (d.subtractive.yellow = v))}
+        />
+        <Slider
+          label="Density"
+          value={recipe.subtractive.density}
+          min={0}
+          max={1}
+          step={0.01}
+          detents={[0]}
+          disabled={print.bypass}
+          format={(v) => `${Math.round(v * 100)}%`}
+          hint={
+            recipe.subtractive.densityMode === 'suppress'
+              ? 'Adds neutral density: a denser, quieter print, the way a lab print carries more silver.'
+              : 'Thins the dyes: a brighter, airier print with less contrast in the dyes themselves.'
+          }
+          onChange={(v) => update((d) => (d.subtractive.density = v))}
+        />
+        <div className="control">
+          <div className="control__row">
+            <span className="control__label">Density mode</span>
+          </div>
+          <div className={print.bypass ? 'control is-disabled' : 'control'}>
+            <SegmentedControl
+              label="Density mode"
+              value={recipe.subtractive.densityMode}
+              options={[
+                { value: 'suppress', label: 'Suppress', title: 'The slider adds neutral density' },
+                { value: 'multiply', label: 'Multiply', title: 'The slider thins the dyes' },
+              ]}
+              onChange={(v) =>
+                update((d) => (d.subtractive.densityMode = v as 'suppress' | 'multiply'))
+              }
+            />
+          </div>
+        </div>
       </Section>
 
       <Section
@@ -444,6 +613,34 @@ export function Panel({ recipe, resolved, update, measuredGrey }: PanelProps) {
           detents={[1]}
           onChange={(v) => update((d) => { d.grain.size = v; d.grain.preset = null; })}
         />
+        <Slider
+          label="Film response"
+          value={recipe.grain.response}
+          min={-1}
+          max={1}
+          step={0.02}
+          format={(v) =>
+            Math.abs(v) < 0.02
+              ? '0.00 — stock'
+              : v < 0
+                ? `${v.toFixed(2)} — shadows`
+                : `+${v.toFixed(2)} — highlights`
+          }
+          detents={[-1, 0, 1]}
+          hint="Where the grain shows. A negative's grain is read in a print's shadows; a positive scan's grain sits in its highlights. The stock's own density dependence is the centre."
+          onChange={(v) => update((d) => { d.grain.response = v; d.grain.preset = null; })}
+        />
+        <Slider
+          label="Color variation"
+          value={recipe.grain.colorMix}
+          min={0}
+          max={1}
+          step={0.01}
+          format={(v) => `${Math.round(v * 100)}%`}
+          detents={[0, 1]}
+          hint="0 is silver: one monochrome field in all three records. 100 is the stock's own chroma grain, each record its own field."
+          onChange={(v) => update((d) => { d.grain.colorMix = v; d.grain.preset = null; })}
+        />
       </Section>
 
       <Section title="Halation">
@@ -480,15 +677,37 @@ export function Panel({ recipe, resolved, update, measuredGrey }: PanelProps) {
           onChange={(v) => update((d) => { d.halation.intensity = v; d.halation.preset = null; })}
         />
         <Slider
-          label="Radius"
+          label="Scatter"
           value={recipe.halation.radius}
           min={0.2}
           max={4}
           step={0.01}
           format={(v) => `${(negative.halation.lengthRedUm * v).toFixed(0)} µm`}
           detents={[1]}
-          hint="The red scattering length. Green and blue follow at 0.62 and 0.44 of it."
+          hint="The red scattering length — how far the reflected light spreads. Green and blue follow at 0.62 and 0.44 of it."
           onChange={(v) => update((d) => { d.halation.radius = v; d.halation.preset = null; })}
+        />
+        <Slider
+          label="Dye transmission"
+          value={recipe.halation.dyeTransmission}
+          min={0}
+          max={1}
+          step={0.01}
+          format={(v) => `${Math.round(v * 100)}%`}
+          detents={[0, 1]}
+          hint="How far the returning light takes the base's amber: the dye layers absorb its blue, so the halo leans orange. 0 keeps the transport's own per-channel split."
+          onChange={(v) => update((d) => { d.halation.dyeTransmission = v; d.halation.preset = null; })}
+        />
+        <Slider
+          label="Boost"
+          value={recipe.halation.boost}
+          min={0}
+          max={1}
+          step={0.01}
+          format={(v) => `${Math.round(v * 100)}%`}
+          detents={[0]}
+          hint="Saturation of the halo about its own luminance."
+          onChange={(v) => update((d) => { d.halation.boost = v; d.halation.preset = null; })}
         />
         <Slider
           label="Threshold"
@@ -579,6 +798,10 @@ export function Panel({ recipe, resolved, update, measuredGrey }: PanelProps) {
 
 function fmtPoint(v: number) {
   return v > 0 ? `+${v}` : String(v);
+}
+
+function fmtD(v: number) {
+  return v > 0 ? `+${v.toFixed(2)}` : v.toFixed(2);
 }
 
 function Stat({

@@ -35,6 +35,7 @@ import {
   type NegativeProfile,
 } from './profiles/negatives';
 import { printStockById } from './profiles/printStocks';
+import { printLutEntry, printLutIlluminants } from './printLuts';
 import { FRAME_WIDTH_MM, contentHash, type Recipe } from './recipe';
 import { matMul, triFill, type Matrix3, type Triple } from './triple';
 
@@ -61,6 +62,13 @@ export interface HalationResolved {
   kneeSoftness: number;
   /** Base-reflection ring weight. */
   omega: number;
+  /**
+   * How far the recombined halo leans into the base's amber transmission:
+   * 0 keeps the transport's per-channel weights, 1 tints the halo fully.
+   */
+  tint: number;
+  /** Saturation boost of the recombined halo. */
+  boost: number;
   enabled: boolean;
 }
 
@@ -86,6 +94,8 @@ export interface GrainResolved {
   /** Shape exponents and the normaliser that puts the peak at 1. */
   nu: readonly [number, number];
   nuPeak: number;
+  /** Density-dependence bias exponent: where in the tone scale grain shows. */
+  responseGamma: number;
   /** Lower-triangular Cholesky factor of the record correlation matrix. */
   cholesky: Matrix3;
   amount: number;
@@ -126,6 +136,37 @@ export interface ResolvedParameters {
   readonly neutralAxis: Triple;
   readonly bypass: boolean;
   readonly surroundExponent: number;
+
+  /**
+   * Which engine the print stage renders through. 'lut' only where the user
+   * chose it and a measurement exists for the stock; everything else falls
+   * back to the model, silently and by rule rather than by accident.
+   */
+  readonly printEngine: 'model' | 'lut';
+  /**
+   * The measurement, when the stock has one — the Cineon anchor (the stock's
+   * own correctly exposed neutral density, code 445) plus what the interface
+   * says about it. Present regardless of the engine choice, so the toggle can
+   * offer what exists and the engine can switch without a re-resolve.
+   */
+  readonly printLut: {
+    readonly id: string;
+    readonly displayName: string;
+    readonly source: string;
+    readonly anchor: Triple;
+    readonly illuminant: 'D55' | 'D60' | 'D65';
+    /** The illuminants this stock actually has measurements for. */
+    readonly illuminants: readonly ('D55' | 'D60' | 'D65')[];
+  } | null;
+
+  /** Subtractive grading: dye-density offsets on the print, and the master. */
+  readonly subtractive: {
+    readonly cyan: number;
+    readonly magenta: number;
+    readonly yellow: number;
+    readonly density: number;
+    readonly densityMode: 'suppress' | 'multiply';
+  };
 
   readonly halation: HalationResolved;
   readonly interlayer: InterlayerResolved;
@@ -291,6 +332,9 @@ export function resolve(recipe: Recipe, ctx: ResolveContext): ResolvedParameters
   // --- Print -------------------------------------------------------------
   const printCurve = buildPrintCurve(print, recipe);
   const crosstalk = crosstalkMatrix(print, recipe.printing.saturationDensity);
+  const lutEntry = printLutEntry(recipe.printId);
+  const printEngine: 'model' | 'lut' =
+    recipe.printEngine === 'lut' && lutEntry !== null && !print.bypass ? 'lut' : 'model';
 
   // The lab balances the stock under its intended illuminant, so the layer
   // balance is deliberately excluded here: including it would cancel the very
@@ -299,7 +343,17 @@ export function resolve(recipe: Recipe, ctx: ResolveContext): ResolvedParameters
   const neutralDensity = densityWithMask(triFill(neutralLogE), curve);
 
   let printExposureOffset: Triple = [0, 0, 0];
-  if (!print.bypass) {
+  if (printEngine === 'lut') {
+    // The measurement carries its own balance: a normally printed negative is
+    // defined by the Cineon anchor, so the model's aim balance must not be
+    // added on top of it — only the user's lights move the print.
+    const master = PRINTER_POINT * recipe.printing.printDensity;
+    printExposureOffset = [
+      PRINTER_POINT * recipe.printing.printerLightR + master,
+      PRINTER_POINT * recipe.printing.printerLightG + master,
+      PRINTER_POINT * recipe.printing.printerLightB + master,
+    ];
+  } else if (!print.bypass) {
     try {
       const aim = aimBalance(neutralDensity, printCurve, print, crosstalk, negative.id);
       const master = PRINTER_POINT * recipe.printing.printDensity;
@@ -335,6 +389,15 @@ export function resolve(recipe: Recipe, ctx: ResolveContext): ResolvedParameters
   const pPeak = nu1 / (nu1 + nu2);
   const nuPeak = Math.pow(pPeak, nu1) * Math.pow(1 - pPeak, nu2);
 
+  // Film response: a bias exponent on the grain's density dependence. The
+  // shape function is normalised in its own argument, so reparameterising
+  // p -> p^gamma moves where the grain peaks without touching its amplitude.
+  // +1 (a positive scan's look) pushes the peak toward the print's
+  // highlights, -1 (a negative scan's) into its shadows. The paper publishes
+  // no such law; the exponent is an engineering default, recorded in
+  // DEVIATIONS.md.
+  const responseGamma = Math.pow(2, -2 * recipe.grain.response);
+
   // §VIII exposes agitation as the second interlayer control, and it is the one
   // that rewards knowing darkroom practice: standing development lets the
   // inhibitor travel before it is swept away, so the long scale reaches further
@@ -346,7 +409,6 @@ export function resolve(recipe: Recipe, ctx: ResolveContext): ResolvedParameters
 
   const halationAlpha = recipe.halation.intensity ?? negative.halation.alpha;
   const lengthRedPx = (negative.halation.lengthRedUm * recipe.halation.radius) / pitchUm;
-
   return {
     recipe,
     negative,
@@ -363,6 +425,18 @@ export function resolve(recipe: Recipe, ctx: ResolveContext): ResolvedParameters
     printCurve,
     crosstalk,
     printExposureOffset,
+    printEngine,
+    printLut: lutEntry
+      ? {
+          id: recipe.printId,
+          displayName: lutEntry.displayName,
+          source: lutEntry.source,
+          anchor: neutralDensity,
+          illuminant: recipe.printIlluminant,
+          illuminants: printLutIlluminants(recipe.printId),
+        }
+      : null,
+    subtractive: { ...recipe.subtractive },
     silverRetention: recipe.printing.silverRetention,
     neutralAxis: [recipe.printing.neutralAxisWarm, 0, recipe.printing.neutralAxisTint],
     bypass: print.bypass,
@@ -381,6 +455,8 @@ export function resolve(recipe: Recipe, ctx: ResolveContext): ResolvedParameters
       threshold: recipe.halation.threshold,
       kneeSoftness: 0.15,
       omega: negative.halation.omega,
+      tint: recipe.halation.dyeTransmission,
+      boost: recipe.halation.boost,
       enabled: halationAlpha > 1e-4 && lengthRedPx > 0.05,
     },
     interlayer: {
@@ -405,7 +481,11 @@ export function resolve(recipe: Recipe, ctx: ResolveContext): ResolvedParameters
       chi: g.chi,
       nu: g.nu,
       nuPeak,
-      cholesky: choleskyEqui(g.phi),
+      responseGamma,
+      // Color variation interpolates the records' correlation: 0 is silver-
+      // mono grain (one field, all three records identical), 1 is the stock's
+      // own chroma grain.
+      cholesky: choleskyEqui(1 - recipe.grain.colorMix * (1 - g.phi)),
       amount: recipe.grain.amount,
       seed: recipe.seed,
       enabled: recipe.grain.amount > 1e-3,

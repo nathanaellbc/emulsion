@@ -16,6 +16,7 @@ import { CurvePlot } from './CurvePlot';
 import { Dropzone } from './Dropzone';
 import { Panel } from './Panel';
 import { Viewport } from './Viewport';
+import { loadPrintLut, loadedPrintLut } from '../core/printLuts';
 
 const STORAGE_KEY = 'emulsion.recipe.v1';
 
@@ -66,12 +67,14 @@ export function App() {
   const [glError, setGlError] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
   const [renderWidth, setRenderWidth] = useState(PREVIEW_MAX_WIDTH);
+  /** Bumped when a print LUT finishes loading; resolve reads the cache. */
+  const [lutVersion, setLutVersion] = useState(0);
 
   const sourceSpace: SourceSpace = source?.space ?? 'srgb';
 
   const resolved: ResolvedParameters = useMemo(
     () => resolve(recipe, { renderWidthPx: renderWidth, sourceSpace }),
-    [recipe, renderWidth, sourceSpace],
+    [recipe, renderWidth, sourceSpace, lutVersion],
   );
 
   const update = useCallback((mutate: (draft: Recipe) => void) => {
@@ -100,6 +103,19 @@ export function App() {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(recipe));
   }, [recipe]);
 
+  // The measured stock arrives asynchronously; until it does, the model
+  // renders, and the bump re-resolves so the LUT takes over mid-session
+  // without a reload.
+  useEffect(() => {
+    let alive = true;
+    void loadPrintLut(recipe.printId, recipe.printIlluminant).then(() => {
+      if (alive) setLutVersion((v) => v + 1);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [recipe.printId, recipe.printIlluminant]);
+
   // One render per animation frame, however fast a slider moves.
   useEffect(() => {
     const renderer = rendererRef.current;
@@ -108,6 +124,9 @@ export function App() {
     frameRef.current = requestAnimationFrame(() => {
       frameRef.current = null;
       try {
+        const { printId, printIlluminant } = resolved.recipe;
+        const lut = resolved.printLut ? loadedPrintLut(printId, printIlluminant) : null;
+        renderer.setPrintLut(lut, resolved.printLut && lut ? `${printId}:${printIlluminant}` : '');
         renderer.render(resolved, { mode, split, clipWarning });
       } catch (err) {
         setGlError(err instanceof Error ? err.message : String(err));

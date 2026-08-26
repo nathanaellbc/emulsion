@@ -19,8 +19,9 @@
  * above middle grey and almost none in the shadows, where the toe is.
  */
 
-import { evaluateLogExposure } from './chain';
+import { evaluateLogExposureWithEngine } from './engine';
 import { safeLog10 } from './math';
+import type { CubeLut } from './cube';
 import type { ResolvedParameters } from './resolve';
 import { RECORDS, matMulVec, triFill, type Triple } from './triple';
 
@@ -52,12 +53,15 @@ function oetf(v: number): number {
 /**
  * One LUT node: ACEScct AP1 in, display-encoded output out.
  *
- * White balance and the exposure anchor are baked, because they are part of the
- * look. The source-primaries matrix is not: the LUT declares an AP1 input, and
- * converting into it is the grading system's job — baking it would make the
- * file silently wrong for footage from any other camera.
+ * White balance and the exposure anchor are baked, because they are part of
+ * the look. The source-primaries matrix is not: the LUT declares an AP1
+ * input, and converting into it is the grading system's job — baking it
+ * would make the file silently wrong for footage from any other camera.
+ *
+ * The engine choice rides along: an edit rendering through the measured stock
+ * bakes the measured stock, so the exported file matches the screen.
  */
-export function lutOutputFor(cct: Triple, p: ResolvedParameters): Triple {
+export function lutOutputFor(cct: Triple, p: ResolvedParameters, lut: CubeLut | null = null): Triple {
   const linear = RECORDS.map((c) => acesCctToLinear(cct[c])) as unknown as Triple;
   let e = matMulVec(p.whiteBalance, linear);
   e = RECORDS.map((c) => Math.max(e[c] * p.exposureGain, 0)) as unknown as Triple;
@@ -65,7 +69,7 @@ export function lutOutputFor(cct: Triple, p: ResolvedParameters): Triple {
     e = triFill(p.panWeights[0] * e[0] + p.panWeights[1] * e[1] + p.panWeights[2] * e[2]);
   }
   const logE = RECORDS.map((c) => safeLog10(e[c]) + p.anchorShift) as unknown as Triple;
-  const Y = evaluateLogExposure(logE, p);
+  const Y = evaluateLogExposureWithEngine(logE, p, lut);
   const rgb = matMulVec(p.outputMatrix, Y);
   return RECORDS.map((c) => oetf(rgb[c])) as unknown as Triple;
 }
@@ -101,14 +105,14 @@ function sampleGrid(data: Float64Array, size: number, cct: Triple): Triple {
   return out as unknown as Triple;
 }
 
-function buildGrid(p: ResolvedParameters, size: number): Float64Array {
+function buildGrid(p: ResolvedParameters, size: number, lut: CubeLut | null): Float64Array {
   const data = new Float64Array(size * size * size * 3);
   const step = 1 / (size - 1);
   let i = 0;
   for (let b = 0; b < size; b++) {
     for (let g = 0; g < size; g++) {
       for (let r = 0; r < size; r++) {
-        const out = lutOutputFor([r * step, g * step, b * step], p);
+        const out = lutOutputFor([r * step, g * step, b * step], p, lut);
         data[i++] = out[0];
         data[i++] = out[1];
         data[i++] = out[2];
@@ -127,8 +131,8 @@ function buildGrid(p: ResolvedParameters, size: number): Float64Array {
  * The sweep runs from four stops under the deepest useful shadow to three above
  * white, which is the range a grading system will actually push through it.
  */
-export function measureCubeError(p: ResolvedParameters, size: number): number {
-  const data = buildGrid(p, size);
+export function measureCubeError(p: ResolvedParameters, size: number, lut: CubeLut | null = null): number {
+  const data = buildGrid(p, size, lut);
   const tints: Triple[] = [
     [1, 1, 1],
     [1.3, 1, 0.75],
@@ -143,7 +147,7 @@ export function measureCubeError(p: ResolvedParameters, size: number): number {
     for (const t of tints) {
       const cct = RECORDS.map((c) => linearToAcesCct(linear * t[c])) as unknown as Triple;
       const approx = sampleGrid(data, size, cct);
-      const exact = lutOutputFor(cct, p);
+      const exact = lutOutputFor(cct, p, lut);
       for (const c of RECORDS) worst = Math.max(worst, Math.abs(approx[c] - exact[c]));
     }
   }
@@ -155,6 +159,8 @@ export interface CubeOptions {
   title?: string;
   /** Filled in by `bakeCube`, which measures before it writes the header. */
   accuracy?: { worstError: number; degraded: boolean };
+  /** The loaded measured stock, when the edit renders through it. */
+  engineLut?: CubeLut | null;
 }
 
 /** One code value at 8 bits. Below this the table is indistinguishable from the chain. */
@@ -189,8 +195,9 @@ export interface BakedCube {
  * shipping a quiet approximation.
  */
 export function bakeCube(p: ResolvedParameters, opts: CubeOptions = {}): BakedCube {
+  const lut = opts.engineLut ?? null;
   if (opts.size !== undefined) {
-    const worstError = measureCubeError(p, opts.size);
+    const worstError = measureCubeError(p, opts.size, lut);
     return {
       cube: generateCubeLUT(p, { ...opts, accuracy: { worstError, degraded: worstError > ERROR_TOLERANCE } }),
       size: opts.size,
@@ -203,7 +210,7 @@ export function bakeCube(p: ResolvedParameters, opts: CubeOptions = {}): BakedCu
   let worstError = Infinity;
   for (const size of CANDIDATE_SIZES) {
     chosen = size;
-    worstError = measureCubeError(p, size);
+    worstError = measureCubeError(p, size, lut);
     if (worstError <= ERROR_TOLERANCE) break;
   }
   const degraded = worstError > ERROR_TOLERANCE;
@@ -216,6 +223,7 @@ export function bakeCube(p: ResolvedParameters, opts: CubeOptions = {}): BakedCu
 }
 
 export function generateCubeLUT(p: ResolvedParameters, opts: CubeOptions = {}): string {
+  const lut = opts.engineLut ?? null;
   const size = opts.size ?? DEFAULT_LUT_SIZE;
   if (!Number.isInteger(size) || size < MIN_LUT_SIZE || size > MAX_LUT_SIZE) {
     throw new RangeError(
@@ -286,7 +294,7 @@ export function generateCubeLUT(p: ResolvedParameters, opts: CubeOptions = {}): 
   for (let b = 0; b < size; b++) {
     for (let g = 0; g < size; g++) {
       for (let rr = 0; rr < size; rr++) {
-        const out = lutOutputFor([rr * step, g * step, b * step], p);
+        const out = lutOutputFor([rr * step, g * step, b * step], p, lut);
         lines.push(`${out[0].toFixed(6)} ${out[1].toFixed(6)} ${out[2].toFixed(6)}`);
       }
     }

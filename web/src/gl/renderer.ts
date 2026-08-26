@@ -13,7 +13,8 @@
  * density of error — three orders below anything visible.
  */
 
-import { AP1_LUMINANCE } from '../core/colorspace';
+import { AP1_LUMINANCE, M_SRGB_TO_AP1 } from '../core/colorspace';
+import type { CubeLut } from '../core/cube';
 import type { ResolvedParameters } from '../core/resolve';
 import { matToGL, triToGL } from '../core/triple';
 import {
@@ -121,6 +122,14 @@ export class Renderer {
 
   private grainKey: string | null = null;
 
+  /** The measured print stock's table, and the stock it was uploaded for. */
+  private printLutTex: WebGLTexture | null = null;
+  private printLutId: string | null = null;
+  /** A one-node table for the frames before a LUT arrives: an active
+   * sampler3D uniform with a 2D texture (or nothing) on its unit makes the
+   * whole draw invalid, so the chain always has *something* legal to read. */
+  private printLutDummy: WebGLTexture | null = null;
+
   constructor(readonly canvas: HTMLCanvasElement) {
     this.gl = createContext(canvas);
     const gl = this.gl;
@@ -153,6 +162,62 @@ export class Renderer {
 
   get hasSource() {
     return this.sourceTex !== null;
+  }
+
+  /**
+   * Uploads a measured print stock as a 3D texture, once per stock. RGBA16F
+   * rather than 8-bit: the table is effectively ten bits of film response,
+   * and an 8-bit copy would band the print's toe before the film ever did.
+   * The node order parses red-fastest, which is texImage3D's order, so the
+   * array goes up as it arrived.
+   */
+  setPrintLut(lut: CubeLut | null, id: string) {
+    const gl = this.gl;
+    if (!this.printLutDummy) {
+      const dummy = gl.createTexture();
+      if (!dummy) throw new Error('could not allocate the print LUT placeholder');
+      const zero = new Uint16Array([0, 0, 0, 0x3c00]);
+      gl.bindTexture(gl.TEXTURE_3D, dummy);
+      gl.texImage3D(gl.TEXTURE_3D, 0, gl.RGBA16F, 1, 1, 1, 0, gl.RGBA, gl.HALF_FLOAT, zero);
+      gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_WRAP_R, gl.CLAMP_TO_EDGE);
+      this.printLutDummy = dummy;
+    }
+    if (!lut || !id) {
+      if (this.printLutTex) {
+        gl.deleteTexture(this.printLutTex);
+        this.printLutTex = null;
+        this.printLutId = null;
+      }
+      return;
+    }
+    if (this.printLutId === id && this.printLutTex) return;
+    if (this.printLutTex) gl.deleteTexture(this.printLutTex);
+
+    const tex = gl.createTexture();
+    if (!tex) throw new Error('could not allocate the print LUT texture');
+    const rgba = new Uint16Array(lut.size * lut.size * lut.size * 4);
+    for (let i = 0, j = 0; i < lut.data.length; i += 3) {
+      rgba[j++] = floatToHalf(lut.data[i]!);
+      rgba[j++] = floatToHalf(lut.data[i + 1]!);
+      rgba[j++] = floatToHalf(lut.data[i + 2]!);
+      rgba[j++] = 0x3c00; // 1.0 in half floats
+    }
+    gl.bindTexture(gl.TEXTURE_3D, tex);
+    gl.texImage3D(
+      gl.TEXTURE_3D, 0, gl.RGBA16F, lut.size, lut.size, lut.size, 0,
+      gl.RGBA, gl.HALF_FLOAT, rgba,
+    );
+    gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_WRAP_R, gl.CLAMP_TO_EDGE);
+    this.printLutTex = tex;
+    this.printLutId = id;
   }
 
   /** Uploads a decoded image and sizes the graph to it. */
@@ -367,6 +432,7 @@ export class Renderer {
       comb.texture(`uL${j}`, 1 + j, this.halLevels[j]!.texture);
     }
     comb.vec3Array('uW[0]', weights).vec3('uWeight', triToGL(halation.weight));
+    comb.float('uTint', halation.tint).float('uBoost', halation.boost);
     drawFullscreen(gl);
   }
 
@@ -514,6 +580,15 @@ export class Renderer {
     bindTarget(gl, this.processed);
     const c = params.curve;
     const p = params.printCurve;
+    // The upload key is (stock, illuminant) — the same composite the app
+    // passes into setPrintLut.
+    const lutKey = params.printLut ? `${params.printLut.id}:${params.printLut.illuminant}` : '';
+    const lutOn =
+      params.printEngine === 'lut' &&
+      params.printLut !== null &&
+      this.printLutTex !== null &&
+      lutKey !== '' &&
+      this.printLutId === lutKey;
     chain
       .texture('uScene', 0, this.halScene!.texture)
       .texture('uNegative', 4, density.texture)
@@ -527,9 +602,24 @@ export class Renderer {
       .float('uNu1', params.grain.nu[0])
       .float('uNu2', params.grain.nu[1])
       .float('uNuPeak', params.grain.nuPeak)
+      .float('uResponseGamma', params.grain.responseGamma)
+      .int('uSubtractive', 1)
+      .vec3('uSubCmy', triToGL([params.subtractive.cyan, params.subtractive.magenta, params.subtractive.yellow]))
+      .float('uSubDensity', params.subtractive.density)
+      .int('uSubMode', params.subtractive.densityMode === 'multiply' ? 1 : 0)
       .int('uBypass', params.bypass ? 1 : 0)
       .mat3('uCrosstalk', matToGL(params.crosstalk))
       .vec3('uPrintOffset', triToGL(params.printExposureOffset))
+      .int('uLutOn', lutOn ? 1 : 0);
+    if (lutOn) {
+      chain
+        .texture3d('uPrintLut', 5, this.printLutTex!)
+        .vec3('uLutAnchor', triToGL(params.printLut!.anchor))
+        .mat3('uSRGBToAP1', matToGL(M_SRGB_TO_AP1));
+    } else {
+      chain.texture3d('uPrintLut', 5, this.printLutDummy!);
+    }
+    chain
       .vec3('uPDMin', triToGL(p.dMin))
       .vec3('uPDeltaD', triToGL(p.deltaD))
       .vec3('uPGamma', triToGL(p.gamma))
@@ -591,6 +681,28 @@ export class Renderer {
     const gl = this.gl;
     this.releaseTargets();
     if (this.sourceTex) gl.deleteTexture(this.sourceTex);
+    if (this.printLutTex) gl.deleteTexture(this.printLutTex);
+    if (this.printLutDummy) gl.deleteTexture(this.printLutDummy);
     for (const p of Object.values(this.programs)) p.dispose();
   }
+}
+
+/** IEEE 754 binary16, round-to-nearest-even. LUT values live in [0, 1]. */
+function floatToHalf(v: number): number {
+  const f = new Float32Array(1);
+  const i = new Uint32Array(f.buffer);
+  f[0] = v;
+  const x = i[0]!;
+  const sign = (x >>> 16) & 0x8000;
+  const exp = (x >>> 23) & 0xff;
+  const man = x & 0x7fffff;
+  if (exp === 0xff) return sign | 0x7c00; // infinity / NaN
+  let e = exp - 127 + 15;
+  if (e >= 0x1f) return sign | 0x7c00;
+  if (e <= 0) {
+    // Subnormal or zero: the LUT's values never get near this, but stay exact.
+    if (e < -10) return sign;
+    return sign | (((man | 0x800000) >>> (1 - e)) & 0x3ff);
+  }
+  return sign | (e << 10) | (man >>> 13);
 }

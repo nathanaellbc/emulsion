@@ -39,6 +39,8 @@ function neutralPrintDensity(recipe: Recipe, trimPoints = 0) {
   const r = resolve(
     {
       ...recipe,
+      // The H-61B relations are the calculated model's guarantees.
+      printEngine: 'model',
       printing: {
         ...recipe.printing,
         printerLightR: trimPoints,

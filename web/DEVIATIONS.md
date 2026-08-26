@@ -332,3 +332,95 @@ highlights as the blue record climbs its straight line. Locked by a test that
 the cast survives (blue exceeds red) while red stays alive (B/R < 4), and the
 two pre-existing behavioural tests — the cast vanishes at 3200 K and
 interpolates on mired — updated to the corrected magnitude.
+
+---
+
+## 12. The measured print LUTs needed an anchor the paper does not publish
+
+The calculated print stage is one of two engines now; the other is the stock's
+own measured response — the Kodak and Fujifilm Film Look LUTs, indexed on
+Cineon log, the encoding of a scanned negative. The paper has no LUT engine
+and publishes no anchor for one, so the anchor was derived, and it is recorded
+here so it is not mistaken for the paper's.
+
+The Cineon printing-density mapping carries five hundred code values per
+density unit; the famous constants fall out of it (code 95 ≈ the dense end of
+a normal negative, **445 = a correctly exposed 18% grey**, 685 = 90% white).
+This model already knows where 18% grey lands on any stock — it is the neutral
+density the aim balance is computed from — so the encode anchors that density
+at code 445 exactly (`core/cineon.ts`, `core/engine.ts`). No tuning, one
+derivation, and the tests hold every stock to it: the anchor round-trips, and
+Dmin maps near the LUT's black while Dmax maps near its white on every
+profile in the bundle.
+
+Two consequences worth stating plainly:
+
+- **The model's aim balance must not be applied in LUT mode.** The aim
+  balance positions a neutral at the *model's* aim density; the measurement
+  carries its own balance, baked into the table. Adding the model's aim would
+  balance the print twice. In LUT mode the printer lights and print density
+  fold into the negative as a density offset and nothing else moves it —
+  which also means the lights act through the stock's *measured* cross-terms,
+  so a red light moves the green record a little, where the model's lights,
+  acting after its crosstalk matrix, move it not at all. The engine test
+  asserts the measured behaviour and says why it differs.
+- **A reversal stock prints inverted through both engines.** This is not a
+  LUT-path defect: the model's print stage, taken literally, optically prints
+  whatever is in the gate, and a reversal positive printed onto a
+  negative print stock produces an inverted image — which is why labs made
+  interpositives. The bypass scan is the only place a reversal reads as a
+  positive, in both engines. Making reversal prints positive would be a new
+  interpositive stage in the model, affecting both engines, and is not this
+  change's to smuggle in.
+
+The bundled files: 2383 D65 and 3513 D65 are the Kodak/Fujifilm Film Look
+measurements (33³ each); 2393 is the Autodesk FPE measurement, which ships at
+13³ — its interpolation error is measured along the loci the engine samples
+(worst second-difference bound 0.030, against 0.018 for the 33³ Kodak table)
+and the bound is asserted in the tests rather than assumed away. **Fujifilm
+3521 has no measured LUT under a redistributable licence**, so it renders
+through the model only, and the interface says so. Provenance for every file
+is in `public/luts/SOURCES.md`; each file is validated at load and the engine
+falls back to the model if a file is missing or fails validation.
+
+---
+
+## 13. The Color-Finale-style bench: three controls the paper does not publish
+
+The interface gained a subtractive bench and a set of grain and halation
+controls modelled on Color Finale's film-emulation panel. None of the
+underlying laws are in the paper; what follows is each mapping and where the
+engineering default sits, so none of it reads as a measurement.
+
+- **Subtractive grading** is exact, not approximated: a dye-density offset
+  *is* a transmittance multiply in linear light (cyan Δ density is
+  red × 10^−Δ), so the CMY sliders and the density master act on the print
+  output between stage 9 and the surround — after either engine's print,
+  before the viewing condition. 'Suppress' adds neutral density; 'multiply'
+  thins the dyes, and a dye scale of k is transmittance^k. Both are
+  neutral-preserving, and equal CMY multiplies every record by one factor —
+  the stock's own cast rides through untouched.
+- **Grain response** reparameterises the grain's density dependence
+  p → p^γ with γ = 2^(−2·response). Because the Selwyn shape function is
+  normalised in its own argument, the peak moves along the tone scale while
+  the amplitude stays exactly the datasheet's — a negative-scan look at −1,
+  a positive-scan look at +1, the stock at 0.
+- **Grain colour variation** interpolates the records' correlation
+  ρ → 1 − mix·(1 − ρ_stock): 0 is one silver field in all three records, 1
+  is the stock's own chroma grain. The Cholesky machinery already carried
+  this; only the interpolation is new.
+- **Halation dye transmission** collapses the recombined halo toward the
+  base's amber — luminance × (1.0, 0.58, 0.24) in the working primaries —
+  by the slider's fraction. The transport's per-channel split remains at 0.
+  **Boost** is an ordinary saturation operation about the halo's own
+  luminance. The amber vector is chosen for the base's stated absorption,
+  not measured from a stock.
+- **Defaults were retuned** to sit near Color Finale's visible-but-
+  photographic look: dye transmission 0.55, boost 0.30, grain colour
+  variation 35%, response 0. The stock profiles themselves are untouched.
+
+The **print illuminant** selector (D55/D60/D65) exists only where
+measurements exist: 2383 and 3513 ship in all three white points, 2393's FPE
+measurement ships in one, and the calculated model has no print-illuminant
+parameter at all — its projector allowance is baked into the aim. The
+control greys out honestly in every place it has nothing real to switch.
