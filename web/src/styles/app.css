@@ -9,6 +9,16 @@
   background: var(--ground);
 }
 
+/* dvh follows the browser chrome collapsing on a phone, so the shell fills
+   what is actually visible rather than leaving dead space under the URL bar. */
+@supports (height: 100dvh) {
+  html,
+  body,
+  #root {
+    height: 100dvh;
+  }
+}
+
 .stage {
   position: relative;
   display: grid;
@@ -46,6 +56,8 @@
   justify-content: space-between;
   gap: var(--s4);
   padding: 0 var(--s4);
+  padding-left: max(var(--s4), env(safe-area-inset-left));
+  padding-right: max(var(--s4), env(safe-area-inset-right));
   border-bottom: 1px solid var(--rule);
   background: var(--surface);
 }
@@ -167,6 +179,10 @@
 
 .viewport {
   display: grid;
+  /* An explicit minmax(0, 1fr) column: without it the implicit auto track
+     sizes itself to the widest child's min-content (the stacked inspection
+     bar) and lays every row out wider than the screen. */
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: auto minmax(0, 1fr) auto;
   min-width: 0;
   min-height: 0;
@@ -191,6 +207,12 @@
 .viewport__frame {
   position: relative;
   display: grid;
+  /* Explicit tracks again: an implicit auto row here would size itself to
+     the canvas, whose own height is a percentage of this row — a cycle the
+     browser resolves by ignoring the percentage entirely, letting a
+     landscape print spill out of the frame. */
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   place-items: center;
   min-height: 0;
   padding: var(--s5);
@@ -199,6 +221,59 @@
 
 .viewport__frame.is-busy {
   opacity: 0.6;
+}
+
+/* The picture layer. It fills the frame exactly as the canvas alone used to,
+   and everything that belongs to the picture — seam handle, stage tags, zoom
+   badge — lives inside it, so one transform moves the photograph and its
+   furniture together. The page's pan-y is narrowed to none once zoomed, so a
+   one-finger drag pans the picture instead of scrolling the controls. */
+.viewport__zoom {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  place-items: center;
+  /* Fills the frame outright: a shrink-to-fit layer would make its height
+     indefinite and the canvas's max-height would stop resolving, exactly as
+     it did before the frame's tracks were made explicit. */
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  touch-action: pan-y;
+  user-select: none;
+  -webkit-user-select: none;
+  will-change: transform;
+}
+
+.viewport__zoom.is-zoomed {
+  touch-action: none;
+  cursor: grab;
+}
+
+.viewport__zoom.is-zoomed:active {
+  cursor: grabbing;
+}
+
+.viewport__zoom.is-animating {
+  transition: transform 200ms var(--ease);
+}
+
+.viewport__zoom-badge {
+  position: absolute;
+  left: calc(var(--s5) + 8px);
+  bottom: calc(var(--s5) + 8px);
+  z-index: 1;
+  font: inherit;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  padding: 4px 9px;
+  border-radius: 99px;
+  border: 1px solid var(--accent-dim);
+  background: rgba(10, 9, 8, 0.72);
+  color: var(--accent);
+  cursor: pointer;
 }
 
 .viewport__canvas {
@@ -223,6 +298,8 @@
   cursor: ew-resize;
   display: grid;
   place-items: center;
+  /* The seam is a drag surface, not a scroll surface. */
+  touch-action: none;
 }
 
 .viewport__handle span {
@@ -259,6 +336,7 @@
   align-items: center;
   gap: var(--s3);
   padding: var(--s2) var(--s3);
+  padding-bottom: max(var(--s2), env(safe-area-inset-bottom));
   border-top: 1px solid var(--rule);
   background: var(--surface);
   font-size: 11px;
@@ -272,12 +350,14 @@
   overflow: hidden;
   text-overflow: ellipsis;
   max-width: 40%;
+  flex-shrink: 0;
 }
 
 .viewport__caption {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  min-width: 0;
 }
 
 /* ============================================================================
@@ -1079,8 +1159,33 @@
 @media (max-width: 900px) {
   .stage {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: minmax(240px, 46vh) minmax(0, 1fr);
+    /* The first row must be a *fixed* height, not a content-sensitive
+       minmax: a content-sized track makes the frame's height indefinite,
+       which leaves the canvas's max-height: 100% unresolved — a landscape
+       print then renders at its width-fitted height and spills out of the
+       frame. A definite track is what makes the percentage bind. */
+    grid-template-rows: 44vh minmax(0, 1fr);
     overflow-y: auto;
+  }
+
+  /* svh is measured against the small viewport, so the image does not jump
+     when the browser chrome collapses; browsers without svh keep the vh
+     declaration above. */
+  @supports (height: 1svh) {
+    .stage {
+      grid-template-rows: 44svh minmax(0, 1fr);
+    }
+  }
+
+  /* The photograph stays pinned while the controls scroll beneath it: an
+     edit is judged against the picture, so the picture must not scroll away.
+     The viewport must out-rank every sticky layer inside the rail — the plot
+     keeps z-index: 2 from its desktop rule, and equal values would let the
+     later sibling win the tie. */
+  .viewport {
+    position: sticky;
+    top: 0;
+    z-index: 3;
   }
 
   .rail {
@@ -1091,6 +1196,7 @@
 
   .plot {
     position: static;
+    z-index: auto;
   }
 
   .viewport__frame {
@@ -1106,8 +1212,45 @@
     bottom: var(--s3);
   }
 
+  .viewport__zoom-badge {
+    left: calc(var(--s3) + 8px);
+    bottom: calc(var(--s3) + 8px);
+  }
+
   .topbar__sub {
     display: none;
+  }
+}
+
+/* A phone held sideways has no height to give a stacked layout: go back to
+   two columns with a slim rail and let each side scroll on its own. */
+@media (orientation: landscape) and (max-height: 520px) {
+  .stage {
+    grid-template-columns: minmax(0, 1fr) clamp(230px, 34vw, 330px);
+    grid-template-rows: minmax(0, 1fr);
+    overflow: hidden;
+  }
+
+  .viewport {
+    position: static;
+  }
+
+  .rail {
+    border-left: 1px solid var(--rule);
+    border-top: 0;
+    overflow-y: auto;
+  }
+
+  .plot {
+    position: static;
+  }
+
+  .viewport__frame {
+    padding: var(--s3);
+  }
+
+  .viewport__bar {
+    flex-wrap: wrap;
   }
 }
 
@@ -1186,5 +1329,83 @@
   .topbar__actions {
     flex-shrink: 1;
     min-width: 0;
+  }
+}
+
+/* ============================================================================
+   Touch
+   ========================================================================= */
+
+/* Coarse pointers get larger targets. The mouse-scale chrome is built for a
+   cursor; a finger needs height under every hit area and thumbs it can see.
+   Desktop rendering is untouched. */
+@media (pointer: coarse) {
+  .btn {
+    min-height: 40px;
+    padding: 9px 14px;
+  }
+
+  .btn--lg {
+    min-height: 48px;
+  }
+
+  .chip {
+    padding: 8px 14px;
+  }
+
+  .segmented button {
+    padding: 9px 10px;
+  }
+
+  /* iOS zooms the page on focus when a form control's font is under 16px. */
+  .select select {
+    font-size: 16px;
+    padding: 9px 30px 9px 11px;
+  }
+
+  .slider input[type='range'],
+  .stepper input[type='range'] {
+    height: 28px;
+  }
+
+  .slider input[type='range']::-webkit-slider-thumb,
+  .stepper input[type='range']::-webkit-slider-thumb {
+    width: 17px;
+    height: 17px;
+    box-shadow: 0 0 0 4px var(--surface);
+  }
+
+  .slider input[type='range']::-moz-range-thumb,
+  .stepper input[type='range']::-moz-range-thumb {
+    width: 17px;
+    height: 17px;
+    box-shadow: 0 0 0 4px var(--surface);
+  }
+
+  .stepper {
+    grid-template-columns: 18px minmax(0, 1fr) 40px;
+  }
+
+  .toggle label {
+    padding-block: 5px;
+  }
+
+  .toggle__box {
+    width: 18px;
+    height: 18px;
+  }
+
+  .link {
+    display: inline-block;
+    padding: 6px 0;
+  }
+
+  /* A wider seam handle, without widening the line it draws. */
+  .viewport__handle {
+    width: 40px;
+  }
+
+  .viewport__handle span {
+    box-shadow: 0 0 0 4px rgba(10, 9, 8, 0.8);
   }
 }

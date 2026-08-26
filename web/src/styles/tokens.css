@@ -58,7 +58,8 @@
   --radius-lg: 5px;
 
   --rail-width: 336px;
-  --header-height: 52px;
+  /* The header row grows by whatever the notch or status bar takes. */
+  --header-height: calc(52px + env(safe-area-inset-top, 0px));
 
   --ease: cubic-bezier(0.2, 0, 0.1, 1);
   --dur: 140ms;
@@ -92,6 +93,10 @@ body {
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
   overscroll-behavior: none;
+  /* The interface never takes the browser's pinch: vertical pan only, so
+     scrolling works everywhere and zooming belongs to the photograph. The
+     image layer opts back into full gesture handling for its own pinch. */
+  touch-action: pan-y;
 }
 
 :focus-visible {
