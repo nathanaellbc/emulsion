@@ -128,10 +128,10 @@ export function Viewport({
   const onGripMove = (e: React.PointerEvent<HTMLDivElement>) => {
     const d = resizeDrag.current;
     if (!d || !onPictureResize) return;
-    // The grip hangs at the picture's bottom edge: dragging it up (clientY
-    // falls) grows the picture, dragging down shrinks it — screen direction
-    // inverted into row height, 1:1.
-    onPictureResize(d.startH - (e.clientY - d.startY));
+    // The grip hangs at the picture's bottom edge: the seam follows the
+    // finger 1:1 — dragging down pulls the edge down and grows the picture,
+    // dragging up pushes the edge up and shrinks it.
+    onPictureResize(d.startH + (e.clientY - d.startY));
   };
 
   const onGripEnd = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -430,13 +430,15 @@ export function Viewport({
           title="Drag to resize the picture"
           tabIndex={0}
           onKeyDown={(e) => {
+            // The arrows move the edge, matching the drag: down grows the
+            // picture, up shrinks it.
             if (e.key === 'ArrowUp') {
               e.preventDefault();
-              nudgeHeight(48);
+              nudgeHeight(-48);
             }
             if (e.key === 'ArrowDown') {
               e.preventDefault();
-              nudgeHeight(-48);
+              nudgeHeight(48);
             }
           }}
           onPointerDown={onGripDown}

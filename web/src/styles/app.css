@@ -43,15 +43,12 @@
     );
 }
 
-/* dvh follows the browser chrome collapsing on a phone, so the shell fills
-   what is actually visible rather than leaving dead space under the URL bar. */
-@supports (height: 100dvh) {
-  html,
-  body,
-  #root {
-    height: 100dvh;
-  }
-}
+/* The shell's height is owned by the fixed body (tokens.css: position fixed,
+   inset 0), whose containing block is the true layout viewport. Do NOT re-state
+   an explicit dvh height here: on standalone iOS, dvh computes short of the
+   real screen — it excludes the bottom safe-area region — which un-stretches
+   the body and leaves a dead black band under the home indicator. The inset
+   stretch tracks the actual glass on every build; dvh does not. */
 
 .stage {
   position: relative;
