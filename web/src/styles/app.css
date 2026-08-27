@@ -43,12 +43,19 @@
     );
 }
 
-/* The shell's height is owned by the fixed body (tokens.css: position fixed,
-   inset 0), whose containing block is the true layout viewport. Do NOT re-state
-   an explicit dvh height here: on standalone iOS, dvh computes short of the
-   real screen — it excludes the bottom safe-area region — which un-stretches
-   the body and leaves a dead black band under the home indicator. The inset
-   stretch tracks the actual glass on every build; dvh does not. */
+/* Do NOT size the shell with viewport units. On standalone iOS they report
+   short of the real screen on launch — 100dvh, svh and even the fixed body's
+   percentage heights inherit the wrong layout viewport — and the shortfall
+   shows as a dead black band under the home indicator. The whole height chain
+   takes --app-height instead, published by main.tsx from window.innerHeight
+   once the launch correction has landed. body needs it too: its overflow is
+   hidden, so a short body box would clip a correct shell. 100% is the
+   in-engine fallback for the instant before the script runs. */
+html,
+body,
+#root {
+  height: var(--app-height, 100%);
+}
 
 .stage {
   position: relative;
