@@ -6,7 +6,7 @@
  */
 
 import { useRef } from 'react';
-import { ACCEPT_ATTRIBUTE, RAW_EXTENSIONS } from '../io/decode';
+import { ACCEPT_IMAGE_BASIC, ACCEPT_RAW, RAW_EXTENSIONS } from '../io/decode';
 
 export function Dropzone({
   onFile,
@@ -18,6 +18,7 @@ export function Dropzone({
   error: string | null;
 }) {
   const input = useRef<HTMLInputElement>(null);
+  const rawInput = useRef<HTMLInputElement>(null);
 
   return (
     <div className={`dropzone${dragging ? ' is-dragging' : ''}`}>
@@ -35,10 +36,13 @@ export function Dropzone({
         <button type="button" className="btn btn--primary btn--lg" onClick={() => input.current?.click()}>
           Choose an image
         </button>
+        {/* The main picker filters to image/* only, because a phone's picker
+            drops its own "Take Photo" option the moment file extensions join
+            the filter. RAW gets its own chooser with the extension list. */}
         <input
           ref={input}
           type="file"
-          accept={ACCEPT_ATTRIBUTE}
+          accept={ACCEPT_IMAGE_BASIC}
           className="sr-only"
           onChange={(e) => {
             const f = e.target.files?.[0];
@@ -46,7 +50,23 @@ export function Dropzone({
             e.target.value = '';
           }}
         />
-        <p className="dropzone__drop">or drop one anywhere on this page</p>
+        <input
+          ref={rawInput}
+          type="file"
+          accept={ACCEPT_RAW}
+          className="sr-only"
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f) onFile(f);
+            e.target.value = '';
+          }}
+        />
+        <p className="dropzone__drop">
+          or drop one anywhere on this page ·{' '}
+          <button type="button" className="link" onClick={() => rawInput.current?.click()}>
+            choose a RAW file
+          </button>
+        </p>
 
         {error ? (
           <p className="dropzone__error" role="alert">

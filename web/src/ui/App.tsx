@@ -8,6 +8,7 @@ import { developLuma } from '../core/develop';
 import { PREVIEW_MAX_WIDTH, Renderer, type ViewMode } from '../gl/renderer';
 import {
   ACCEPT_ATTRIBUTE,
+  ACCEPT_IMAGE_BASIC,
   decodeFile,
   measureMiddleGrey,
   sceneLogHistogram,
@@ -22,6 +23,29 @@ import { Viewport } from './Viewport';
 import { loadPrintLut, loadedPrintLut } from '../core/printLuts';
 
 const STORAGE_KEY = 'emulsion.recipe.v1';
+
+/**
+ * Fill-rate budget for the live preview: a fullscreen float chain (grain,
+ * halation, diffusion) costs per pixel on every pass, and a phone pays in
+ * heat and lost contexts for pixels its screen can never show. The preview is
+ * capped at this display's width in device pixels — the widest the picture is
+ * ever drawn — which leaves a desktop untouched and asks a phone for about a
+ * quarter of the work. The export bench still renders at full resolution.
+ */
+function previewBudget(): number {
+  const dpr = window.devicePixelRatio || 1;
+  return Math.min(PREVIEW_MAX_WIDTH, Math.round(window.innerWidth * dpr));
+}
+
+/**
+ * The topbar Open input filters by pointer: a phone keeps the OS picker's own
+ * "Take Photo" entry, which iOS removes the moment extension filters join
+ * image/*; a desktop keeps the full list so a RAW file is one click.
+ */
+const OPEN_ACCEPT =
+  typeof window !== 'undefined' && window.matchMedia?.('(pointer: coarse)').matches === true
+    ? ACCEPT_IMAGE_BASIC
+    : ACCEPT_ATTRIBUTE;
 
 /**
  * A persisted recipe can outlive the profiles it names — a stock that existed
@@ -111,7 +135,10 @@ export function App() {
 
   const update = useCallback((mutate: (draft: Recipe) => void) => {
     setRecipe((prev) => {
-      const draft: Recipe = structuredClone(prev);
+      // The recipe is JSON by contract (it is persisted as JSON), so a JSON
+      // round-trip clones it. structuredClone is unavailable on iOS < 15.4,
+      // where its absence would silently dead-end every control.
+      const draft: Recipe = JSON.parse(JSON.stringify(prev)) as Recipe;
       mutate(draft);
       return clampRecipe(draft);
     });
@@ -149,8 +176,18 @@ export function App() {
     };
   }, []);
 
+  // Persistence is debounced: a slider fires tens of updates a second and a
+  // synchronous localStorage write per update is main-thread jank on a phone.
+  // The final state lands a beat after the last change.
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(recipe));
+    const t = window.setTimeout(() => {
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(recipe));
+      } catch {
+        // A refused write (private mode, quota) is not worth a crash.
+      }
+    }, 300);
+    return () => window.clearTimeout(t);
   }, [recipe]);
 
   // The measured stock arrives asynchronously; until it does, the model
@@ -203,7 +240,7 @@ export function App() {
         const decoded = await decodeFile(file);
         const renderer = rendererRef.current;
         if (!renderer) throw new Error('the renderer is not ready yet');
-        renderer.setSource(decoded.image, PREVIEW_MAX_WIDTH);
+        renderer.setSource(decoded.image, previewBudget());
         setRenderWidth(renderer.renderWidth);
         setSource(decoded);
         setSamples(sceneSamples(decoded));
@@ -329,7 +366,7 @@ export function App() {
         <input
           ref={fileInput}
           type="file"
-          accept={ACCEPT_ATTRIBUTE}
+          accept={OPEN_ACCEPT}
           className="sr-only"
           onChange={(e) => {
             const f = e.target.files?.[0];

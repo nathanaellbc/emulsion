@@ -19,12 +19,30 @@ export const RAW_EXTENSIONS = [
   'fff', 'iiq', 'mos', 'erf', 'mef', 'x3f', 'srw', 'gpr',
 ] as const;
 
-export const STANDARD_EXTENSIONS = ['jpg', 'jpeg', 'png', 'webp', 'avif', 'tif', 'tiff', 'bmp', 'gif'] as const;
+export const STANDARD_EXTENSIONS = [
+  'jpg', 'jpeg', 'png', 'webp', 'avif', 'tif', 'tiff', 'bmp', 'gif', 'heic', 'heif',
+] as const;
 
+/**
+ * The full filter: everything decodable plus every RAW extension. Desktop file
+ * dialogs handle it well; a phone picker does not — iOS drops its own
+ * "Take Photo" option the moment extensions join `image/*`, so touch devices
+ * get the basic filter instead (see Dropzone and the topbar Open input).
+ */
 export const ACCEPT_ATTRIBUTE = [
   'image/*',
   ...RAW_EXTENSIONS.map((e) => `.${e}`),
 ].join(',');
+
+/**
+ * Images only, no extension filters. This is the filter that keeps the phone's
+ * native camera capture in its own picker; RAW files go through the second
+ * input, whose list is extensions only.
+ */
+export const ACCEPT_IMAGE_BASIC = 'image/*';
+
+/** RAW-only filter for the dedicated RAW chooser. */
+export const ACCEPT_RAW = RAW_EXTENSIONS.map((e) => `.${e}`).join(',');
 
 export interface DecodedSource {
   image: SourceImage;
@@ -133,12 +151,51 @@ async function decodeRaw(file: File): Promise<DecodedSource> {
   }
 }
 
-async function decodeStandard(file: File): Promise<DecodedSource> {
-  let bitmap: ImageBitmap;
+/**
+ * Decode an ordinary image through every route the platform offers, because
+ * the first one is not guaranteed: older WebKit rejects the *options* object
+ * outright, some codecs are simply absent (a HEIC on Windows Chrome, say), and
+ * what remains is the `<img>` element — the one decoder every browser that can
+ * show a photograph has, EXIF rotation included.
+ */
+async function decodeBitmap(file: File): Promise<ImageBitmap | null> {
   try {
-    bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
-  } catch (err) {
-    throw new DecodeError(`The browser could not decode ${file.name} as an image.`, err);
+    return await createImageBitmap(file, { imageOrientation: 'from-image' });
+  } catch {
+    // Fall through to the plain call.
+  }
+  try {
+    return await createImageBitmap(file);
+  } catch {
+    // Fall through to the <img> element.
+  }
+
+  const url = URL.createObjectURL(file);
+  try {
+    return await new Promise<ImageBitmap | null>((resolveDecode) => {
+      const img = new Image();
+      img.decoding = 'async';
+      img.onload = () => {
+        // Bitmap keeps the GL path uniform; if even this is missing, null.
+        createImageBitmap(img).then(resolveDecode, () => resolveDecode(null));
+      };
+      img.onerror = () => resolveDecode(null);
+      img.src = url;
+    });
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+async function decodeStandard(file: File): Promise<DecodedSource> {
+  const bitmap = await decodeBitmap(file);
+  if (!bitmap) {
+    const heic = /hei[cf]/.test(file.type) || /\.hei[cf]$/i.test(file.name);
+    throw new DecodeError(
+      heic
+        ? `The browser could not decode ${file.name}: it is HEIC and this browser has no codec for it. Export it as JPEG from the camera roll, then open it here.`
+        : `The browser could not decode ${file.name} as an image. The file may be corrupt, or in a format this browser has no codec for.`,
+    );
   }
   return {
     image: { width: bitmap.width, height: bitmap.height, bitmap, encoded: true },
