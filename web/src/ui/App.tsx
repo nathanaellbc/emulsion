@@ -57,6 +57,30 @@ export function App() {
   const rendererRef = useRef<Renderer | null>(null);
   const frameRef = useRef<number | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
+  const stageRef = useRef<HTMLElement>(null);
+
+  // Publish the print's intrinsic aspect ratio as a custom property on the
+  // stage, so the stacked mobile layout can size the viewport's row to the
+  // picture's shape instead of a fixed share of the screen: a portrait print
+  // earns the height its aspect needs, a landscape one is not padded into a
+  // strip it cannot fill. The renderer writes canvas.width/height when a
+  // source lands; a ResizeObserver on the canvas is what catches that — an
+  // attribute write fires no React render, and the canvas's CSS box often does
+  // not change (it is object-fit inside a fixed frame).
+  useEffect(() => {
+    const stage = stageRef.current;
+    const canvas = canvasRef.current;
+    if (!stage || !canvas) return;
+    const publish = () => {
+      const w = canvas.width || 1;
+      const h = canvas.height || 1;
+      stage.style.setProperty('--print-aspect', String(w / h));
+    };
+    publish();
+    const ro = new ResizeObserver(publish);
+    ro.observe(canvas);
+    return () => ro.disconnect();
+  }, []);
 
   const [recipe, setRecipe] = useState<Recipe>(loadRecipe);
   const [source, setSource] = useState<DecodedSource | null>(null);
@@ -150,6 +174,14 @@ export function App() {
     frameRef.current = requestAnimationFrame(() => {
       frameRef.current = null;
       try {
+        // A lost context draws black and never throws; saying so is the only
+        // honest failure mode left once the export guard has been passed.
+        if (renderer.contextLost) {
+          setGlError(
+            'The graphics context was lost — the device ran out of GPU memory. Reload the page to continue.',
+          );
+          return;
+        }
         const { printId, printIlluminant } = resolved.recipe;
         const lut = resolved.printLut ? loadedPrintLut(printId, printIlluminant) : null;
         renderer.setPrintLut(lut, resolved.printLut && lut ? `${printId}:${printIlluminant}` : '');
@@ -297,7 +329,7 @@ export function App() {
         />
       </header>
 
-      <main className="stage">
+      <main className="stage" ref={stageRef}>
         <Viewport
           canvasRef={canvasRef}
           mode={mode}

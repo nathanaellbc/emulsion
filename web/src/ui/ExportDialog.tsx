@@ -128,8 +128,14 @@ export function ExportDialog({
   // every detent would collapse onto "Source", which is four buttons for one
   // result. Sizes above the context's own maximum texture dimension cannot be
   // allocated at all, so they are absent rather than present and failing.
+  // The memory budget matters more than the dimension on a phone: rendering
+  // the full 12 MP source means dozens of float surfaces at once, and a GPU
+  // that will not give that up loses the context — the black-screen failure
+  // this guard exists to prevent. A source above the budget is offered at the
+  // budget, and the note says so rather than letting "Source" mean a size
+  // that cannot be rendered.
   const detents = useMemo(() => {
-    const cap = renderer.maxTextureSize;
+    const cap = Math.min(renderer.maxTextureSize, renderer.maxExportLongEdge);
     const sourceLong = Math.max(sourceW, sourceH);
     const out: { longEdge: number | null; label: string; width: number; height: number }[] = [];
     for (const d of WIDTH_DETENTS) {
@@ -138,7 +144,17 @@ export function ExportDialog({
       const height = Math.round((sourceH * d) / sourceLong);
       out.push({ longEdge: d, label: String(d), width, height });
     }
-    out.push({ longEdge: null, label: 'Source', width: sourceW, height: sourceH });
+    // The source's own size, capped by what this GPU can actually render.
+    const s = Math.min(sourceLong, cap);
+    const width = Math.round((sourceW * s) / sourceLong);
+    const height = Math.round((sourceH * s) / sourceLong);
+    const capped = s < sourceLong;
+    out.push({
+      longEdge: null,
+      label: capped ? `Capped · ${s}` : 'Source',
+      width,
+      height,
+    });
     return out;
   }, [renderer, sourceW, sourceH]);
 
@@ -206,6 +222,11 @@ export function ExportDialog({
 
   const renderExport = useCallback(
     (w: number) => {
+      if (renderer.contextLost) {
+        throw new Error(
+          'The graphics context was lost — the phone ran out of GPU memory. Reload the page and export at a smaller size.',
+        );
+      }
       const exportParams = resolve(recipe, { renderWidthPx: w, sourceSpace });
       // The measured engine's LUT must be on its texture unit before the
       // render that will read it — the same sequencing the live loop uses.
@@ -217,6 +238,11 @@ export function ExportDialog({
         { mode: 'print', split: 0, clipWarning: false },
         w,
       );
+      if (renderer.contextLost) {
+        throw new Error(
+          'The graphics context was lost while rendering — the phone ran out of GPU memory. Reload the page and export at a smaller size.',
+        );
+      }
       const canvas = canvasRef.current;
       if (!canvas) throw new Error('the export canvas disappeared');
       canvas.width = data.width;

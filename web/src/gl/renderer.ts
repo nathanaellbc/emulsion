@@ -176,6 +176,43 @@ export class Renderer {
   }
 
   /**
+   * True once the GL context has been lost. A lost context renders black and
+   * every draw silently no-ops — the export path can allocate more memory than
+   * a phone GPU will give (a full-resolution render is dozens of float
+   * surfaces), and without this check that failure reads as an unexplained
+   * black screen rather than a message.
+   */
+  get contextLost() {
+    return this.gl.isContextLost();
+  }
+
+  /**
+   * The largest long edge an export should ask this GPU to render, in pixels.
+   *
+   * A full-resolution render allocates the whole render graph — about a dozen
+   * full-frame intermediates, every one a float surface — which is roughly
+   * 96 bytes per pixel. A 4032x3024 phone photograph therefore wants on the
+   * order of 700 MB at the cap, which desktop GPUs hand over and phone GPUs
+   * frequently refuse: the allocation fails or the context is lost outright,
+   * and the failure mode is a black screen.
+   *
+   * The budget is deliberately conservative and describes the render graph's
+   * working set, not the single largest texture: MAX_TEXTURE_SIZE says a
+   * dimension is addressable, not that a dozen of them fit. Touch devices get
+   * a smaller budget than desktops, because that is where the constraint
+   * actually binds. Exceeding this is a smaller print, not a dead context —
+   * and the context-loss check in the export path catches anything this
+   * estimate gets wrong.
+   */
+  get maxExportLongEdge() {
+    const coarse = window.matchMedia?.('(pointer: coarse)').matches === true;
+    const BUDGET_BYTES = coarse ? 192 * 1024 * 1024 : 640 * 1024 * 1024;
+    const BYTES_PER_PIXEL = 96; // ~12 full-frame RGBA16F surfaces
+    const byMemory = Math.floor(Math.sqrt(BUDGET_BYTES / BYTES_PER_PIXEL));
+    return Math.min(this.maxTextureSize, byMemory);
+  }
+
+  /**
    * Uploads a measured print stock as a 3D texture, once per stock. RGBA16F
    * rather than 8-bit: the table is effectively ten bits of film response,
    * and an 8-bit copy would band the print's toe before the film ever did.

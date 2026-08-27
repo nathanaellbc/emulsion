@@ -1565,12 +1565,18 @@
 @media (max-width: 900px) {
   .stage {
     grid-template-columns: minmax(0, 1fr);
-    /* The first row must be a *fixed* height, not a content-sensitive
-       minmax: a content-sized track makes the frame's height indefinite,
-       which leaves the canvas's max-height: 100% unresolved — a landscape
-       print then renders at its width-fitted height and spills out of the
-       frame. A definite track is what makes the percentage bind. */
-    grid-template-rows: 44vh minmax(0, 1fr);
+    /* The viewport row sizes to the PICTURE, not to a fixed share of the
+       screen. --print-aspect (published by the Viewport from the canvas's own
+       dimensions) gives the row the height the print's shape needs at full
+       screen width: a portrait print earns the room it requires, a landscape
+       one is not padded out to a strip it cannot fill. Clamps keep the row
+       useful at both extremes — never shorter than a landscape 3:2 print
+       needs to stay judgeable, never taller than ~70% of the screen, so the
+       bench beneath stays reachable without a second scroll.
+       The fallback (no aspect yet, or a very old browser) is the old 44vh. */
+    grid-template-rows:
+      clamp(160px, calc((100vw - 2 * var(--s3)) / var(--print-aspect, 1.5) + 88px), 70svh)
+      minmax(0, 1fr);
     overflow-y: auto;
   }
 
@@ -1579,7 +1585,9 @@
      declaration above. */
   @supports (height: 1svh) {
     .stage {
-      grid-template-rows: 44svh minmax(0, 1fr);
+      grid-template-rows:
+        clamp(160px, calc((100vw - 2 * var(--s3)) / var(--print-aspect, 1.5) + 88px), 70svh)
+        minmax(0, 1fr);
     }
   }
 
@@ -1587,11 +1595,28 @@
      edit is judged against the picture, so the picture must not scroll away.
      The viewport must out-rank every sticky layer inside the rail — the plot
      keeps z-index: 2 from its desktop rule, and equal values would let the
-     later sibling win the tie. */
+     later sibling win the tie.
+     It must also be OPAQUE: the stage scrolls beneath this pinned block, and
+     a transparent viewport lets the bench show through the frame's padding
+     and the foot's translucent wash — the classic "content visible behind the
+     fixed bar" defect. The surface-sunken ground is what the frame showed on
+     desktop, so this is the same look, made solid. */
   .viewport {
     position: sticky;
     top: 0;
     z-index: 3;
+    /* The ground, not the glass: this must be opaque, or the bench shows
+       through the frame's padding and the foot's wash as it scrolls under. */
+    background: var(--ground);
+  }
+
+  /* The bar and foot sat at 50% alpha over a transparent viewport; over the
+     now-opaque viewport the wash reads the same and the leak is gone. */
+  .viewport__bar,
+  .viewport__foot {
+    background: rgba(13, 13, 17, 0.92);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
   }
 
   .rail {
