@@ -114,22 +114,22 @@ await run('desktop', { width: 1440, height: 900 }, async (page) => {
   await openFilmBench(page);
 
   // Cranking halation intensity showcases the stage on the tungsten stock.
-  await page.selectOption('.panel-section:first-of-type select', 'neg.v3_500t');
+  await page.getByLabel('Negative stock').selectOption('neg.v3_500t');
   await page.waitForTimeout(700);
   await shot(page, 'desktop-halation');
 
   // Reversal on bypass exercises the other polarity and the short-circuit path.
-  await page.selectOption('.panel-section:first-of-type select', 'rev.velvia50');
+  await page.getByLabel('Negative stock').selectOption('rev.velvia50');
   await page.waitForTimeout(700);
   await shot(page, 'desktop-velvia');
 
   // Monochrome exercises the panchromatic collapse and the neutral grain.
-  await page.selectOption('.panel-section:first-of-type select', 'mono.trix400');
+  await page.getByLabel('Negative stock').selectOption('mono.trix400');
   await page.waitForTimeout(700);
   await shot(page, 'desktop-trix');
 
   // Back to the reference stock, then walk the inspection stages.
-  await page.selectOption('.panel-section:first-of-type select', 'neg.portra400');
+  await page.getByLabel('Negative stock').selectOption('neg.portra400');
   await page.waitForTimeout(500);
   for (const stage of ['Negative', 'Print D', 'Halation']) {
     await page.getByRole('radio', { name: stage, exact: true }).click();

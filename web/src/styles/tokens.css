@@ -56,13 +56,14 @@
   --ink-muted: #9a9aa4;
   --ink-faint: #606069;
 
-  /* The safelight. It survives as *light* — an ambient wash behind the glass,
-     focus rings, live numerals — never as a button fill. Active state is
-     carried by raised glass instead, which is what keeps the palette moody
-     rather than amber. */
-  --accent: #e8974a;
-  --accent-dim: #a4622a;
-  --accent-wash: rgba(232, 151, 74, 0.1);
+  /* The accent is silver — the palette's one active light is neutral, which is
+     what keeps the chrome monochrome over the red/blue ambience. It is *light*
+     — numerals, slider fills, focus rings, the one primary action — never a
+     button fill. Active state is carried by raised glass, which is what keeps
+     the palette moody rather than tinted. */
+  --accent: #e9e9ee;
+  --accent-dim: #9a9aa4;
+  --accent-wash: rgba(233, 233, 238, 0.09);
 
   /* The three records, at their own hues, used consistently everywhere a
      record is shown: the curve plot, the printer lights, the readouts. */
@@ -73,8 +74,8 @@
   --warn: #e05a3f;
   --warn-wash: rgba(224, 90, 63, 0.12);
 
-  --font-sans: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto,
-    'Helvetica Neue', Arial, sans-serif;
+  --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text',
+    'Helvetica Neue', 'Segoe UI', Roboto, ui-sans-serif, Arial, sans-serif;
   --font-mono: ui-monospace, 'SF Mono', 'Cascadia Mono', 'JetBrains Mono',
     'Roboto Mono', Menlo, Consolas, monospace;
 
@@ -95,11 +96,13 @@
   --radius-lg: 20px;
   --radius-pill: 999px;
 
-  /* saturate() below 1 is the whole safety argument for glass here: whatever
-     bleeds through arrives desaturated, so chrome beside the print cannot
-     take on the print's cast. */
-  --blur: blur(24px) saturate(0.55);
-  --blur-light: blur(14px) saturate(0.55);
+  /* saturate() above 1 is deliberate here: the ambience behind the glass is
+     the point — red and blue glows drifting behind panels and arriving
+     colour-true in their blur. The old desaturation guard existed to keep the
+     print's cast out of the chrome; the print itself sits on the opaque
+     viewport, so chrome beside it never sees its colour. */
+  --blur: blur(26px) saturate(0.85);
+  --blur-light: blur(16px) saturate(0.85);
 
   /* Depth. A card is lit from above (inset sheen) and casts below it. */
   --shadow-card: inset 0 1px 0 var(--sheen), 0 18px 44px rgba(0, 0, 0, 0.55);
@@ -174,11 +177,13 @@ body {
 }
 
 /* Numerals are data here: they must line up in a column and never jitter as
-   they change. */
+   they change. SF Pro's tabular figures do the lining-up; the monospace is
+   reserved for the tiny technical captions (plot axes), not the data. */
 .num {
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-variant-numeric: tabular-nums;
   font-feature-settings: 'tnum' 1;
+  letter-spacing: 0.01em;
 }
 
 .label {

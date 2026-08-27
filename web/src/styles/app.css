@@ -1637,22 +1637,33 @@
 
   .rail {
     /* The bench becomes a sheet below the picture: full-bleed, squared to the
-       screen's bottom, but still the lit slab — sheen and hairline intact. */
+       screen's bottom, still the lit slab — and translucent enough that the
+       drifting red/blue ambience reads through it, which is the point of
+       glass on a phone. */
     margin: 0;
     border: 0;
     border-top: 1px solid var(--rule);
     border-radius: var(--radius-lg) var(--radius-lg) 0 0;
     background:
       linear-gradient(var(--panel-sheen), var(--panel-sheen)),
-      rgba(12, 12, 16, 0.88);
+      rgba(12, 12, 16, 0.72);
     overflow-y: visible;
   }
 
   /* The stage, not the rail, is the scroller here, and the viewport already
      pins itself above everything. The tabs scroll with the bench — switching
-     benches is a thumb's reach at the top of the sheet either way. */
+     benches is a thumb's reach at the top of the sheet either way.
+     display:contents promotes the tab strip to a direct child of the sheet,
+     and order:-1 raises it ABOVE the curve plot — the bench switcher leads
+     the bench instead of overlapping the graph. */
+  .panel {
+    display: contents;
+  }
+
   .rail-tabs {
     position: static;
+    order: -1;
+    margin: var(--s3);
   }
 
   .plot {
@@ -1865,5 +1876,115 @@
   .viewport__handle span {
     width: 13px;
     height: 13px;
+  }
+}
+
+/* ============================================================================
+   Ambience
+   ========================================================================= */
+
+/* The room the darkroom sits in: deep crimson rising from the lower edges,
+   a slate-blue pool at the top-left, and one faint diagonal shaft � the
+   reference workspace's backdrop, rebuilt as four drifting glows. Each layer
+   animates transform only (GPU, no layout), on long out-of-phase loops, so
+   the light the panels blur is never still: the movement is what sells the
+   glass. The layer sits under everything (z-index 0; the shell's grid children
+   stack above it) and never catches a pointer. */
+.ambience {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.ambience i {
+  position: absolute;
+  display: block;
+  border-radius: 50%;
+  will-change: transform;
+}
+
+.ambience__red {
+  background: radial-gradient(
+    circle at center,
+    rgba(158, 22, 34, 0.5) 0%,
+    rgba(122, 16, 30, 0.28) 34%,
+    rgba(80, 10, 24, 0) 70%
+  );
+}
+
+.ambience__red--a {
+  width: 72vmax;
+  height: 72vmax;
+  left: -18vmax;
+  bottom: -30vmax;
+  animation: ambience-drift-a 64s var(--ease) infinite alternate;
+}
+
+.ambience__red--b {
+  width: 58vmax;
+  height: 58vmax;
+  right: -22vmax;
+  top: 22%;
+  opacity: 0.8;
+  animation: ambience-drift-b 52s var(--ease) infinite alternate;
+}
+
+.ambience__blue {
+  background: radial-gradient(
+    circle at center,
+    rgba(74, 96, 148, 0.42) 0%,
+    rgba(52, 70, 112, 0.22) 36%,
+    rgba(30, 44, 76, 0) 70%
+  );
+  width: 64vmax;
+  height: 64vmax;
+  left: -16vmax;
+  top: -26vmax;
+  animation: ambience-drift-c 58s var(--ease) infinite alternate;
+}
+
+.ambience__shaft {
+  border-radius: 0;
+  width: 130vmax;
+  height: 34vmax;
+  left: -30vmax;
+  top: -6vmax;
+  background: linear-gradient(
+    100deg,
+    rgba(255, 255, 255, 0) 30%,
+    rgba(190, 205, 235, 0.05) 46%,
+    rgba(255, 255, 255, 0.028) 52%,
+    rgba(190, 205, 235, 0.045) 58%,
+    rgba(255, 255, 255, 0) 74%
+  );
+  transform: rotate(-16deg);
+  animation: ambience-shaft 74s var(--ease) infinite alternate;
+}
+
+@keyframes ambience-drift-a {
+  from { transform: translate3d(0, 0, 0) scale(1); }
+  to { transform: translate3d(16vmax, -12vmax, 0) scale(1.18); }
+}
+
+@keyframes ambience-drift-b {
+  from { transform: translate3d(0, 0, 0) scale(1.1); }
+  to { transform: translate3d(-14vmax, 14vmax, 0) scale(0.92); }
+}
+
+@keyframes ambience-drift-c {
+  from { transform: translate3d(0, 0, 0) scale(1); }
+  to { transform: translate3d(20vmax, 10vmax, 0) scale(1.14); }
+}
+
+@keyframes ambience-shaft {
+  from { transform: rotate(-16deg) translateX(-4vmax); opacity: 0.7; }
+  to { transform: rotate(-11deg) translateX(6vmax); opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ambience i {
+    animation: none;
   }
 }

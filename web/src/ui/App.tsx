@@ -290,6 +290,16 @@ export function App() {
 
   return (
     <div className={`shell${source ? '' : ' is-empty'}${dragging ? ' is-dragging' : ''}`}>
+      {/* The ambient darkroom: red and blue glows drifting slowly behind the
+          glass. It sits below every surface, catches nothing, and exists so
+          the panels have moving light to blur — the motion is what makes the
+          glassmorphism read as glass rather than as grey boxes. */}
+      <div className="ambience" aria-hidden="true">
+        <i className="ambience__red ambience__red--a" />
+        <i className="ambience__red ambience__red--b" />
+        <i className="ambience__blue" />
+        <i className="ambience__shaft" />
+      </div>
       <header className="topbar">
         <div className="topbar__brand">
           <span className="topbar__word">EMULSION</span>
