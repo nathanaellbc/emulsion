@@ -17,7 +17,7 @@
      old ascending --surface ramp had nothing left to describe. Cool-neutral,
      because the warmth comes from the ambient wash rather than from the greys —
      which is what lets glass over black stay neutral. */
-  --ground: #08080a;
+  --ground: #060608;
 
   /* Glass. Fills are white-over-black at low alpha so they read as lit
      material rather than as painted panels, and stack predictably: a raised
@@ -27,6 +27,23 @@
   --glass-raised: rgba(255, 255, 255, 0.11);
   --glass-sunken: rgba(0, 0, 0, 0.32);
 
+  /* Panels are LIT, not filled: a diagonal gradient from a lighter top-left
+     down to near-invisible, over the glass fill, is what makes a floating
+     card read as a physical slab catching light rather than as a grey box. */
+  --panel-sheen: linear-gradient(
+    145deg,
+    rgba(255, 255, 255, 0.085) 0%,
+    rgba(255, 255, 255, 0.028) 42%,
+    rgba(255, 255, 255, 0.008) 100%
+  );
+  --panel-border: linear-gradient(
+    160deg,
+    rgba(255, 255, 255, 0.16) 0%,
+    rgba(255, 255, 255, 0.05) 38%,
+    rgba(255, 255, 255, 0.03) 70%,
+    rgba(255, 255, 255, 0.09) 100%
+  );
+
   /* Hairlines. Two weights, as before — a structural rule and a whisper —
      but now brighter at the top edge of a card than the bottom, which is what
      makes a translucent panel read as having thickness. */
@@ -35,9 +52,9 @@
   --sheen: rgba(255, 255, 255, 0.11);
 
   /* Type. Cool-neutral to match the ground. */
-  --ink: #f0f0f3;
-  --ink-muted: #8d8d97;
-  --ink-faint: #5c5c66;
+  --ink: #f2f2f5;
+  --ink-muted: #9a9aa4;
+  --ink-faint: #606069;
 
   /* The safelight. It survives as *light* — an ambient wash behind the glass,
      focus rings, live numerals — never as a button fill. Active state is
@@ -73,9 +90,9 @@
   /* Soft geometry. Controls are pills or near-pills; cards are generously
      rounded so they read as objects laid on the ground rather than as
      regions cut out of it. */
-  --radius-sm: 7px;
-  --radius: 11px;
-  --radius-lg: 18px;
+  --radius-sm: 8px;
+  --radius: 12px;
+  --radius-lg: 20px;
   --radius-pill: 999px;
 
   /* saturate() below 1 is the whole safety argument for glass here: whatever
@@ -85,15 +102,15 @@
   --blur-light: blur(14px) saturate(0.55);
 
   /* Depth. A card is lit from above (inset sheen) and casts below it. */
-  --shadow-card: inset 0 1px 0 var(--sheen), 0 10px 30px rgba(0, 0, 0, 0.5);
+  --shadow-card: inset 0 1px 0 var(--sheen), 0 18px 44px rgba(0, 0, 0, 0.55);
   --shadow-raised: inset 0 1px 0 rgba(255, 255, 255, 0.14),
     0 2px 8px rgba(0, 0, 0, 0.55);
   --shadow-puck: 0 0 0 1px rgba(0, 0, 0, 0.55), 0 2px 7px rgba(0, 0, 0, 0.6),
     0 0 14px rgba(255, 255, 255, 0.22);
 
-  --rail-width: 348px;
+  --rail-width: 356px;
   /* The header row grows by whatever the notch or status bar takes. */
-  --header-height: calc(56px + env(safe-area-inset-top, 0px));
+  --header-height: calc(52px + env(safe-area-inset-top, 0px));
 
   --ease: cubic-bezier(0.2, 0, 0.1, 1);
   --dur: 160ms;

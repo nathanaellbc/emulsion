@@ -1,0 +1,14 @@
+{
+  "name": "EMULSION — Digital Film Laboratory",
+  "short_name": "EMULSION",
+  "description": "A digital film laboratory. Scene-referred capture through a physically modelled negative, development, optical print and grain chain.",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#060608",
+  "theme_color": "#060608",
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}

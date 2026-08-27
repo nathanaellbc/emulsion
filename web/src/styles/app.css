@@ -90,11 +90,9 @@
   padding: 0 var(--s4);
   padding-left: max(var(--s4), env(safe-area-inset-left));
   padding-right: max(var(--s4), env(safe-area-inset-right));
-  border-bottom: 1px solid var(--rule);
-  background: rgba(13, 13, 17, 0.62);
-  -webkit-backdrop-filter: var(--blur);
-  backdrop-filter: var(--blur);
-  box-shadow: inset 0 1px 0 var(--sheen);
+  /* The header is not a bar — it is chrome floating on the ground, so the
+     buttons and the wordmark carry it and no slab is drawn behind them. */
+  background: transparent;
   position: relative;
   z-index: 5;
 }
@@ -242,10 +240,8 @@
   justify-content: space-between;
   gap: var(--s3);
   padding: var(--s2) var(--s3);
-  border-bottom: 1px solid var(--rule);
-  background: rgba(13, 13, 17, 0.5);
-  -webkit-backdrop-filter: var(--blur-light);
-  backdrop-filter: var(--blur-light);
+  /* Floating chrome: the pills carry the bar, no slab is drawn behind them. */
+  background: transparent;
 }
 
 .viewport__bar-right {
@@ -474,10 +470,20 @@
   flex-direction: column;
   min-height: 0;
   overflow-y: auto;
-  border-left: 1px solid var(--rule);
-  background: rgba(11, 11, 15, 0.55);
+  /* One floating slab, the way the reference workspace reads: the bench is a
+     single lit panel set off the ground — a diagonal sheen from the top-left,
+     a hairline that catches light along the same edge, a deep cast beneath —
+     and the sections inside are separated by whispers, not by cards of their
+     own. */
+  margin: var(--s3) var(--s3) var(--s3) 0;
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--radius-lg);
+  background:
+    linear-gradient(var(--panel-sheen), var(--panel-sheen)),
+    rgba(12, 12, 16, 0.78);
   -webkit-backdrop-filter: var(--blur);
   backdrop-filter: var(--blur);
+  box-shadow: var(--shadow-card);
 }
 
 /* The two benches — camera before film, the order the work happens. The tabs
@@ -547,17 +553,15 @@
    rail. It stays sticky, which means it needs a backing behind the glass —
    otherwise the sections scrolling under it would read straight through. */
 .plot {
-  margin: var(--s3) var(--s3) 0;
+  margin: var(--s3);
   padding: var(--s3) var(--s3) var(--s2);
   border: 1px solid var(--rule);
-  border-radius: var(--radius-lg);
-  /* Same two-layer trick as the tab strip: the glass tint over a base opaque
-     enough that a section scrolling under the pinned plot cannot be read
-     through the curve. */
-  background: linear-gradient(var(--glass), var(--glass)), rgba(11, 11, 15, 0.88);
-  -webkit-backdrop-filter: var(--blur);
-  backdrop-filter: var(--blur);
-  box-shadow: var(--shadow-card);
+  border-radius: var(--radius);
+  /* A sunken instrument set into the slab: dark, barely bordered, no shadow
+     of its own — the light is the slab's. */
+  background:
+    linear-gradient(var(--glass-sunken), var(--glass-sunken)),
+    rgba(8, 8, 11, 0.6);
   position: sticky;
   top: var(--s3);
   z-index: 2;
@@ -664,7 +668,7 @@
   display: flex;
   flex-direction: column;
   gap: var(--s2);
-  padding: var(--s3) var(--s3) 0;
+  padding: var(--s3);
 }
 
 /* An annunciator, not a callout card: a lit indicator and the text it belongs
@@ -676,13 +680,15 @@
   gap: var(--s2);
   align-items: start;
   margin: 0;
-  padding: var(--s3);
+  padding: var(--s2) 0;
+  /* Flush inside the slab: no box of its own — the lamp and the text sit
+     directly on the panel, the way the reference groups annotations. */
   font-size: 11px;
   line-height: 1.5;
   color: var(--ink-muted);
-  background: var(--glass);
-  border: 1px solid var(--rule);
-  border-radius: var(--radius);
+  background: transparent;
+  border: 0;
+  border-radius: 0;
 }
 
 .notice::before {
@@ -696,8 +702,10 @@
 
 .notice--warn {
   color: #f5c0b0;
-  background: var(--warn-wash);
-  border-color: rgba(224, 90, 63, 0.3);
+  /* Warn keeps a faint wash but no box edge — it reads as heat behind the
+     text, not as a card. */
+  background: linear-gradient(90deg, var(--warn-wash), transparent 72%);
+  border-color: transparent;
 }
 
 .notice--warn::before {
@@ -720,11 +728,19 @@
 }
 
 .panel-section {
-  border: 1px solid var(--rule);
-  border-radius: var(--radius-lg);
-  background: var(--glass);
-  box-shadow: var(--shadow-card);
+  /* Inside the slab, sections are groups — a hairline whisper between them,
+     no card of their own. The slab carries the light; the sections carry the
+     order. */
+  border: 0;
+  border-bottom: 1px solid var(--rule);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
   overflow: hidden;
+}
+
+.panel-section:last-child {
+  border-bottom: 0;
 }
 
 /* An accented section is lit slightly more, not tinted — the same move the
@@ -1620,8 +1636,15 @@
   }
 
   .rail {
-    border-left: 0;
+    /* The bench becomes a sheet below the picture: full-bleed, squared to the
+       screen's bottom, but still the lit slab — sheen and hairline intact. */
+    margin: 0;
+    border: 0;
     border-top: 1px solid var(--rule);
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    background:
+      linear-gradient(var(--panel-sheen), var(--panel-sheen)),
+      rgba(12, 12, 16, 0.88);
     overflow-y: visible;
   }
 
@@ -1674,8 +1697,10 @@
   }
 
   .rail {
-    border-left: 1px solid var(--rule);
-    border-top: 0;
+    /* Landscape phone: the slab returns to a floating side panel, slimmer. */
+    margin: var(--s2);
+    border: 1px solid var(--rule-strong);
+    border-radius: var(--radius-lg);
     overflow-y: auto;
   }
 
