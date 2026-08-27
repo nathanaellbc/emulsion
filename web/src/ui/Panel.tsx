@@ -41,7 +41,6 @@ export interface PanelProps {
   measuredGrey: number | null;
   /** Which page the rail shows; the camera develop comes first. */
   tab: RailTab;
-  onTabChange: (t: RailTab) => void;
 }
 
 const FORMATS = Object.keys(FRAME_WIDTH_MM) as FilmFormat[];
@@ -49,7 +48,7 @@ const FORMATS = Object.keys(FRAME_WIDTH_MM) as FilmFormat[];
 /** Rating a film at a speed other than its nominal one, in third stops. */
 const EI_CHOICES = [0.25, 0.5, 1, 2, 4, 8];
 
-export function Panel({ recipe, resolved, update, measuredGrey, tab, onTabChange }: PanelProps) {
+export function Panel({ recipe, resolved, update, measuredGrey, tab }: PanelProps) {
   const { negative, sensitometry } = resolved;
   const marginTight = sensitometry.margin < 0.25;
 
@@ -59,29 +58,12 @@ export function Panel({ recipe, resolved, update, measuredGrey, tab, onTabChange
     resolved.printLut !== null &&
     resolved.printLut.illuminants.length > 1;
 
+  // The bench's own tab strip lives in App, as a direct child of the rail: a
+  // display:contents panel was what used to flatten it into the rail on
+  // phones, and older iOS WebKit drops the children of display:contents
+  // elements entirely — the bug that hid the whole bench on those devices.
   return (
     <div className="panel">
-      <div className="rail-tabs" role="tablist" aria-label="Bench">
-        <button
-          type="button"
-          role="tab"
-          aria-selected={tab === 'camera'}
-          className={`rail-tab${tab === 'camera' ? ' is-on' : ''}`}
-          onClick={() => onTabChange('camera')}
-        >
-          Camera
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={tab === 'film'}
-          className={`rail-tab${tab === 'film' ? ' is-on' : ''}`}
-          onClick={() => onTabChange('film')}
-        >
-          Film
-        </button>
-      </div>
-
       {tab === 'camera' ? (
         <CameraPage recipe={recipe} resolved={resolved} update={update} measuredGrey={measuredGrey} />
       ) : (

@@ -498,9 +498,8 @@
 .rail-tabs {
   display: flex;
   gap: 3px;
-  /* The panel supplies the gutter and the gap below; the strip only needs to
-     sit in them. */
-  margin: 0;
+  /* A direct child of the rail now: the strip carries its own gutter. */
+  margin: var(--s3) var(--s3) 0;
   padding: 3px;
   border: 1px solid var(--rule);
   border-radius: var(--radius-pill);
@@ -563,7 +562,8 @@
     linear-gradient(var(--glass-sunken), var(--glass-sunken)),
     rgba(8, 8, 11, 0.6);
   position: sticky;
-  top: var(--s3);
+  /* Pins just below the tab strip, which pins at --s3 and stands ~36px. */
+  top: calc(var(--s3) * 2 + 36px);
   z-index: 2;
 }
 
@@ -1650,19 +1650,13 @@
     overflow-y: visible;
   }
 
-  /* The stage, not the rail, is the scroller here, and the viewport already
-     pins itself above everything. The tabs scroll with the bench — switching
-     benches is a thumb's reach at the top of the sheet either way.
-     display:contents promotes the tab strip to a direct child of the sheet,
-     and order:-1 raises it ABOVE the curve plot — the bench switcher leads
-     the bench instead of overlapping the graph. */
-  .panel {
-    display: contents;
-  }
-
+  /* The bench is an ordinary flex column beneath the picture: the tab strip
+     leads (it is the rail's first child), then the plot, notices, sections.
+     No display:contents and no order tricks — older iOS WebKit drops the
+     children of display:contents elements entirely, which is how the whole
+     bench once vanished on phones. */
   .rail-tabs {
     position: static;
-    order: -1;
     margin: var(--s3);
   }
 
@@ -1715,13 +1709,9 @@
     overflow-y: auto;
   }
 
-  /* The rail scrolls again in landscape, so the tabs can pin like the plot's
-     desktop rule does — they stay reachable while a long bench scrolls. */
-  .rail-tabs {
-    position: sticky;
-    top: var(--s3);
-  }
-
+  /* The rail scrolls again in landscape, so the tabs pin like the plot's
+     desktop rule does — they stay reachable while a long bench scrolls. The
+     base .rail-tabs rule already pins at --s3. */
   .plot {
     position: static;
   }

@@ -392,6 +392,30 @@ export function App() {
 
         {source ? (
           <aside className="rail">
+            {/* The bench switcher is a direct child of the rail, above the
+                plot — a plain flex child on every viewport, no
+                display:contents flattening, which older iOS WebKit renders
+                as nothing (the bug that hid the whole bench on phones). */}
+            <div className="rail-tabs" role="tablist" aria-label="Bench">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={railTab === 'camera'}
+                className={`rail-tab${railTab === 'camera' ? ' is-on' : ''}`}
+                onClick={() => setRailTab('camera')}
+              >
+                Camera
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={railTab === 'film'}
+                className={`rail-tab${railTab === 'film' ? ' is-on' : ''}`}
+                onClick={() => setRailTab('film')}
+              >
+                Film
+              </button>
+            </div>
             <CurvePlot
               curve={resolved.curve}
               anchorShift={resolved.anchorShift}
@@ -411,14 +435,7 @@ export function App() {
                 {source.caveat ? <p className="notice">{source.caveat}</p> : null}
               </div>
             ) : null}
-            <Panel
-              recipe={recipe}
-              resolved={resolved}
-              update={update}
-              measuredGrey={measuredGrey}
-              tab={railTab}
-              onTabChange={setRailTab}
-            />
+            <Panel recipe={recipe} resolved={resolved} update={update} measuredGrey={measuredGrey} tab={railTab} />
           </aside>
         ) : null}
 
