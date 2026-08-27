@@ -25,6 +25,12 @@ export interface ViewportProps {
   fileName: string | null;
   caption: string | null;
   busy: boolean;
+  /**
+   * Present only on the stacked phone layout: dragging the grip requests a
+   * new height in pixels for the picture row, which the app clamps between a
+   * sliver and the print's natural full-size height.
+   */
+  onPictureResize?: (h: number) => void;
 }
 
 const MODES: { value: ViewMode; label: string; title: string }[] = [
@@ -96,10 +102,49 @@ export function Viewport({
   fileName,
   caption,
   busy,
+  onPictureResize,
 }: ViewportProps) {
+  const rootRef = useRef<HTMLDivElement>(null);
   const frameRef = useRef<HTMLDivElement>(null);
   const layerRef = useRef<HTMLDivElement>(null);
   const [dragging, setDragging] = useState(false);
+
+  // --- the picture-size grip ----------------------------------------------
+  // The height at drag start is the block's own rendered height; from there
+  // the gesture is a plain 1:1 pixel transfer. Pointer capture keeps the drag
+  // alive when the finger leaves the 22px strip.
+  const resizeDrag = useRef<{ startY: number; startH: number } | null>(null);
+
+  const onGripDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!onPictureResize) return;
+    e.preventDefault();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    resizeDrag.current = {
+      startY: e.clientY,
+      startH: rootRef.current?.getBoundingClientRect().height ?? 0,
+    };
+  };
+
+  const onGripMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    const d = resizeDrag.current;
+    if (!d || !onPictureResize) return;
+    // The grip hangs at the picture's bottom edge: dragging it up (clientY
+    // falls) grows the picture, dragging down shrinks it — screen direction
+    // inverted into row height, 1:1.
+    onPictureResize(d.startH - (e.clientY - d.startY));
+  };
+
+  const onGripEnd = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (resizeDrag.current) {
+      resizeDrag.current = null;
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    }
+  };
+
+  const nudgeHeight = (delta: number) => {
+    const h = rootRef.current?.getBoundingClientRect().height;
+    if (h && onPictureResize) onPictureResize(h + delta);
+  };
 
   const zoomRef = useRef<Zoom>(IDENTITY);
   const [zoom, setZoom] = useState<Zoom>(IDENTITY);
@@ -292,7 +337,7 @@ export function Viewport({
   const zoomed = zoom.scale > 1.005;
 
   return (
-    <div className="viewport">
+    <div className="viewport" ref={rootRef}>
       <div className="viewport__bar">
         <SegmentedControl label="Inspect stage" value={mode} options={MODES} onChange={onModeChange} />
         <div className="viewport__bar-right">
@@ -375,6 +420,31 @@ export function Viewport({
         <span className="viewport__file num">{fileName ?? '—'}</span>
         {caption ? <span className="viewport__caption">{caption}</span> : null}
       </div>
+
+      {onPictureResize ? (
+        <div
+          className="viewport__grip"
+          role="separator"
+          aria-orientation="horizontal"
+          aria-label="Picture size"
+          title="Drag to resize the picture"
+          tabIndex={0}
+          onKeyDown={(e) => {
+            if (e.key === 'ArrowUp') {
+              e.preventDefault();
+              nudgeHeight(48);
+            }
+            if (e.key === 'ArrowDown') {
+              e.preventDefault();
+              nudgeHeight(-48);
+            }
+          }}
+          onPointerDown={onGripDown}
+          onPointerMove={onGripMove}
+          onPointerUp={onGripEnd}
+          onPointerCancel={onGripEnd}
+        />
+      ) : null}
     </div>
   );
 }

@@ -112,8 +112,6 @@
     0 0 14px rgba(255, 255, 255, 0.22);
 
   --rail-width: 356px;
-  /* The header row grows by whatever the notch or status bar takes. */
-  --header-height: calc(52px + env(safe-area-inset-top, 0px));
 
   --ease: cubic-bezier(0.2, 0, 0.1, 1);
   --dur: 160ms;
@@ -143,6 +141,11 @@
   box-sizing: border-box;
 }
 
+html {
+  background: var(--ground);
+  overscroll-behavior: none;
+}
+
 html,
 body,
 #root {
@@ -158,6 +161,13 @@ body {
   line-height: 1.45;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+  /* The page itself is immovable — an app, not a document. Every scroller is
+     an internal one (stage, rail, dropzone, export sheet), and fixing the
+     body is what stops iOS from rubber-banding the shell and revealing the
+     void behind it as a black band. */
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
   overscroll-behavior: none;
   /* The interface never takes the browser's pinch: vertical pan only, so
      scrolling works everywhere and zooming belongs to the photograph. The

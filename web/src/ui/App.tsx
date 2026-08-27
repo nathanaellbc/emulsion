@@ -82,6 +82,8 @@ export function App() {
   const frameRef = useRef<number | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const stageRef = useRef<HTMLElement>(null);
+  /** The phone's picture-row height in px; null = follow the aspect ratio. */
+  const [pictureH, setPictureH] = useState<number | null>(null);
 
   // Publish the print's intrinsic aspect ratio as a custom property on the
   // stage, so the stacked mobile layout can size the viewport's row to the
@@ -104,6 +106,34 @@ export function App() {
     const ro = new ResizeObserver(publish);
     ro.observe(canvas);
     return () => ro.disconnect();
+  }, []);
+
+  // The grip's chosen height lands here as a custom property; null removes it
+  // so the row falls back to the aspect-driven clamp.
+  useEffect(() => {
+    const stage = stageRef.current;
+    if (!stage) return;
+    if (pictureH === null) stage.style.removeProperty('--picture-h');
+    else stage.style.setProperty('--picture-h', `${Math.round(pictureH)}px`);
+  }, [pictureH]);
+
+  /**
+   * The grip sends raw intent; the stage is where it becomes a decision. The
+   * floor keeps a sliver of photograph judgeable, the ceiling is the print at
+   * its natural size — the width the frame actually offers, divided by the
+   * print's aspect, plus the chrome of bar, foot and grip — so the picture can
+   * grow to full size but the row never invents emptiness beyond it.
+   */
+  const resizePicture = useCallback((h: number) => {
+    const stage = stageRef.current;
+    if (!stage) return;
+    const frame = stage.querySelector('.viewport__frame');
+    if (!frame) return;
+    const style = getComputedStyle(frame);
+    const inner = stage.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+    const aspect = parseFloat(stage.style.getPropertyValue('--print-aspect')) || 1.5;
+    const natural = inner / aspect + 120;
+    setPictureH(Math.min(Math.max(h, 140), Math.max(natural, 180)));
   }, []);
 
   const [recipe, setRecipe] = useState<Recipe>(loadRecipe);
@@ -244,6 +274,9 @@ export function App() {
         setRenderWidth(renderer.renderWidth);
         setSource(decoded);
         setSamples(sceneSamples(decoded));
+        // A new photograph arrives at the aspect's own size; the grip's last
+        // choice belonged to the previous picture.
+        setPictureH(null);
 
         // §V calls the constant relating a decoded middle grey to the working
         // space unit `g_cal`, and getting it wrong is what makes every stock
@@ -388,6 +421,7 @@ export function App() {
           fileName={source?.fileName ?? null}
           caption={caption}
           busy={busy}
+          onPictureResize={resizePicture}
         />
 
         {source ? (
