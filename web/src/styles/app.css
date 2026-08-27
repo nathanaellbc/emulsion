@@ -1575,7 +1575,7 @@
        bench beneath stays reachable without a second scroll.
        The fallback (no aspect yet, or a very old browser) is the old 44vh. */
     grid-template-rows:
-      clamp(160px, calc((100vw - 2 * var(--s3)) / var(--print-aspect, 1.5) + 88px), 70svh)
+      clamp(160px, calc((100vw - 2 * var(--s3)) / var(--print-aspect, 1.5) + 80px), 70svh)
       minmax(0, 1fr);
     overflow-y: auto;
   }
@@ -1586,7 +1586,7 @@
   @supports (height: 1svh) {
     .stage {
       grid-template-rows:
-        clamp(160px, calc((100vw - 2 * var(--s3)) / var(--print-aspect, 1.5) + 88px), 70svh)
+        clamp(160px, calc((100vw - 2 * var(--s3)) / var(--print-aspect, 1.5) + 80px), 70svh)
         minmax(0, 1fr);
     }
   }
@@ -1701,42 +1701,23 @@
 
 @media (max-width: 560px) {
   .viewport__bar {
-    flex-direction: column;
-    align-items: stretch;
-    gap: var(--s2);
-  }
-
-  /* The four stage buttons must fit the bar, never force the page wider. In
-     the stacked bar the control becomes a full-width block flex, so its buttons
-     divide the *available* width (their intrinsic min-width is what used to
-     hold the page at 368px). Labels truncate rather than overflow. */
-  .viewport__bar {
     min-width: 0;
   }
 
-  /* In the stacked bar the segmented must not be allowed to size itself to its
-     content (which holds the page at 368px). Capping it at the viewport's
-     content box forces its buttons to divide the space that actually exists. */
+  /* The inspect-stage menu is a desktop instrument. On a phone the print is
+     the deliverable, the stage views are debugging aids, and the row they
+     need is room the picture is not getting — so the menu goes, and the bar
+     keeps only Compare and Clipping, which answer questions about the print
+     itself. Desktop keeps the full control. */
   .segmented {
-    display: flex;
-    width: 100%;
-    max-width: calc(100vw - 2 * var(--s3));
-    min-width: 0;
+    display: none;
   }
 
-  .segmented button {
-    flex: 1 1 0;
-    min-width: 0;
-    padding: 6px 4px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  /* The Compare/Clipping chips share the stacked bar; let them wrap rather
-     than hold a fixed row that widens the page. */
+  /* The chips no longer share a stacked bar with the menu; one row, spread. */
   .viewport__bar-right {
+    display: flex;
     flex-wrap: wrap;
+    justify-content: space-between;
     min-width: 0;
   }
 
