@@ -12,6 +12,7 @@
  */
 
 import { densityWithMask } from './curve';
+import { develop, developIsIdentity } from './develop';
 import { safeLog10 } from './math';
 import {
   neutralAxisWeight,
@@ -23,10 +24,18 @@ import {
 import type { ResolvedParameters } from './resolve';
 import { RECORDS, matMulVec, triAdd, triFill, type Triple } from './triple';
 
-/** Stages 1-2 — the layer balance and the log exposure the film receives. */
+/**
+ * Stages 1-2 — the layer balance and the log exposure the film receives.
+ *
+ * The camera develop sits here, after the exposure gain and before the log:
+ * it is the last scene-side operator, and the film (and every stage that reads
+ * the scene — halation's threshold, the glow veil, the interlayer's inhibitor
+ * release) sees the developed light. Identity parameters skip it entirely.
+ */
 export function sceneLogExposure(sceneLinear: Triple, p: ResolvedParameters): Triple {
   let e = matMulVec(p.inputMatrix, sceneLinear);
   e = RECORDS.map((c) => Math.max(e[c] * p.exposureGain, 0)) as unknown as Triple;
+  if (!developIsIdentity(p.camera)) e = develop(e, p.camera);
   if (p.monochrome) {
     const y = p.panWeights[0] * e[0] + p.panWeights[1] * e[1] + p.panWeights[2] * e[2];
     e = triFill(y);

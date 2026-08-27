@@ -4,17 +4,20 @@ import { NEGATIVES } from '../core/profiles/negatives';
 import { PRINT_STOCKS } from '../core/profiles/printStocks';
 import { CHEMISTRY } from '../core/profiles/chemistry';
 import { resolve, type ResolvedParameters, type SourceSpace } from '../core/resolve';
-import { EXPORT_MAX_WIDTH, PREVIEW_MAX_WIDTH, Renderer, type ViewMode } from '../gl/renderer';
+import { developLuma } from '../core/develop';
+import { PREVIEW_MAX_WIDTH, Renderer, type ViewMode } from '../gl/renderer';
 import {
   ACCEPT_ATTRIBUTE,
   decodeFile,
   measureMiddleGrey,
   sceneLogHistogram,
+  sceneSamples,
   type DecodedSource,
 } from '../io/decode';
 import { CurvePlot } from './CurvePlot';
 import { Dropzone } from './Dropzone';
-import { Panel } from './Panel';
+import { ExportDialog } from './ExportDialog';
+import { Panel, type RailTab } from './Panel';
 import { Viewport } from './Viewport';
 import { loadPrintLut, loadedPrintLut } from '../core/printLuts';
 
@@ -57,7 +60,8 @@ export function App() {
 
   const [recipe, setRecipe] = useState<Recipe>(loadRecipe);
   const [source, setSource] = useState<DecodedSource | null>(null);
-  const [histogram, setHistogram] = useState<Float32Array | null>(null);
+  /** The decoded scene's luminance subsample — develop applied at read time. */
+  const [samples, setSamples] = useState<Float32Array | null>(null);
   const [measuredGrey, setMeasuredGrey] = useState<number | null>(null);
   const [mode, setMode] = useState<ViewMode>('print');
   const [split, setSplit] = useState(0);
@@ -66,6 +70,10 @@ export function App() {
   const [error, setError] = useState<string | null>(null);
   const [glError, setGlError] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
+  /** The export bench is open; the renderer and canvas persist beneath it. */
+  const [exporting, setExporting] = useState(false);
+  /** Which rail page shows; the camera develop comes before the film. */
+  const [railTab, setRailTab] = useState<RailTab>('camera');
   const [renderWidth, setRenderWidth] = useState(PREVIEW_MAX_WIDTH);
   /** Bumped when a print LUT finishes loading; resolve reads the cache. */
   const [lutVersion, setLutVersion] = useState(0);
@@ -84,6 +92,24 @@ export function App() {
       return clampRecipe(draft);
     });
   }, []);
+
+  /**
+   * The histogram follows the develop. The samples are the decoded scene;
+   * mapping each through `developLuma` and the exposure gain — the exact
+   * scalar the prepare pass applies to luminance, so the instrument shows the
+   * light the film is about to see, and a tone slider visibly slides the
+   * picture under the curve.
+   */
+  const cameraParams = resolved.camera;
+  const cameraGain = resolved.exposureGain;
+  const histogram = useMemo(() => {
+    if (!samples) return null;
+    const developed = new Float32Array(samples.length);
+    for (let i = 0; i < samples.length; i++) {
+      developed[i] = developLuma(samples[i]! * cameraGain, cameraParams);
+    }
+    return sceneLogHistogram(developed);
+  }, [samples, cameraParams, cameraGain]);
 
   useEffect(() => {
     if (!canvasRef.current || rendererRef.current) return;
@@ -148,7 +174,7 @@ export function App() {
         renderer.setSource(decoded.image, PREVIEW_MAX_WIDTH);
         setRenderWidth(renderer.renderWidth);
         setSource(decoded);
-        setHistogram(sceneLogHistogram(decoded));
+        setSamples(sceneSamples(decoded));
 
         // §V calls the constant relating a decoded middle grey to the working
         // space unit `g_cal`, and getting it wrong is what makes every stock
@@ -156,7 +182,8 @@ export function App() {
         // measure the picture and *offer* the shift, rather than applying it
         // silently. Second-guessing the exposure the photographer chose is
         // exactly the kind of hidden rendering intent §V spends a page
-        // switching off in the decoder.
+        // switching off in the decoder. Measured on the *decoded* file: the
+        // anchor calibrates the capture, not the develop.
         setMeasuredGrey(await measureMiddleGrey(decoded));
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err));
@@ -204,44 +231,10 @@ export function App() {
     };
   }, [openFile]);
 
-  const exportPrint = useCallback(async () => {
-    const renderer = rendererRef.current;
-    if (!renderer || !source) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const exportWidth = Math.min(source.image.width, EXPORT_MAX_WIDTH);
-      // Grain and halation are physical sizes, so the export has to be resolved
-      // at its own pixel pitch or it would carry the preview's grain scale.
-      const exportParams = resolve(recipe, { renderWidthPx: exportWidth, sourceSpace });
-      const data = renderer.renderAtResolution(
-        exportParams,
-        { mode: 'print', split: 0, clipWarning: false },
-        EXPORT_MAX_WIDTH,
-      );
-
-      const canvas = document.createElement('canvas');
-      canvas.width = data.width;
-      canvas.height = data.height;
-      canvas.getContext('2d')!.putImageData(data, 0, 0);
-      const blob = await new Promise<Blob | null>((res) => canvas.toBlob(res, 'image/png'));
-      if (!blob) throw new Error('the browser would not encode the print');
-
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `${source.fileName.replace(/\.[^.]+$/, '')} — ${resolved.negative.displayName} on ${resolved.print.displayName}.png`;
-      a.click();
-      URL.revokeObjectURL(url);
-
-      // renderAtResolution restored the preview allocation but left it blank.
-      renderer.render(resolved, { mode, split, clipWarning });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy(false);
-    }
-  }, [recipe, resolved, source, sourceSpace, mode, split, clipWarning]);
+  // The export bench renders the print at its own resolution and repaints the
+  // preview when it is done with the graph; the renderer and canvas persist
+  // beneath it for the life of the dialog.
+  const openExport = useCallback(() => setExporting(true), []);
 
   if (glError) {
     return (
@@ -285,7 +278,7 @@ export function App() {
           <button
             type="button"
             className="btn btn--primary"
-            onClick={() => void exportPrint()}
+            onClick={openExport}
             disabled={!source || busy}
           >
             Export print
@@ -324,6 +317,7 @@ export function App() {
               curve={resolved.curve}
               anchorShift={resolved.anchorShift}
               exposureGain={resolved.exposureGain}
+              camera={resolved.camera}
               histogram={histogram}
               monochrome={resolved.monochrome}
             />
@@ -343,6 +337,8 @@ export function App() {
               resolved={resolved}
               update={update}
               measuredGrey={measuredGrey}
+              tab={railTab}
+              onTabChange={setRailTab}
             />
           </aside>
         ) : null}
@@ -354,6 +350,18 @@ export function App() {
         <div className="busy" role="status">
           Working
         </div>
+      ) : null}
+
+      {exporting && source && rendererRef.current ? (
+        <ExportDialog
+          source={source}
+          recipe={recipe}
+          sourceSpace={sourceSpace}
+          renderer={rendererRef.current}
+          view={{ mode, split, clipWarning }}
+          resolved={resolved}
+          onClose={() => setExporting(false)}
+        />
       ) : null}
     </div>
   );

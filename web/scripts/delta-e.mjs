@@ -136,9 +136,16 @@ const emuRender = {};
       el.dispatchEvent(new Event('change', { bubbles: true }));
     }, value);
   };
+  // The rail opens on the Camera bench: exposure and white balance live there;
+  // the grain and halation sliders live on Film. Neutralise all four for a
+  // clean pointwise comparison.
+  await page.getByRole('tab', { name: 'Film', exact: true }).click();
+  await page.waitForTimeout(400);
   await setSlider('Amount', 0);
   await setSlider('Intensity', 0);
-  await setSlider('Exposure compensation', 0);
+  await page.getByRole('tab', { name: 'Camera', exact: true }).click();
+  await page.waitForTimeout(400);
+  await setSlider('Exposure', 0);
 
   const readPixels = () => page.evaluate((GRID) => {
     const c = document.querySelector('canvas');
@@ -154,7 +161,11 @@ const emuRender = {};
 
   for (const sim of SIMS) {
     const tag = `${sim.printId.replace('prt.', '')}-${sim.illum}`;
+    await page.getByRole('tab', { name: 'Film', exact: true }).click();
+    await page.waitForTimeout(300);
     await page.getByLabel('Print stock').selectOption(sim.printId);
+    await page.getByRole('tab', { name: 'Camera', exact: true }).click();
+    await page.waitForTimeout(300);
     await setSlider('White balance', sim.kelvin);
     await page.waitForTimeout(900);
     emuRender[tag] = await readPixels();

@@ -424,3 +424,127 @@ measurements exist: 2383 and 3513 ship in all three white points, 2393's FPE
 measurement ships in one, and the calculated model has no print-illuminant
 parameter at all — its projector allowance is baked into the aim. The
 control greys out honestly in every place it has nothing real to switch.
+
+---
+
+## 14. The camera develop: a stage the paper not only fails to publish — it forbids it
+
+**§V.** The document is unambiguous about the decode: a RAW is asked for
+linear ACES with *every* rendering intent switched off, and §V spends a page
+listing the conveniences — auto brightness, tone curves, noise reduction,
+sharpening — that would destroy the model's correctness if the decoder applied
+them. That is right for the *film model*, and it leaves nowhere for a
+photographer to say what their sensor's develop *would have done* before the
+film saw the light. The interface gained a Camera bench for exactly that, and
+none of its mappings are in the paper — so, as with finding 13, each is
+recorded here so none of it reads as a measurement.
+
+**The controls, and what each actually does:**
+
+- **Exposure** is the existing `capture.exposureCompensation` — one physical
+  quantity, one control, relocated to the Camera page rather than duplicated.
+  The Film page keeps only *Rated at* (EI), which is genuinely film-side:
+  rating changes where the ISO anchor sits, and push development is the
+  recovery. Two exposure sliders would have been precisely the kind of lie the
+  interface refuses to tell.
+- **Contrast** is a slope `k` on stops-over-grey in log₂, pivoting about scene
+  grey (0.18). The recipe stores the setting as a log2-slope in [−0.75,
+  +0.75] so the slider's readout can show the multiplier the math uses
+  (0.59×–1.68×).
+- **Highlights / Shadows / Whites / Blacks** are additive stops at logistic
+  masks centred +1.5 / −1.5 / +4 / −4 EV over grey, widths 1.0 / 1.0 / 2.0 /
+  2.0 stops. The logistic is the house's own knee — the softplus derivative
+  that builds every toe and shoulder elsewhere — so a mask "begins" as softly
+  as a film curve does. The shadow-side masks are the mirrored form σ((c−t)/w);
+  writing them the same way as the highlight side is the classic parametric
+  curve-editor bug, and the first draft of this stage had it (caught by the
+  monotonicity test, which is what the test is for).
+- **Saturation** is `Y + s·(c − Y)` about AP1 luminance — the same
+  luminance-preserving operator the halation boost uses, so the house has one
+  saturation, not two. It is distinct from the print's *saturation density*
+  (the crosstalk matrix, Film page), and both hints say so.
+- **White balance and tint** moved to the Camera page unchanged — a UI
+  relocation, not a model change.
+
+**Properties the suite holds, since no published values exist to test
+against:** identity at the defaults to 1e-9; monotonicity in luminance for
+every control alone at its extreme *and* any pair at extremes (three or more
+simultaneous extremes can invert the tone curve, as any parametric curve
+editor can — documented here rather than clamped away); exact chromaticity
+preservation under every tone control (they are a per-pixel scalar gain);
+exact luminance preservation under saturation; mask locality; and the
+bake/render parity that an exported LUT still matches the screen.
+
+**Placement is the load-bearing decision.** The develop lives in the prepare
+pass — after the input matrix and exposure gain, before the log — which
+places it:
+
+- *before the film*, so the characteristic curve, the layer balance and the
+  interlayer inhibitor release all see the developed light;
+- *before halation's threshold and the glow veil*, so a recovered highlight
+  genuinely scatters less — the spatial stages track the grade for free,
+  which is what "scene-referred" is for;
+- *outside the LUT-bake domain*, exactly as the white balance is: the bake
+  (`core/lut.ts`) applies the develop through the same `develop()` the host
+  chain uses, so the exported file and the screen cannot drift. This is the
+  same reasoning the prepare shader's header records for why nothing before
+  the log is ever baked *into* the LUT's grid.
+
+The one ordering worth naming: the develop is applied *before* the
+panchromatic collapse for monochrome stocks — the sensor develops in colour,
+and the film's silver sees luminance — which is what `core/chain.ts` does and
+what the prepare shader does (the collapse happens downstream, in the
+negative pass). `developIsIdentity` short-circuits the stage at the defaults,
+so the 221 pre-existing tests are untouched: a default develop is the
+no-intent decode §V demands, and the Camera bench is the explicit, visible
+way to depart from it.
+
+## 15. Translucent chrome contradicts the darkroom argument the tokens make
+
+`styles/tokens.css` used to argue — correctly — that chrome must be opaque and
+held below the photograph in value, because you cannot judge a print next to a
+panel that is brighter than it or, worse, tinted by it. The interface is now
+built from translucent glass: the rail, the top bar, the plot card, the export
+bench and every pill let some of what is behind them through.
+
+The risk is specific and is not aesthetic. A blurred surface samples the pixels
+behind it. Put that surface beside the photograph and it picks up the
+photograph's cast, so the neutral you are judging the print against is no
+longer neutral — the panel drifts toward whatever the print is doing, and every
+correction you make against it is made against a moving reference.
+
+Two things hold the line:
+
+- **Every blurred surface desaturates what passes through it.** `--blur` is
+  `blur(24px) saturate(0.55)`, not `blur(24px)`. Chrome can therefore take on
+  the *value* of what is behind it — which is harmless, and is what makes glass
+  read as glass — but never its *hue*. The reference this was drawn from gets
+  away with full-saturation glass because its glass floats over a decorative
+  backdrop; here it floats over a working image, so the saturation clamp is
+  load-bearing rather than stylistic.
+- **The rail never overlaps the frame.** The stage is a two-column grid, so the
+  rail samples the ground and its own ambient wash, never the print. Only the
+  export bench and the busy pill are ever over the picture, and both are modal
+  or momentary — you are not colour-judging beneath them.
+
+What was genuinely given up: the ambient wash (`.shell::before`) puts a warm
+low-left and a cold high-right gradient behind the whole interface at 7–13%
+opacity. It is decoration, it is the one thing here that the old tokens file
+would have rejected outright, and it is the reason the palette reads as moody
+rather than as an amber instrument. It sits behind the chrome and stops at the
+frame, so it tints no pixel of the photograph — but it does mean the greys
+immediately around the frame are no longer strictly neutral.
+
+Two smaller consequences of the same change:
+
+- **Amber stopped being a fill.** Active state is now carried by raised glass —
+  a lighter surface with a lit top edge — rather than by an accent-coloured
+  button. The accent survives as light (the ambient wash, focus rings, live
+  numerals) and colour survives as identity (the three record hues, the printer
+  lights, the stock-family swatch). This is what keeps a dark interface from
+  reading as a row of amber lozenges, and it is the reference's own rule.
+- **Section headings no longer pin.** `.panel-section__head` was sticky inside
+  the scrolling rail. Sections are now cards with air between them, and a
+  heading that detaches from its card and floats over the next one reads as a
+  bug. The headings scroll with their sections; the bench tabs and the plot
+  still pin, which is what the pinning was actually for.

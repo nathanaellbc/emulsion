@@ -44,6 +44,27 @@ export interface CaptureStage {
   whiteBalanceTint: number;
 }
 
+/**
+ * The camera develop (§V's missing stage; see `core/develop.ts` and
+ * DEVIATIONS.md finding 14). The scene-side grade a RAW develop would have
+ * made before the film saw the light. Exposure and white balance live in
+ * `capture` — they are the same physical quantities whichever page edits them.
+ */
+export interface CameraStage {
+  /** Log slope in stops, −0.75…0.75. 0 is untouched. */
+  contrast: number;
+  /** Stops at the highlight mask centre, ±1.5. 0 is untouched. */
+  highlights: number;
+  /** Stops at the shadow mask centre, ±1.5. 0 is untouched. */
+  shadows: number;
+  /** Stops at the white end, ±2. 0 is untouched. */
+  whites: number;
+  /** Stops at the black end, ±2. 0 is untouched. */
+  blacks: number;
+  /** Saturation factor about luminance, 0–2. 1 is untouched. */
+  saturation: number;
+}
+
 export interface PrintStage {
   /** Printer points, integer, ±12 — one stop per channel. */
   printerLightR: number;
@@ -167,6 +188,7 @@ export interface Recipe {
   /** Which print illuminant the measured stock is balanced for. */
   printIlluminant: 'D55' | 'D60' | 'D65';
   capture: CaptureStage;
+  camera: CameraStage;
   develop: DevelopStage;
   interlayer: InterlayerStage;
   printing: PrintStage;
@@ -193,6 +215,14 @@ export function defaultRecipe(): Recipe {
       filmSpeedOverride: null,
       whiteBalanceTempK: 5500,
       whiteBalanceTint: 0,
+    },
+    camera: {
+      contrast: 0,
+      highlights: 0,
+      shadows: 0,
+      whites: 0,
+      blacks: 0,
+      saturation: 1,
     },
     develop: defaultDevelopStage(),
     interlayer: { couplerActivity: 1 },
@@ -244,6 +274,15 @@ export function clampRecipe(r: Recipe): Recipe {
       exposureCompensation: cl(r.capture.exposureCompensation, -5, 5),
       whiteBalanceTempK: cl(r.capture.whiteBalanceTempK, 2000, 12000),
       whiteBalanceTint: cl(r.capture.whiteBalanceTint, -1, 1),
+    },
+    camera: {
+      // A persisted recipe from before the stage existed carries no block.
+      contrast: cl(r.camera?.contrast ?? 0, -0.75, 0.75),
+      highlights: cl(r.camera?.highlights ?? 0, -1.5, 1.5),
+      shadows: cl(r.camera?.shadows ?? 0, -1.5, 1.5),
+      whites: cl(r.camera?.whites ?? 0, -2, 2),
+      blacks: cl(r.camera?.blacks ?? 0, -2, 2),
+      saturation: cl(r.camera?.saturation ?? 1, 0, 2),
     },
     develop: {
       ...r.develop,

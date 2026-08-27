@@ -11,6 +11,7 @@
 
 import { densityWithMask, type CurveParameters } from './curve';
 import { activity, modulate } from './development';
+import type { CameraDevelopParams } from './develop';
 import { card, speedPoint, type SensitometricCard } from './sensitometry';
 import {
   M_AP0_TO_AP1,
@@ -126,6 +127,14 @@ export interface ResolvedParameters {
   /** Monochrome stocks collapse to one record before the curve. */
   readonly monochrome: boolean;
   readonly panWeights: Triple;
+
+  /**
+   * The camera develop, dense: contrast as the log-slope multiplier the math
+   * wants, the rest as stops and the saturation factor. Identity at the
+   * defaults. Applied in the prepare pass (GPU) and `chain.ts` (host), before
+   * the log — see `core/develop.ts`.
+   */
+  readonly camera: CameraDevelopParams;
 
   readonly curve: CurveParameters;
   readonly printCurve: PrintCurve;
@@ -421,6 +430,16 @@ export function resolve(recipe: Recipe, ctx: ResolveContext): ResolvedParameters
     balanceShift,
     monochrome: negative.family === 'monochrome',
     panWeights: negative.panWeights ?? [0.3, 0.59, 0.11],
+    camera: {
+      // The recipe stores contrast as a log2-slope *setting* in [−0.75, 0.75];
+      // the math wants the multiplier, so resolve it once, here.
+      contrast: Math.pow(2, recipe.camera.contrast),
+      highlights: recipe.camera.highlights,
+      shadows: recipe.camera.shadows,
+      whites: recipe.camera.whites,
+      blacks: recipe.camera.blacks,
+      saturation: recipe.camera.saturation,
+    },
     curve,
     printCurve,
     crosstalk,

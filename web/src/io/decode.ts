@@ -217,19 +217,75 @@ export const HISTOGRAM_MIN = -5;
 export const HISTOGRAM_MAX = 3;
 
 /**
+ * A subsample of the scene's linear luminance — the raw material for the
+ * histogram, kept separate from the binning so the camera develop can be
+ * applied to the samples as it moves. The develop is *not* baked in: these
+ * are the decoded scene, and the instrument beneath the characteristic curve
+ * shows where the film sees the light after the develop, which changes with
+ * the sliders.
+ *
+ * Returns the samples in `Float32Array` because it is a sample *set*: the
+ * develop must map each one, not shift them.
+ */
+export function sceneSamples(source: DecodedSource, target = 320): Float32Array | null {
+  const { image } = source;
+  const step = Math.max(1, Math.floor(Math.max(image.width, image.height) / target));
+
+  if (image.float) {
+    const out: number[] = [];
+    for (let y = 0; y < image.height; y += step) {
+      for (let x = 0; x < image.width; x += step) {
+        const i = (y * image.width + x) * 4;
+        out.push(
+          0.2722 * image.float[i]! +
+            0.6741 * image.float[i + 1]! +
+            0.0537 * image.float[i + 2]!,
+        );
+      }
+    }
+    return Float32Array.from(out);
+  }
+
+  if (image.bitmap) {
+    const w = Math.max(1, Math.round(image.width / step));
+    const h = Math.max(1, Math.round(image.height / step));
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    if (!ctx) return null;
+    ctx.drawImage(image.bitmap as CanvasImageSource, 0, 0, w, h);
+    const { data } = ctx.getImageData(0, 0, w, h);
+    const eotf = (v: number) => (v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4));
+    const out = new Float32Array(w * h);
+    for (let i = 0, j = 0; i < data.length; i += 4, j++) {
+      out[j] =
+        0.2722 * eotf(data[i]! / 255) +
+        0.6741 * eotf(data[i + 1]! / 255) +
+        0.0537 * eotf(data[i + 2]! / 255);
+    }
+    return out;
+  }
+
+  return null;
+}
+
+/**
  * Distribution of the scene's luminance in log10 exposure.
  *
  * Drawn under the characteristic curve, this is the single most useful thing
  * the interface can show: it says where *this photograph* sits on *this stock*,
  * so raising exposure visibly slides the picture up the curve toward the
  * shoulder instead of just making a number change.
+ *
+ * The samples arrive pre-developed (`developLuma` applied in the caller): the
+ * histogram is where the film sees the light, and the camera develop is part
+ * of the light.
  */
-export function sceneLogHistogram(source: DecodedSource): Float32Array {
-  const { image } = source;
+export function sceneLogHistogram(samples: Float32Array | null): Float32Array {
   const bins = new Float32Array(HISTOGRAM_BINS);
   const span = HISTOGRAM_MAX - HISTOGRAM_MIN;
-  const target = 320;
-  const step = Math.max(1, Math.floor(Math.max(image.width, image.height) / target));
+  if (!samples) return bins;
 
   const add = (y: number) => {
     if (y <= 1e-7) return;
@@ -237,33 +293,7 @@ export function sceneLogHistogram(source: DecodedSource): Float32Array {
     if (t < 0 || t >= 1) return;
     bins[Math.floor(t * HISTOGRAM_BINS)]! += 1;
   };
-
-  if (image.float) {
-    for (let y = 0; y < image.height; y += step) {
-      for (let x = 0; x < image.width; x += step) {
-        const i = (y * image.width + x) * 4;
-        add(0.2722 * image.float[i]! + 0.6741 * image.float[i + 1]! + 0.0537 * image.float[i + 2]!);
-      }
-    }
-  } else if (image.bitmap) {
-    const w = Math.max(1, Math.round(image.width / step));
-    const h = Math.max(1, Math.round(image.height / step));
-    const canvas = document.createElement('canvas');
-    canvas.width = w;
-    canvas.height = h;
-    const ctx = canvas.getContext('2d', { willReadFrequently: true });
-    if (!ctx) return bins;
-    ctx.drawImage(image.bitmap as CanvasImageSource, 0, 0, w, h);
-    const { data } = ctx.getImageData(0, 0, w, h);
-    const eotf = (v: number) => (v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4));
-    for (let i = 0; i < data.length; i += 4) {
-      add(
-        0.2126 * eotf(data[i]! / 255) +
-          0.7152 * eotf(data[i + 1]! / 255) +
-          0.0722 * eotf(data[i + 2]! / 255),
-      );
-    }
-  }
+  for (const y of samples) add(y);
 
   let peak = 0;
   for (const v of bins) peak = Math.max(peak, v);

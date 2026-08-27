@@ -19,6 +19,7 @@
  * above middle grey and almost none in the shadows, where the toe is.
  */
 
+import { develop, developIsIdentity } from './develop';
 import { evaluateLogExposureWithEngine } from './engine';
 import { safeLog10 } from './math';
 import type { CubeLut } from './cube';
@@ -65,6 +66,10 @@ export function lutOutputFor(cct: Triple, p: ResolvedParameters, lut: CubeLut | 
   const linear = RECORDS.map((c) => acesCctToLinear(cct[c])) as unknown as Triple;
   let e = matMulVec(p.whiteBalance, linear);
   e = RECORDS.map((c) => Math.max(e[c] * p.exposureGain, 0)) as unknown as Triple;
+  // The camera develop is baked with the white balance it sits beside: it is
+  // scene-side, part of the look the way exposure is. It is applied through
+  // `chain.ts`'s own operator so the bake and the render cannot drift.
+  if (!developIsIdentity(p.camera)) e = develop(e, p.camera);
   if (p.monochrome) {
     e = triFill(p.panWeights[0] * e[0] + p.panWeights[1] * e[1] + p.panWeights[2] * e[2]);
   }

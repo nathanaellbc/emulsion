@@ -1,10 +1,13 @@
 /**
  * The control rail — the lab bench.
  *
- * Ordered the way the film is: what stock, how it was exposed, how it was
- * developed, how it was printed, and only then the two spatial phenomena.
- * That order is not decoration. A user who moves printer lights before setting
- * development is balancing a negative that is about to change underneath them.
+ * Two pages, in the order the work happens: the camera develop first (what
+ * the sensor's develop would have done before the film saw the light), then
+ * the film (the bench proper — stock, exposure rating, development, print and
+ * the spatial phenomena). That order is not decoration. A user who moves
+ * printer lights before setting development is balancing a negative that is
+ * about to change underneath them, and a user who grades the develop after
+ * choosing a stock is tuning light the film has already seen.
  */
 
 import { pushLabel } from '../core/development';
@@ -17,12 +20,28 @@ import { HALATION_PRESETS, halationPresetById } from '../core/halationPresets';
 import type { ResolvedParameters } from '../core/resolve';
 import { Choice, PointStepper, Section, SegmentedControl, Slider } from './controls';
 
+/* The dot at the head of the stock dropdown. It is not decoration: each family
+   is a physically different thing to hold up to the light, and the swatch says
+   which — the orange integral mask of a colour negative, the full colour of a
+   positive transparency, the silver of a monochrome. */
+const FAMILY_SWATCH: Record<string, string> = {
+  colorNegative: '#d2762e',
+  transparency:
+    'conic-gradient(from 210deg, var(--record-r), var(--record-g), var(--record-b), var(--record-r))',
+  monochrome: 'linear-gradient(140deg, #d8d8dc, #6e6e76)',
+};
+
+export type RailTab = 'camera' | 'film';
+
 export interface PanelProps {
   recipe: Recipe;
   resolved: ResolvedParameters;
   update: (mutate: (draft: Recipe) => void) => void;
   /** Log-average scene luminance of the decoded file, or null before it is measured. */
   measuredGrey: number | null;
+  /** Which page the rail shows; the camera develop comes first. */
+  tab: RailTab;
+  onTabChange: (t: RailTab) => void;
 }
 
 const FORMATS = Object.keys(FRAME_WIDTH_MM) as FilmFormat[];
@@ -30,8 +49,8 @@ const FORMATS = Object.keys(FRAME_WIDTH_MM) as FilmFormat[];
 /** Rating a film at a speed other than its nominal one, in third stops. */
 const EI_CHOICES = [0.25, 0.5, 1, 2, 4, 8];
 
-export function Panel({ recipe, resolved, update, measuredGrey }: PanelProps) {
-  const { negative, print, sensitometry } = resolved;
+export function Panel({ recipe, resolved, update, measuredGrey, tab, onTabChange }: PanelProps) {
+  const { negative, sensitometry } = resolved;
   const marginTight = sensitometry.margin < 0.25;
 
   const ei = recipe.capture.filmSpeedOverride ?? negative.iso;
@@ -40,7 +59,65 @@ export function Panel({ recipe, resolved, update, measuredGrey }: PanelProps) {
     resolved.printLut !== null &&
     resolved.printLut.illuminants.length > 1;
 
-  // §V's g_cal, made visible instead of guessed at. Offered, never applied.
+  return (
+    <div className="panel">
+      <div className="rail-tabs" role="tablist" aria-label="Bench">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === 'camera'}
+          className={`rail-tab${tab === 'camera' ? ' is-on' : ''}`}
+          onClick={() => onTabChange('camera')}
+        >
+          Camera
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === 'film'}
+          className={`rail-tab${tab === 'film' ? ' is-on' : ''}`}
+          onClick={() => onTabChange('film')}
+        >
+          Film
+        </button>
+      </div>
+
+      {tab === 'camera' ? (
+        <CameraPage recipe={recipe} resolved={resolved} update={update} measuredGrey={measuredGrey} />
+      ) : (
+        <FilmPage
+          recipe={recipe}
+          resolved={resolved}
+          update={update}
+          ei={ei}
+          lutIlluminantLive={lutIlluminantLive}
+          marginTight={marginTight}
+        />
+      )}
+    </div>
+  );
+}
+
+/**
+ * The camera develop — what the sensor's develop would have done before the
+ * film saw the light. The paper publishes nothing for this stage (§V switches
+ * every rendering intent off at the decode), so every mapping is an
+ * engineering default recorded in DEVIATIONS.md finding 14 — the sliders say
+ * what they do in real units, and none of it claims to be a measurement.
+ */
+function CameraPage({
+  recipe,
+  resolved,
+  update,
+  measuredGrey,
+}: {
+  recipe: Recipe;
+  resolved: ResolvedParameters;
+  update: (mutate: (draft: Recipe) => void) => void;
+  measuredGrey: number | null;
+}) {
+  const { negative } = resolved;
+
   const anchorSuggestion =
     measuredGrey && measuredGrey > 1e-6 ? Math.log2(0.18 / measuredGrey) : null;
   const anchorWorthOffering =
@@ -48,69 +125,10 @@ export function Panel({ recipe, resolved, update, measuredGrey }: PanelProps) {
     Math.abs(anchorSuggestion - recipe.capture.exposureCompensation) > 0.05;
 
   return (
-    <div className="panel">
-      <Section
-        title="Film"
-        meta={
-          // A record with no fog reaches Dmin + 0.10 the instant it starts
-          // responding, so the ideal negative satisfies ISO 10 000. That is a
-          // property of the criterion rather than of the film, and printing it
-          // as a speed would invite someone to believe it.
-          recipe.negativeId === IDEAL_NEGATIVE_ID ? (
-            <>ideal · γ {resolved.curve.gamma[1].toFixed(2)}</>
-          ) : (
-            <>
-              ISO {Math.round(sensitometry.iso)} · CI {sensitometry.contrastIndex.toFixed(2)}
-            </>
-          )
-        }
-      >
-        <Choice
-          label="Negative stock"
-          value={recipe.negativeId}
-          options={NEGATIVES.map((n) => ({
-            value: n.id,
-            label: `${n.displayName} · ${n.process}`,
-            detail: n.note,
-          }))}
-          onChange={(id) =>
-            update((d) => {
-              const stock = NEGATIVES.find((n) => n.id === id)!;
-              d.negativeId = id;
-              d.chemistryId = stock.chemistryId;
-              d.printId = stock.defaultPrint;
-              d.capture.filmSpeedOverride = null;
-            })
-          }
-        />
-
-        <Choice
-          label="Format"
-          value={recipe.format}
-          options={FORMATS.map((f) => ({
-            value: f,
-            label: `${FORMAT_LABEL[f]} · ${FRAME_WIDTH_MM[f]} mm wide`,
-          }))}
-          hint="Grain and halation are specified in micrometres at the film plane. A larger frame means the same physical grain covers less of the picture."
-          onChange={(f) => update((d) => (d.format = f))}
-        />
-
-        <div className="readout">
-          <Stat label="Dmin" value={sensitometry.dMin.toFixed(2)} />
-          <Stat label="Dmax" value={sensitometry.dMax.toFixed(2)} />
-          <Stat label="Latitude" value={`${sensitometry.latitudeStops.toFixed(1)} EV`} />
-          <Stat
-            label="Margin"
-            value={sensitometry.margin.toFixed(2)}
-            tone={marginTight ? 'warn' : undefined}
-            title="ΔD − 4(κt + κs). Below zero the toe and shoulder have met and there is no straight line left."
-          />
-        </div>
-      </Section>
-
-      <Section title="Exposure">
+    <>
+      <Section title="Exposure &amp; tone">
         <Slider
-          label="Exposure compensation"
+          label="Exposure"
           value={recipe.capture.exposureCompensation}
           min={-5}
           max={5}
@@ -118,7 +136,7 @@ export function Panel({ recipe, resolved, update, measuredGrey }: PanelProps) {
           unit=" EV"
           format={(v) => (v > 0 ? `+${v.toFixed(2)}` : v.toFixed(2))}
           detents={[0]}
-          hint="Moves the whole picture along the characteristic curve. Print density moves the print instead — the two are genuinely different and the plot shows which."
+          hint="How much light the sensor delivered. This is the exposure the film receives — moving it slides the whole picture along the characteristic curve, which the plot beneath shows."
           onChange={(v) => update((d) => (d.capture.exposureCompensation = v))}
         />
         {anchorSuggestion !== null ? (
@@ -141,29 +159,68 @@ export function Panel({ recipe, resolved, update, measuredGrey }: PanelProps) {
             )}
           </p>
         ) : null}
-        {/* There is no box speed to deviate from on a record that has no fog:
-            rating it differently is exposure compensation under another name,
-            and that control is directly above. */}
-        {recipe.negativeId === IDEAL_NEGATIVE_ID ? null : (
-        <Choice
-          label="Rated at"
-          value={String(ei)}
-          options={EI_CHOICES.map((m) => {
-            const v = Math.round(negative.iso * m);
-            return {
-              value: String(v),
-              label: `EI ${v}${m === 1 ? ' — box speed' : m > 1 ? ` — ${Math.log2(m)} stop under` : ` — ${-Math.log2(m)} stop over`}`,
-            };
-          })}
-          hint="Shooting a 400 stock at 800 gives the film half the light, which moves the whole image down into the toe. Push development is how you get it back — and what it costs is on the curve."
-          onChange={(v) =>
-            update((d) => {
-              const n = Number(v);
-              d.capture.filmSpeedOverride = n === negative.iso ? null : n;
-            })
-          }
+        <Slider
+          label="Contrast"
+          value={recipe.camera.contrast}
+          min={-0.75}
+          max={0.75}
+          step={0.01}
+          format={(v) => `${Math.pow(2, v).toFixed(2)}×`}
+          detents={[0]}
+          hint="Slope of the tone curve in log space about scene grey. 1.00× leaves it untouched; 1.68× is steep, 0.59× is flat."
+          onChange={(v) => update((d) => (d.camera.contrast = v))}
         />
-        )}
+        <Slider
+          label="Highlights"
+          value={recipe.camera.highlights}
+          min={-1.5}
+          max={1.5}
+          step={0.05}
+          unit=" stops"
+          format={(v) => (v > 0 ? `+${v.toFixed(2)}` : v.toFixed(2))}
+          detents={[0]}
+          hint="Recovers or pushes the bright mid-scale, a stop and a half over grey, with a soft knee. Chromaticity is preserved: a saturated highlight keeps its hue."
+          onChange={(v) => update((d) => (d.camera.highlights = v))}
+        />
+        <Slider
+          label="Shadows"
+          value={recipe.camera.shadows}
+          min={-1.5}
+          max={1.5}
+          step={0.05}
+          unit=" stops"
+          format={(v) => (v > 0 ? `+${v.toFixed(2)}` : v.toFixed(2))}
+          detents={[0]}
+          hint="Lifts or holds the dark mid-scale, a stop and a half under grey. Acts in log space, so a lifted shadow stays positive where a multiplicative lift cannot."
+          onChange={(v) => update((d) => (d.camera.shadows = v))}
+        />
+        <Slider
+          label="Whites"
+          value={recipe.camera.whites}
+          min={-2}
+          max={2}
+          step={0.05}
+          unit=" stops"
+          format={(v) => (v > 0 ? `+${v.toFixed(2)}` : v.toFixed(2))}
+          detents={[0]}
+          hint="The extreme top end, four stops over grey: sets where speculars land. The film's shoulder takes it from here."
+          onChange={(v) => update((d) => (d.camera.whites = v))}
+        />
+        <Slider
+          label="Blacks"
+          value={recipe.camera.blacks}
+          min={-2}
+          max={2}
+          step={0.05}
+          unit=" stops"
+          format={(v) => (v > 0 ? `+${v.toFixed(2)}` : v.toFixed(2))}
+          detents={[0]}
+          hint="The extreme bottom end, four stops under grey: how far down the shadows reach before the toe. True black stays black."
+          onChange={(v) => update((d) => (d.camera.blacks = v))}
+        />
+      </Section>
+
+      <Section title="Colour">
         <Slider
           label="White balance"
           value={recipe.capture.whiteBalanceTempK}
@@ -190,6 +247,130 @@ export function Panel({ recipe, resolved, update, measuredGrey }: PanelProps) {
           format={(v) => (v > 0 ? `+${v.toFixed(2)} G` : v < 0 ? `${v.toFixed(2)} M` : '0.00')}
           onChange={(v) => update((d) => (d.capture.whiteBalanceTint = v))}
         />
+        <Slider
+          label="Saturation"
+          value={recipe.camera.saturation}
+          min={0}
+          max={2}
+          step={0.01}
+          format={(v) => `${v.toFixed(2)}×`}
+          detents={[1]}
+          hint="Scene-side, before the film. 1.00× is untouched. Luminance is preserved exactly. The print's own saturation density — the crosstalk matrix — lives on the Film page, and the two are genuinely different controls."
+          onChange={(v) => update((d) => (d.camera.saturation = v))}
+        />
+      </Section>
+    </>
+  );
+}
+
+/**
+ * The film bench proper: what stock, how it was rated, how it was developed,
+ * how it was printed, and the spatial phenomena. Exposure and white balance
+ * live on the Camera page — they describe the light before the film, not the
+ * film itself. Rating (EI) stays here because it is genuinely film-side:
+ * rating changes where the anchor sits, and push development is the recovery.
+ */
+function FilmPage({
+  recipe,
+  resolved,
+  update,
+  ei,
+  lutIlluminantLive,
+  marginTight,
+}: {
+  recipe: Recipe;
+  resolved: ResolvedParameters;
+  update: (mutate: (draft: Recipe) => void) => void;
+  ei: number;
+  lutIlluminantLive: boolean;
+  marginTight: boolean;
+}) {
+  const { negative, print, sensitometry } = resolved;
+  return (
+    <>
+      <Section
+        title="Film"
+        meta={
+          // A record with no fog reaches Dmin + 0.10 the instant it starts
+          // responding, so the ideal negative satisfies ISO 10 000. That is a
+          // property of the criterion rather than of the film, and printing it
+          // as a speed would invite someone to believe it.
+          recipe.negativeId === IDEAL_NEGATIVE_ID ? (
+            <>ideal · γ {resolved.curve.gamma[1].toFixed(2)}</>
+          ) : (
+            <>
+              ISO {Math.round(sensitometry.iso)} · CI {sensitometry.contrastIndex.toFixed(2)}
+            </>
+          )
+        }
+      >
+        <Choice
+          label="Negative stock"
+          value={recipe.negativeId}
+          options={NEGATIVES.map((n) => ({
+            value: n.id,
+            label: `${n.displayName} · ${n.process}`,
+            detail: n.note,
+            swatch: FAMILY_SWATCH[n.family],
+          }))}
+          onChange={(id) =>
+            update((d) => {
+              const stock = NEGATIVES.find((n) => n.id === id)!;
+              d.negativeId = id;
+              d.chemistryId = stock.chemistryId;
+              d.printId = stock.defaultPrint;
+              d.capture.filmSpeedOverride = null;
+            })
+          }
+        />
+
+        <Choice
+          label="Format"
+          value={recipe.format}
+          options={FORMATS.map((f) => ({
+            value: f,
+            label: `${FORMAT_LABEL[f]} · ${FRAME_WIDTH_MM[f]} mm wide`,
+          }))}
+          hint="Grain and halation are specified in micrometres at the film plane. A larger frame means the same physical grain covers less of the picture."
+          onChange={(f) => update((d) => (d.format = f))}
+        />
+
+        {/* Rating is film-side: it changes where the anchor sits, and push
+            development — on this page — is the recovery. There is no box
+            speed to deviate from on the ideal negative, where rating is
+            exposure compensation under another name (Camera page). */}
+        {recipe.negativeId === IDEAL_NEGATIVE_ID ? null : (
+          <Choice
+            label="Rated at"
+            value={String(ei)}
+            options={EI_CHOICES.map((m) => {
+              const v = Math.round(negative.iso * m);
+              return {
+                value: String(v),
+                label: `EI ${v}${m === 1 ? ' — box speed' : m > 1 ? ` — ${Math.log2(m)} stop under` : ` — ${-Math.log2(m)} stop over`}`,
+              };
+            })}
+            hint="Shooting a 400 stock at 800 gives the film half the light, which moves the whole image down into the toe. Push development is how you get it back — and what it costs is on the curve. Scene exposure itself is on the Camera page."
+            onChange={(v) =>
+              update((d) => {
+                const n = Number(v);
+                d.capture.filmSpeedOverride = n === negative.iso ? null : n;
+              })
+            }
+          />
+        )}
+
+        <div className="readout">
+          <Stat label="Dmin" value={sensitometry.dMin.toFixed(2)} />
+          <Stat label="Dmax" value={sensitometry.dMax.toFixed(2)} />
+          <Stat label="Latitude" value={`${sensitometry.latitudeStops.toFixed(1)} EV`} />
+          <Stat
+            label="Margin"
+            value={sensitometry.margin.toFixed(2)}
+            tone={marginTight ? 'warn' : undefined}
+            title="ΔD − 4(κt + κs). Below zero the toe and shoulder have met and there is no straight line left."
+          />
+        </div>
       </Section>
 
       <Section title="Development" meta={<>A = {resolved.developmentActivity.toFixed(3)}</>}>
@@ -792,7 +973,7 @@ export function Panel({ recipe, resolved, update, measuredGrey }: PanelProps) {
           onChange={(v) => update((d) => (d.seed = v))}
         />
       </Section>
-    </div>
+    </>
   );
 }
 

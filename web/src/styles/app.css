@@ -3,10 +3,41 @@
    ========================================================================= */
 
 .shell {
+  position: relative;
   display: grid;
   grid-template-rows: var(--header-height) 1fr;
   height: 100%;
   background: var(--ground);
+  isolation: isolate;
+}
+
+/* The ambient wash. Glass needs something behind it or it reads as flat grey
+   film; this is the darkroom's own light — a warm safelight low and left, a
+   cold spill high and right — sitting under every translucent surface at an
+   opacity too low to compete with the photograph. It is decoration only where
+   the print is not, and it never overlaps the frame. */
+.shell::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(
+      ellipse 90% 60% at 8% 96%,
+      rgba(232, 151, 74, 0.13),
+      transparent 62%
+    ),
+    radial-gradient(
+      ellipse 70% 50% at 96% 4%,
+      rgba(96, 132, 200, 0.09),
+      transparent 60%
+    ),
+    radial-gradient(
+      ellipse 60% 45% at 78% 88%,
+      rgba(200, 62, 62, 0.07),
+      transparent 62%
+    );
 }
 
 /* dvh follows the browser chrome collapsing on a phone, so the shell fills
@@ -41,7 +72,8 @@
   position: fixed;
   inset: 0;
   border: 2px solid var(--accent);
-  box-shadow: inset 0 0 60px rgba(224, 138, 60, 0.14);
+  border-radius: var(--radius-lg);
+  box-shadow: inset 0 0 90px rgba(232, 151, 74, 0.16);
   pointer-events: none;
   z-index: 50;
 }
@@ -59,7 +91,12 @@
   padding-left: max(var(--s4), env(safe-area-inset-left));
   padding-right: max(var(--s4), env(safe-area-inset-right));
   border-bottom: 1px solid var(--rule);
-  background: var(--surface);
+  background: rgba(13, 13, 17, 0.62);
+  -webkit-backdrop-filter: var(--blur);
+  backdrop-filter: var(--blur);
+  box-shadow: inset 0 1px 0 var(--sheen);
+  position: relative;
+  z-index: 5;
 }
 
 .topbar__brand {
@@ -96,54 +133,62 @@
    Buttons and chips
    ========================================================================= */
 
+/* Everything clickable is a pill of glass. Rest is a faint lit surface, hover
+   raises the light, and "on" is the surface raised furthest with a sheen along
+   its top edge — the reference's idiom, where state is carried by depth rather
+   than by a colour fill. */
 .btn {
   font: inherit;
   font-size: 12px;
-  padding: 6px 12px;
-  border-radius: var(--radius);
-  border: 1px solid var(--rule-strong);
-  background: transparent;
+  padding: 7px 15px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--rule);
+  background: var(--glass);
+  -webkit-backdrop-filter: var(--blur-light);
+  backdrop-filter: var(--blur-light);
   color: var(--ink);
   cursor: pointer;
   transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease),
-    color var(--dur) var(--ease);
+    color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
   white-space: nowrap;
 }
 
 .btn:hover:not(:disabled) {
-  background: var(--surface-hover);
-  border-color: rgba(232, 227, 220, 0.28);
+  background: var(--glass-hover);
+  border-color: var(--rule-strong);
+  box-shadow: var(--shadow-raised);
 }
 
 .btn:disabled {
-  opacity: 0.35;
+  opacity: 0.3;
   cursor: not-allowed;
 }
 
 .btn--primary {
-  border-color: var(--accent-dim);
-  color: var(--accent);
-  background: var(--accent-wash);
+  border-color: var(--rule-strong);
+  color: var(--ink);
+  background: var(--glass-raised);
+  box-shadow: var(--shadow-raised);
 }
 
 .btn--primary:hover:not(:disabled) {
-  background: rgba(224, 138, 60, 0.2);
-  border-color: var(--accent);
+  background: rgba(255, 255, 255, 0.16);
+  border-color: rgba(255, 255, 255, 0.24);
 }
 
 .btn--lg {
   font-size: 13px;
-  padding: 10px 22px;
+  padding: 12px 24px;
 }
 
 .chip {
   font: inherit;
   font-size: 11px;
   letter-spacing: 0.04em;
-  padding: 4px 10px;
-  border-radius: 99px;
+  padding: 5px 12px;
+  border-radius: var(--radius-pill);
   border: 1px solid var(--rule);
-  background: transparent;
+  background: var(--glass);
   color: var(--ink-muted);
   cursor: pointer;
   transition: all var(--dur) var(--ease);
@@ -151,13 +196,15 @@
 
 .chip:hover {
   color: var(--ink);
+  background: var(--glass-hover);
   border-color: var(--rule-strong);
 }
 
 .chip.is-on {
-  color: var(--accent);
-  border-color: var(--accent-dim);
-  background: var(--accent-wash);
+  color: var(--ink);
+  border-color: var(--rule-strong);
+  background: var(--glass-raised);
+  box-shadow: var(--shadow-raised);
 }
 
 .link {
@@ -186,7 +233,7 @@
   grid-template-rows: auto minmax(0, 1fr) auto;
   min-width: 0;
   min-height: 0;
-  background: var(--surface-sunken);
+  background: transparent;
 }
 
 .viewport__bar {
@@ -196,7 +243,9 @@
   gap: var(--s3);
   padding: var(--s2) var(--s3);
   border-bottom: 1px solid var(--rule);
-  background: var(--surface);
+  background: rgba(13, 13, 17, 0.5);
+  -webkit-backdrop-filter: var(--blur-light);
+  backdrop-filter: var(--blur-light);
 }
 
 .viewport__bar-right {
@@ -268,11 +317,14 @@
   font: inherit;
   font-size: 10px;
   letter-spacing: 0.08em;
-  padding: 4px 9px;
-  border-radius: 99px;
-  border: 1px solid var(--accent-dim);
-  background: rgba(10, 9, 8, 0.72);
-  color: var(--accent);
+  padding: 5px 11px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--rule-strong);
+  background: rgba(8, 8, 10, 0.6);
+  -webkit-backdrop-filter: var(--blur-light);
+  backdrop-filter: var(--blur-light);
+  box-shadow: var(--shadow-raised);
+  color: var(--ink);
   cursor: pointer;
 }
 
@@ -281,8 +333,11 @@
   max-height: 100%;
   object-fit: contain;
   display: block;
-  /* A hairline, so a print with white edges still reads as a bounded object. */
-  box-shadow: 0 0 0 1px rgba(232, 227, 220, 0.1), 0 24px 60px rgba(0, 0, 0, 0.7);
+  /* A hairline, so a print with white edges still reads as a bounded object.
+     The radius is deliberately small — the photograph is the one thing on
+     screen that is not glass, and rounding it heavily would make it furniture. */
+  border-radius: var(--radius-sm);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.1), 0 28px 70px rgba(0, 0, 0, 0.72);
   image-rendering: auto;
 }
 
@@ -303,11 +358,11 @@
 }
 
 .viewport__handle span {
-  width: 9px;
-  height: 9px;
-  border-radius: 99px;
-  background: var(--accent);
-  box-shadow: 0 0 0 3px rgba(10, 9, 8, 0.8);
+  width: 11px;
+  height: 11px;
+  border-radius: var(--radius-pill);
+  background: #fff;
+  box-shadow: var(--shadow-puck);
 }
 
 .viewport__tag {
@@ -317,9 +372,12 @@
   letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--ink-muted);
-  background: rgba(10, 9, 8, 0.72);
-  padding: 3px 7px;
-  border-radius: var(--radius);
+  background: rgba(8, 8, 10, 0.6);
+  -webkit-backdrop-filter: var(--blur-light);
+  backdrop-filter: var(--blur-light);
+  border: 1px solid var(--rule);
+  padding: 4px 10px;
+  border-radius: var(--radius-pill);
   pointer-events: none;
 }
 
@@ -338,10 +396,12 @@
   padding: var(--s2) var(--s3);
   padding-bottom: max(var(--s2), env(safe-area-inset-bottom));
   border-top: 1px solid var(--rule);
-  background: var(--surface);
+  background: rgba(13, 13, 17, 0.5);
+  -webkit-backdrop-filter: var(--blur-light);
+  backdrop-filter: var(--blur-light);
   font-size: 11px;
   color: var(--ink-faint);
-  min-height: 30px;
+  min-height: 32px;
 }
 
 .viewport__file {
@@ -364,40 +424,45 @@
    Segmented control
    ========================================================================= */
 
+/* A trough of glass holding pills. No dividing rules between the segments —
+   the selected one lifts out of the trough on its own light, which is what
+   makes the group read as one object with a raised member rather than as a
+   row of cells. */
 .segmented {
   display: inline-flex;
+  gap: 3px;
+  padding: 3px;
   border: 1px solid var(--rule);
-  border-radius: var(--radius);
-  overflow: hidden;
-  background: var(--surface-sunken);
+  border-radius: var(--radius-pill);
+  background: var(--glass-sunken);
+  -webkit-backdrop-filter: var(--blur-light);
+  backdrop-filter: var(--blur-light);
 }
 
 .segmented button {
   font: inherit;
   font-size: 11px;
   letter-spacing: 0.03em;
-  padding: 4px 11px;
+  padding: 5px 13px;
   background: transparent;
-  border: 0;
-  border-right: 1px solid var(--rule);
+  border: 1px solid transparent;
+  border-radius: var(--radius-pill);
   color: var(--ink-muted);
   cursor: pointer;
   transition: all var(--dur) var(--ease);
 }
 
-.segmented button:last-child {
-  border-right: 0;
-}
-
 .segmented button:hover {
   color: var(--ink);
-  background: var(--surface-hover);
+  background: var(--glass-hover);
 }
 
 .segmented button.is-on {
-  color: var(--ground);
-  background: var(--accent);
-  font-weight: 600;
+  color: var(--ink);
+  background: var(--glass-raised);
+  border-color: var(--rule-strong);
+  box-shadow: var(--shadow-raised);
+  font-weight: 500;
 }
 
 /* ============================================================================
@@ -410,20 +475,91 @@
   min-height: 0;
   overflow-y: auto;
   border-left: 1px solid var(--rule);
-  background: var(--surface);
+  background: rgba(11, 11, 15, 0.55);
+  -webkit-backdrop-filter: var(--blur);
+  backdrop-filter: var(--blur);
+}
+
+/* The two benches — camera before film, the order the work happens. The tabs
+   ride above the plot so the switch is reachable without scrolling the
+   sections, and stay put while either page scrolls beneath them. */
+/* The strip is sticky and its trough is translucent, so the sections scrolling
+   under it would read straight through a pure glass fill. Two background
+   layers solve it without a wrapper element: the glass tint sits on an
+   opaque-enough base, and the blur softens whatever passes behind the gutters
+   either side — which is what makes it read as a pill floating over the bench
+   rather than a hole in it. */
+.rail-tabs {
+  display: flex;
+  gap: 3px;
+  /* The panel supplies the gutter and the gap below; the strip only needs to
+     sit in them. */
+  margin: 0;
+  padding: 3px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-pill);
+  background: linear-gradient(var(--glass-sunken), var(--glass-sunken)),
+    rgba(10, 10, 14, 0.82);
+  -webkit-backdrop-filter: var(--blur);
+  backdrop-filter: var(--blur);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+  position: sticky;
+  top: var(--s3);
+  z-index: 4;
+}
+
+.rail-tab {
+  flex: 1 1 0;
+  min-width: 0;
+  font: inherit;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 8px 12px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-pill);
+  color: var(--ink-muted);
+  cursor: pointer;
+  transition: color var(--dur) var(--ease), border-color var(--dur) var(--ease),
+    background var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+}
+
+.rail-tab:hover {
+  color: var(--ink);
+  background: var(--glass-hover);
+}
+
+.rail-tab.is-on {
+  color: var(--ink);
+  background: var(--glass-raised);
+  border-color: var(--rule-strong);
+  box-shadow: var(--shadow-raised);
+  font-weight: 500;
 }
 
 /* ============================================================================
    Curve plot
    ========================================================================= */
 
+/* The plot is the one card that is always on screen, so it takes the fullest
+   glass treatment: a floating panel with a lit top edge, not a region of the
+   rail. It stays sticky, which means it needs a backing behind the glass —
+   otherwise the sections scrolling under it would read straight through. */
 .plot {
-  margin: 0;
+  margin: var(--s3) var(--s3) 0;
   padding: var(--s3) var(--s3) var(--s2);
-  border-bottom: 1px solid var(--rule);
-  background: var(--surface-sunken);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-lg);
+  /* Same two-layer trick as the tab strip: the glass tint over a base opaque
+     enough that a section scrolling under the pinned plot cannot be read
+     through the curve. */
+  background: linear-gradient(var(--glass), var(--glass)), rgba(11, 11, 15, 0.88);
+  -webkit-backdrop-filter: var(--blur);
+  backdrop-filter: var(--blur);
+  box-shadow: var(--shadow-card);
   position: sticky;
-  top: 0;
+  top: var(--s3);
   z-index: 2;
 }
 
@@ -434,13 +570,13 @@
 }
 
 .plot__grid {
-  stroke: rgba(232, 227, 220, 0.06);
+  stroke: rgba(255, 255, 255, 0.055);
   stroke-width: 1;
 }
 
 .plot__frame {
   fill: none;
-  stroke: var(--rule);
+  stroke: transparent;
   stroke-width: 1;
 }
 
@@ -457,14 +593,45 @@
 
 .plot__curve {
   fill: none;
-  stroke-width: 1.75;
+  stroke-width: 2;
   stroke-linecap: round;
   stroke-linejoin: round;
 }
 
+/* The wash under the curve. The reference fills the area beneath its spline
+   with a faint gradient, which is what stops a 2px line from looking stranded
+   in an empty box. It is drawn from each record's own colour, so on a colour
+   stock three washes overlap exactly where the records agree. */
+.plot__area {
+  stroke: none;
+  opacity: 0.5;
+}
+
+/* The handles: small white pucks on the curve, matching the reference's
+   draggable points. They are indicators here, not controls — EMULSION's curve
+   is driven by the bench, not by dragging — so they carry no hover affordance. */
+.plot__node {
+  fill: #fff;
+  stroke: rgba(0, 0, 0, 0.5);
+  stroke-width: 1;
+}
+
+/* The lens. The reference magnifies the active point under a ring of glass;
+   here it marks the metered mid-grey — the one point on the curve you are
+   actually working against. */
+.plot__lens-ring {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.5);
+  stroke-width: 1;
+}
+
+.plot__lens-fill {
+  fill: rgba(255, 255, 255, 0.07);
+}
+
 .plot__hist {
-  fill: rgba(232, 227, 220, 0.13);
-  stroke: rgba(232, 227, 220, 0.22);
+  fill: rgba(255, 255, 255, 0.11);
+  stroke: rgba(255, 255, 255, 0.2);
   stroke-width: 0.75;
 }
 
@@ -496,9 +663,8 @@
 .notices {
   display: flex;
   flex-direction: column;
-  gap: 1px;
-  background: var(--rule);
-  border-bottom: 1px solid var(--rule);
+  gap: var(--s2);
+  padding: var(--s3) var(--s3) 0;
 }
 
 /* An annunciator, not a callout card: a lit indicator and the text it belongs
@@ -514,7 +680,9 @@
   font-size: 11px;
   line-height: 1.5;
   color: var(--ink-muted);
-  background: var(--surface);
+  background: var(--glass);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
 }
 
 .notice::before {
@@ -522,13 +690,14 @@
   width: 6px;
   height: 6px;
   margin-top: 5px;
-  border-radius: 99px;
+  border-radius: var(--radius-pill);
   background: var(--ink-faint);
 }
 
 .notice--warn {
-  color: #f0b8a8;
+  color: #f5c0b0;
   background: var(--warn-wash);
+  border-color: rgba(224, 90, 63, 0.3);
 }
 
 .notice--warn::before {
@@ -540,13 +709,29 @@
    Panel
    ========================================================================= */
 
+/* Sections are cards laid on the ground with air between them, rather than
+   bands divided by rules. The gap is what carries the separation now, so the
+   dividing borders are gone entirely. */
 .panel {
   display: flex;
   flex-direction: column;
+  gap: var(--s3);
+  padding: var(--s3);
 }
 
 .panel-section {
-  border-bottom: 1px solid var(--rule);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-lg);
+  background: var(--glass);
+  box-shadow: var(--shadow-card);
+  overflow: hidden;
+}
+
+/* An accented section is lit slightly more, not tinted — the same move the
+   segmented control makes for its selected pill. */
+.panel-section.is-accent {
+  border-color: var(--rule-strong);
+  background: var(--glass-hover);
 }
 
 .panel-section__head {
@@ -555,9 +740,6 @@
   justify-content: space-between;
   gap: var(--s2);
   padding: var(--s3) var(--s3) var(--s2);
-  position: sticky;
-  top: 0;
-  background: linear-gradient(var(--surface) 72%, transparent);
 }
 
 .panel-section__head h2 {
@@ -623,8 +805,9 @@
 }
 
 .control__hint--action {
-  padding: 7px 9px;
+  padding: 9px 11px;
   background: var(--accent-wash);
+  border: 1px solid rgba(232, 151, 74, 0.18);
   border-radius: var(--radius);
   color: var(--ink-muted);
 }
@@ -633,30 +816,34 @@
 
 .slider {
   position: relative;
-  height: 18px;
+  height: 20px;
   display: flex;
   align-items: center;
 }
 
+/* A recessed channel with a lit fill, rather than a hairline. The extra height
+   is what lets the track read as a groove cut into the card. */
 .slider__track {
   position: absolute;
   inset-inline: 0;
-  height: 2px;
-  background: rgba(232, 227, 220, 0.13);
-  border-radius: 99px;
+  height: 4px;
+  background: var(--glass-sunken);
+  box-shadow: inset 0 1px 1px rgba(0, 0, 0, 0.5);
+  border-radius: var(--radius-pill);
   pointer-events: none;
+  overflow: hidden;
 }
 
 .slider__fill {
   height: 100%;
-  background: var(--accent-dim);
-  border-radius: 99px;
+  background: rgba(255, 255, 255, 0.5);
+  border-radius: var(--radius-pill);
 }
 
 .slider__detents {
   position: absolute;
   inset-inline: 0;
-  height: 8px;
+  height: 9px;
   pointer-events: none;
 }
 
@@ -664,9 +851,9 @@
   position: absolute;
   top: 0;
   width: 1px;
-  height: 8px;
+  height: 9px;
   margin-left: -0.5px;
-  background: rgba(232, 227, 220, 0.26);
+  background: rgba(255, 255, 255, 0.22);
 }
 
 .slider input[type='range'],
@@ -679,47 +866,51 @@
   position: relative;
   z-index: 1;
   cursor: pointer;
-  height: 18px;
+  height: 20px;
 }
 
+/* A white puck with a glow, as the reference draws its curve handles. The glow
+   is what makes it read as sitting *above* the groove rather than in it. */
 .slider input[type='range']::-webkit-slider-thumb,
 .stepper input[type='range']::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
-  width: 11px;
-  height: 11px;
-  border-radius: 99px;
-  background: var(--ink);
+  width: 13px;
+  height: 13px;
+  border-radius: var(--radius-pill);
+  background: #fff;
   border: 0;
-  box-shadow: 0 0 0 3px var(--surface);
-  transition: background var(--dur) var(--ease), transform var(--dur) var(--ease);
+  box-shadow: var(--shadow-puck);
+  transition: transform var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
 }
 
 .slider input[type='range']::-moz-range-thumb,
 .stepper input[type='range']::-moz-range-thumb {
-  width: 11px;
-  height: 11px;
-  border-radius: 99px;
-  background: var(--ink);
+  width: 13px;
+  height: 13px;
+  border-radius: var(--radius-pill);
+  background: #fff;
   border: 0;
-  box-shadow: 0 0 0 3px var(--surface);
+  box-shadow: var(--shadow-puck);
 }
 
 .slider input[type='range']:hover::-webkit-slider-thumb,
 .stepper input[type='range']:hover::-webkit-slider-thumb {
-  background: var(--accent);
-  transform: scale(1.14);
+  transform: scale(1.16);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.55), 0 2px 7px rgba(0, 0, 0, 0.6),
+    0 0 18px rgba(255, 255, 255, 0.4);
 }
 
 .slider input[type='range']:hover::-moz-range-thumb,
 .stepper input[type='range']:hover::-moz-range-thumb {
-  background: var(--accent);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.55), 0 2px 7px rgba(0, 0, 0, 0.6),
+    0 0 18px rgba(255, 255, 255, 0.4);
 }
 
 .slider input[type='range']::-moz-range-track,
 .stepper input[type='range']::-moz-range-track {
   background: transparent;
-  height: 2px;
+  height: 4px;
 }
 
 /* --- printer lights --- */
@@ -730,8 +921,9 @@
   gap: var(--s2);
   padding: var(--s3);
   border: 1px solid var(--rule);
-  border-radius: var(--radius-lg);
-  background: var(--surface-sunken);
+  border-radius: var(--radius);
+  background: var(--glass-sunken);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.4);
 }
 
 .lights.is-inert {
@@ -787,7 +979,7 @@
 
 .stepper__track {
   position: relative;
-  height: 18px;
+  height: 20px;
   display: flex;
   align-items: center;
 }
@@ -796,9 +988,10 @@
   content: '';
   position: absolute;
   inset-inline: 0;
-  height: 2px;
-  background: rgba(232, 227, 220, 0.13);
-  border-radius: 99px;
+  height: 4px;
+  background: var(--glass-sunken);
+  box-shadow: inset 0 1px 1px rgba(0, 0, 0, 0.5);
+  border-radius: var(--radius-pill);
 }
 
 .stepper__centre {
@@ -807,14 +1000,16 @@
   top: 3px;
   bottom: 3px;
   width: 1px;
-  background: rgba(232, 227, 220, 0.3);
+  background: rgba(255, 255, 255, 0.28);
 }
 
+/* The record's own hue is the one place colour survives as a fill — a printer
+   light is a colour, so showing it as one is the honest reading. */
 .stepper__bar {
   position: absolute;
-  height: 2px;
-  border-radius: 99px;
-  opacity: 0.85;
+  height: 4px;
+  border-radius: var(--radius-pill);
+  opacity: 0.9;
 }
 
 .stepper__value {
@@ -825,6 +1020,9 @@
 
 /* --- select --- */
 
+/* The reference's dropdown row: a raised pill carrying a colour dot, the
+   current value, and a down arrow. The dot is what makes a channel or a stock
+   identifiable before you read the label. */
 .select {
   position: relative;
   display: flex;
@@ -836,28 +1034,47 @@
   font-size: 12px;
   width: 100%;
   appearance: none;
-  padding: 7px 26px 7px 9px;
-  border-radius: var(--radius);
-  border: 1px solid var(--rule-strong);
-  background: var(--surface-raised);
+  padding: 9px 32px 9px 11px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--rule);
+  background: var(--glass-raised);
+  box-shadow: var(--shadow-raised);
   color: var(--ink);
   cursor: pointer;
   transition: border-color var(--dur) var(--ease), background var(--dur) var(--ease);
 }
 
-.select select:hover {
-  border-color: rgba(232, 227, 220, 0.28);
-  background: var(--surface-hover);
+/* A leading swatch shifts the text right to clear it. */
+.select.has-swatch select {
+  padding-left: 34px;
 }
 
+.select select:hover {
+  border-color: var(--rule-strong);
+  background: rgba(255, 255, 255, 0.15);
+}
+
+/* The popup list is drawn by the OS and does not inherit glass — it needs an
+   opaque colour or it renders unreadable on platforms that honour it. */
 .select select option {
-  background: var(--surface-raised);
+  background: #14141a;
   color: var(--ink);
+}
+
+.select__swatch {
+  position: absolute;
+  left: 11px;
+  width: 15px;
+  height: 15px;
+  border-radius: var(--radius-pill);
+  pointer-events: none;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.22),
+    0 1px 3px rgba(0, 0, 0, 0.5);
 }
 
 .select__caret {
   position: absolute;
-  right: 9px;
+  right: 11px;
   width: 12px;
   height: 12px;
   color: var(--ink-muted);
@@ -891,11 +1108,12 @@
 
 .toggle__box {
   flex: 0 0 auto;
-  width: 14px;
-  height: 14px;
-  margin-top: 2px;
-  border-radius: 2px;
+  width: 16px;
+  height: 16px;
+  margin-top: 1px;
+  border-radius: 5px;
   border: 1px solid var(--rule-strong);
+  background: var(--glass-sunken);
   display: grid;
   place-items: center;
   color: transparent;
@@ -908,9 +1126,10 @@
 }
 
 .toggle input:checked + label .toggle__box {
-  background: var(--accent);
-  border-color: var(--accent);
+  background: #fff;
+  border-color: #fff;
   color: var(--ground);
+  box-shadow: 0 0 12px rgba(255, 255, 255, 0.28);
 }
 
 .toggle input:focus-visible + label .toggle__box {
@@ -923,19 +1142,17 @@
 .readout {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 1px;
-  background: var(--rule);
-  border: 1px solid var(--rule);
-  border-radius: var(--radius);
-  overflow: hidden;
+  gap: var(--s1);
 }
 
 .stat {
   display: flex;
   flex-direction: column;
   gap: 1px;
-  padding: 6px 7px;
-  background: var(--surface-sunken);
+  padding: 8px 9px;
+  background: var(--glass-sunken);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-sm);
 }
 
 .stat__label {
@@ -952,6 +1169,7 @@
 
 .stat--warn {
   background: var(--warn-wash);
+  border-color: rgba(224, 90, 63, 0.3);
 }
 
 .stat--warn .stat__value {
@@ -968,7 +1186,7 @@
   display: grid;
   place-items: center;
   padding: var(--s5);
-  background: var(--ground);
+  background: transparent;
   overflow-y: auto;
 }
 
@@ -1028,11 +1246,12 @@
   align-items: start;
   margin: var(--s4) auto 0;
   max-width: 46ch;
-  padding: var(--s3);
+  padding: var(--s3) var(--s4);
   font-size: 12px;
   line-height: 1.5;
-  color: #f0b8a8;
+  color: #f5c0b0;
   background: var(--warn-wash);
+  border: 1px solid rgba(224, 90, 63, 0.3);
   border-radius: var(--radius);
   text-align: left;
 }
@@ -1093,11 +1312,14 @@
   bottom: var(--s4);
   left: 50%;
   transform: translateX(-50%);
-  padding: 6px 16px;
-  border-radius: 99px;
-  border: 1px solid var(--accent-dim);
-  background: rgba(10, 9, 8, 0.92);
-  color: var(--accent);
+  padding: 8px 18px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--rule-strong);
+  background: rgba(8, 8, 10, 0.78);
+  -webkit-backdrop-filter: var(--blur);
+  backdrop-filter: var(--blur);
+  box-shadow: var(--shadow-card);
+  color: var(--ink);
   font-size: 11px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -1153,6 +1375,190 @@
 }
 
 /* ============================================================================
+   Export bench
+   ========================================================================= */
+
+/* A dimmed darkroom rather than a black scrim: the print beneath stays
+   judgeable, which is the working condition the whole interface keeps. */
+.export__backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: grid;
+  place-items: center;
+  background: rgba(5, 5, 7, 0.6);
+  -webkit-backdrop-filter: blur(6px) saturate(0.55);
+  backdrop-filter: blur(6px) saturate(0.55);
+  padding: var(--s4);
+}
+
+/* The dialog is the most raised object in the interface, so it takes the
+   strongest glass: an opaque-enough backing to be readable over the print,
+   a lit top edge, and a deep cast. */
+.export {
+  display: flex;
+  flex-direction: column;
+  width: min(440px, 100%);
+  max-height: calc(100dvh - 2 * var(--s4));
+  overflow-y: auto;
+  background: rgba(19, 19, 25, 0.86);
+  -webkit-backdrop-filter: var(--blur);
+  backdrop-filter: var(--blur);
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: inset 0 1px 0 var(--sheen), 0 30px 90px rgba(0, 0, 0, 0.7);
+  position: relative;
+}
+
+.export__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s3);
+  padding: var(--s4) var(--s4) var(--s3);
+  border-bottom: 1px solid var(--rule);
+  position: sticky;
+  top: 0;
+  background: rgba(19, 19, 25, 0.94);
+  -webkit-backdrop-filter: var(--blur);
+  backdrop-filter: var(--blur);
+}
+
+.export__head .label {
+  font-size: 11px;
+  color: var(--ink);
+}
+
+.export__dims {
+  font-size: 11px;
+  color: var(--accent);
+}
+
+.export__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s4);
+  padding: var(--s4);
+}
+
+/* The detent row: the segmented control's idiom, but full-width buttons with
+   the running dimension in each one's tooltip rather than its label. */
+.export__detents {
+  display: flex;
+  gap: 3px;
+  padding: 3px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-pill);
+  background: var(--glass-sunken);
+}
+
+.export__opt {
+  flex: 1 1 0;
+  min-width: 0;
+  font: inherit;
+  font-size: 11px;
+  letter-spacing: 0.03em;
+  padding: 7px 8px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-pill);
+  color: var(--ink-muted);
+  cursor: pointer;
+  transition: all var(--dur) var(--ease);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.export__opt:hover {
+  color: var(--ink);
+  background: var(--glass-hover);
+}
+
+.export__opt.is-on {
+  color: var(--ink);
+  background: var(--glass-raised);
+  border-color: var(--rule-strong);
+  box-shadow: var(--shadow-raised);
+  font-weight: 500;
+}
+
+.export__fail {
+  color: #f5c0b0;
+  background: var(--warn-wash);
+  border: 1px solid rgba(224, 90, 63, 0.3);
+  border-radius: var(--radius);
+  padding: var(--s2) var(--s3);
+  margin: 0;
+}
+
+.export__file {
+  margin: 0;
+  font-size: 10.5px;
+  color: var(--ink-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding: var(--s2) var(--s2) 0;
+  border-top: 1px dashed var(--rule);
+}
+
+.export__actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--s2);
+  padding: var(--s3) var(--s4);
+  padding-bottom: max(var(--s3), env(safe-area-inset-bottom));
+  border-top: 1px solid var(--rule);
+  position: sticky;
+  bottom: 0;
+  background: rgba(19, 19, 25, 0.94);
+  -webkit-backdrop-filter: var(--blur);
+  backdrop-filter: var(--blur);
+}
+
+/* The primary action stretches on phones, where it is the whole point of the
+   bench. */
+.export__save {
+  flex: 1 1 auto;
+}
+
+/* Off-screen but not display:none — putImageData must still rasterise. */
+.export__canvas {
+  position: fixed;
+  left: -10000px;
+  top: 0;
+  pointer-events: none;
+}
+
+/* Narrow: the dialog becomes a sheet anchored to the thumb. */
+@media (max-width: 560px) {
+  .export__backdrop {
+    align-items: end;
+    padding: 0;
+  }
+
+  .export {
+    width: 100%;
+    max-height: calc(100dvh - var(--s6));
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    border-bottom: 0;
+  }
+}
+
+@media (pointer: coarse) {
+  .export__opt {
+    padding: 10px 8px;
+    min-height: 40px;
+  }
+
+  .export__save {
+    min-height: 48px;
+  }
+}
+
+/* ============================================================================
    Narrow layouts
    ========================================================================= */
 
@@ -1192,6 +1598,13 @@
     border-left: 0;
     border-top: 1px solid var(--rule);
     overflow-y: visible;
+  }
+
+  /* The stage, not the rail, is the scroller here, and the viewport already
+     pins itself above everything. The tabs scroll with the bench — switching
+     benches is a thumb's reach at the top of the sheet either way. */
+  .rail-tabs {
+    position: static;
   }
 
   .plot {
@@ -1241,6 +1654,13 @@
     overflow-y: auto;
   }
 
+  /* The rail scrolls again in landscape, so the tabs can pin like the plot's
+     desktop rule does — they stay reachable while a long bench scrolls. */
+  .rail-tabs {
+    position: sticky;
+    top: var(--s3);
+  }
+
   .plot {
     position: static;
   }
@@ -1277,13 +1697,12 @@
     width: 100%;
     max-width: calc(100vw - 2 * var(--s3));
     min-width: 0;
-    overflow: visible;
   }
 
   .segmented button {
     flex: 1 1 0;
     min-width: 0;
-    padding: 5px 4px;
+    padding: 6px 4px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -1350,17 +1769,26 @@
   }
 
   .chip {
-    padding: 8px 14px;
+    padding: 8px 15px;
   }
 
   .segmented button {
     padding: 9px 10px;
   }
 
+  .rail-tab {
+    padding: 12px 12px;
+    min-height: 44px;
+  }
+
   /* iOS zooms the page on focus when a form control's font is under 16px. */
   .select select {
     font-size: 16px;
-    padding: 9px 30px 9px 11px;
+    padding: 11px 34px 11px 13px;
+  }
+
+  .select.has-swatch select {
+    padding-left: 38px;
   }
 
   .slider input[type='range'],
@@ -1370,16 +1798,14 @@
 
   .slider input[type='range']::-webkit-slider-thumb,
   .stepper input[type='range']::-webkit-slider-thumb {
-    width: 17px;
-    height: 17px;
-    box-shadow: 0 0 0 4px var(--surface);
+    width: 19px;
+    height: 19px;
   }
 
   .slider input[type='range']::-moz-range-thumb,
   .stepper input[type='range']::-moz-range-thumb {
-    width: 17px;
-    height: 17px;
-    box-shadow: 0 0 0 4px var(--surface);
+    width: 19px;
+    height: 19px;
   }
 
   .stepper {
@@ -1406,6 +1832,7 @@
   }
 
   .viewport__handle span {
-    box-shadow: 0 0 0 4px rgba(10, 9, 8, 0.8);
+    width: 13px;
+    height: 13px;
   }
 }

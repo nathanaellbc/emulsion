@@ -46,6 +46,7 @@ src/
     math.ts        stable softplus and its derivative
     curve.ts       the characteristic curve, mask depletion, validation
     development.ts activity from time/temp/agitation/push; curve reshaping
+    develop.ts     the camera develop — tone masks, saturation (paper-absent)
     interlayer.ts  DIR coupling, the two-scale highpass, the activity weight
     print.ts       crosstalk matrix, aim balance, silver, display transform
     sensitometry.ts ISO, contrast index, latitude, speed point
@@ -58,13 +59,28 @@ src/
     halationFit.ts solves the pyramid weights against the stock's PSF
     shaders/       the same nine stages, on the GPU
   io/decode.ts     RAW via LibRaw; ordinary images via the browser
-  ui/              the control rail, the D-log E plot, the viewport
+  io/export.ts     the export bench's formats, encoders and save paths
+  ui/              the control rail, the D–log E plot, the viewport
 ```
 
 `core/` and `gl/shaders/` implement the same equations twice. That is a real
 risk of drift, taken deliberately — see DEVIATIONS.md §9.
 
 ## Reading the interface
+
+The rail has two benches, in the order the work happens. **Camera** is the
+develop the sensor would have made before the film saw the light — exposure
+(the same physical control the model always had, in its honest home),
+contrast, highlights, shadows, whites, blacks, white balance, tint and
+scene-side saturation, every slider labelled in the unit it actually sets
+(stops, log slope, ×). None of it is in the paper: §V switches every
+rendering intent off at the decode, so the mappings are engineering defaults
+recorded in DEVIATIONS.md finding 14, and the develop sits before the log —
+before the film, before halation's threshold, outside the LUT-bake domain —
+which is why a recovered highlight genuinely scatters less.
+
+**Film** is the bench proper: stock, rating (EI), development, print and the
+spatial phenomena, as before.
 
 The **D–log E plot** is the instrument. It draws the three records from the
 resolved parameters — the same numbers the shader is running — over a histogram
@@ -93,6 +109,33 @@ and no orange mask, so everything left in the picture is the print stock and the
 exposure. Switching between it and Portra 400 under a fixed print is the
 cleanest way to see what a negative actually contributes — which is most of what
 the design document argues about.
+
+## Export
+
+**Export print** opens a bench, not a pipeline: the print is re-rendered at the
+chosen resolution while the settings are chosen, so the save button acts on a
+file that already exists.
+
+- **Format** is offered by *probing the running browser's own encoder* — each
+  type is test-encoded and the result's MIME is checked, because `toBlob`
+  silently substitutes PNG for types it cannot encode. Nothing is listed that
+  this browser does not genuinely produce: PNG always; JPEG, WebP and AVIF
+  where supported.
+- **Quality** (lossy formats) reports a **measured** file size: the print is
+  re-encoded as the slider settles, so the number shown is the file the button
+  produces, not an estimate of it.
+- **Long edge** is detents — 2048, 4096, 8192, source — that genuinely
+  downscale, never upscale, and are bounded by the GPU's own maximum texture
+  size. The export is *rendered again* at its own pixel pitch, not scaled:
+  grain, halation and interlayer are physical sizes, so a finer export carries
+  finer stages than the preview showed (DEVIATIONS.md, finding 7).
+- On a phone, the primary action is **Save to Photos** via the system share
+  sheet (`navigator.share` with the file already encoded, because iOS requires
+  the call inside the tap); **Download** remains alongside it for saving to
+  Files.
+
+The last-used format, quality and size persist alongside the recipe, and the
+filename keeps the `name — stock on print` convention.
 
 ## Findings against the design document
 

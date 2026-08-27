@@ -169,15 +169,21 @@ export function Choice<T extends string>({
   options,
   onChange,
   hint,
+  swatch,
 }: {
   label: string;
   value: T;
-  options: { value: T; label: string; detail?: string }[];
+  options: { value: T; label: string; detail?: string; swatch?: string }[];
   onChange: (v: T) => void;
   hint?: string;
+  /** A CSS colour for the dot at the head of the pill, when the choice names
+   *  something that has a colour — a record, a stock family, an illuminant.
+   *  Per-option `swatch` wins, so the dot can follow the selection. */
+  swatch?: string;
 }) {
   const id = useId();
   const selected = options.find((o) => o.value === value);
+  const dot = selected?.swatch ?? swatch;
   return (
     <div className="control control--choice">
       <div className="control__row">
@@ -185,7 +191,8 @@ export function Choice<T extends string>({
           {label}
         </label>
       </div>
-      <div className="select">
+      <div className={`select${dot ? ' has-swatch' : ''}`}>
+        {dot ? <span className="select__swatch" aria-hidden="true" style={{ background: dot }} /> : null}
         <select id={id} value={value} onChange={(e) => onChange(e.target.value as T)}>
           {options.map((o) => (
             <option key={o.value} value={o.value}>

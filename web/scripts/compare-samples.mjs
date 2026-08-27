@@ -80,16 +80,26 @@ async function setSlider(label, value) {
 }
 
 // Neutralise the spatial/stochastic stages once, for a clean pointwise comparison.
+// The rail opens on the Camera bench; the grain/halation sliders live on Film.
+await page.getByRole('tab', { name: 'Film', exact: true }).click();
+await page.waitForTimeout(400);
 await setSlider('Amount', 0);        // grain
 await setSlider('Intensity', 0);     // halation
-await setSlider('Exposure compensation', 0);
+// Exposure compensation lives on the Camera bench now.
+await page.getByRole('tab', { name: 'Camera', exact: true }).click();
+await page.waitForTimeout(400);
+await setSlider('Exposure', 0);
 
 // Capture the un-filmed base render for reference.
 await canvasShot('00-base');
 
 for (const sim of SIMS) {
   // Print stock, then white balance for the illuminant.
+  await page.getByRole('tab', { name: 'Film', exact: true }).click();
+  await page.waitForTimeout(300);
   await page.getByLabel('Print stock').selectOption(sim.printId);
+  await page.getByRole('tab', { name: 'Camera', exact: true }).click();
+  await page.waitForTimeout(300);
   await setSlider('White balance', sim.kelvin);
   await page.waitForTimeout(900);
 

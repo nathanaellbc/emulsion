@@ -94,7 +94,20 @@ saw it.
 Controls are labelled in the units the model uses: printer lights in integer
 **points** (1 point = 0.025 log E, twelve to a stop), the interlayer control as
 **coupler activity**, grain by **Selwyn granularity** and micrometres. There is
-no "warmth 0–100" anywhere, and that is deliberate.
+no "warmth 0–100" anywhere, and that is deliberate. The rail is two benches —
+**Camera** (the sensor-side develop: exposure, tone controls in stops, white
+balance, scene saturation — a stage the paper does not publish, recorded in
+`web/DEVIATIONS.md` finding 14, applied before the log so the film and every
+spatial stage see the developed light) and **Film** (stock, rating, chemistry,
+print, grain, halation).
+
+Exporting opens a bench rather than running a pipeline: PNG, JPEG, WebP and
+AVIF are offered where the running browser's own encoder genuinely produces
+them (probed, because `toBlob` silently substitutes PNG); the quality control
+reports the **measured** file size, re-encoded as the slider settles; resolution
+is long-edge detents rendered again at their own pixel pitch — grain and
+halation are physical sizes, so a finer export carries finer stages. On a phone
+the primary action is **Save to Photos** via the system share sheet.
 
 ### Verification
 

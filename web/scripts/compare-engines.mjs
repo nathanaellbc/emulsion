@@ -42,6 +42,9 @@ await page.goto(url, { waitUntil: 'networkidle' });
 await page.waitForSelector('.dropzone');
 await page.setInputFiles('input[type=file]', 'public/test-chart.png');
 await page.waitForSelector('.rail', { timeout: 20000 });
+// The rail opens on the Camera bench; the engine toggle lives on the Film
+// bench's Print section.
+await page.getByRole('tab', { name: 'Film', exact: true }).click();
 // Let the LUT finish loading and the re-render settle.
 await page.waitForTimeout(1500);
 

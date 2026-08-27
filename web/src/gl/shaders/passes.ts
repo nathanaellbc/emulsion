@@ -4,10 +4,15 @@ import { GLSL_COMMON, GLSL_HASH, GLSL_NEGATIVE } from './common';
  * Pass 1 — source encoding to the scene-referred working space.
  *
  * Everything before the log lives here: the source-primaries matrix, the von
- * Kries white balance (both collapsed into one 3x3 on the host), and the
- * exposure gain. This is deliberately *outside* the part of the chain that
- * could be baked into a LUT, because the LUT domain is log exposure — baking
- * anything before the log would let a white-balance change silently invalidate it.
+ * Kries white balance (both collapsed into one 3x3 on the host), the exposure
+ * gain, and the camera develop. This is deliberately *outside* the part of
+ * the chain that could be baked into a LUT, because the LUT domain is log
+ * exposure — baking anything before the log would let a white-balance change
+ * silently invalidate it.
+ *
+ * The develop below is a transcription of `core/develop.ts`, stage for stage
+ * and constant for constant. Divergence between the two is a defect in one of
+ * them, never a tolerance — the same contract `GLSL_NEGATIVE` carries.
  */
 export const FRAG_PREPARE = /* glsl */ `#version 300 es
 ${GLSL_COMMON}
@@ -20,11 +25,53 @@ uniform float uExposureGain;
 uniform bool uSourceIsEncoded;
 uniform bool uFlipY;
 
+// --- the camera develop (core/develop.ts; DEVIATIONS.md finding 14) ---
+uniform bool  uDevelopOn;
+uniform float uContrast;     // log-slope multiplier, 1 untouched
+uniform float uHighlights;   // stops at the highlight mask centre
+uniform float uShadows;      // stops at the shadow mask centre
+uniform float uWhites;       // stops at the white end
+uniform float uBlacks;       // stops at the black end
+uniform float uSaturation;   // factor about luminance, 1 untouched
+
+const float SCENE_GREY = 0.18;
+const float LUMA_FLOOR = 1e-7;
+const vec3  DEVELOP_Y = vec3(0.2722, 0.6741, 0.0537);
+
+/// The tone masks: logistic, the softplus derivative that builds every other
+/// knee in the house, so a mask "begins" as softly as a film curve does. The
+/// shadow-side controls pass a mirrored argument — maximal at the low end.
+float developMask(float t, float centre, float width) {
+  return logistic_((t - centre) / width);
+}
+
+/// One luminance through the tone controls — core/develop.ts, developLuma.
+float developLuma(float y) {
+  float l = log2(max(y, LUMA_FLOOR) / SCENE_GREY);
+  float t = l * uContrast;
+  t += uHighlights * developMask(t,  1.5, 1.0);
+  t += uShadows    * developMask(-t,  1.5, 1.0);  // mirrored: σ((c−t)/w)
+  t += uWhites     * developMask(t,  4.0, 2.0);
+  t += uBlacks     * developMask(-t,  4.0, 2.0);  // mirrored: σ((c−t)/w)
+  return SCENE_GREY * exp2(t);
+}
+
+/// The full develop on RGB — core/develop.ts, develop().
+vec3 sceneDevelop(vec3 c) {
+  float y = dot(DEVELOP_Y, c);
+  float gain = y > LUMA_FLOOR ? developLuma(y) / y : developLuma(y) / LUMA_FLOOR;
+  vec3 g = c * gain;
+  if (uSaturation == 1.0) return g;
+  float yOut = y * gain;
+  return max(vec3(yOut) + uSaturation * (g - vec3(yOut)), 0.0);
+}
+
 void main() {
   vec2 uv = uFlipY ? vec2(vUv.x, 1.0 - vUv.y) : vUv;
   vec3 c = texture(uSource, uv).rgb;
   if (uSourceIsEncoded) c = eotf3(c);
   vec3 scene = uInputMatrix * c * uExposureGain;
+  if (uDevelopOn) scene = sceneDevelop(scene);
   fragColor = vec4(max(scene, 0.0), 1.0);
 }
 `;

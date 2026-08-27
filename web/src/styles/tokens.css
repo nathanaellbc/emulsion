@@ -1,44 +1,60 @@
 /*
- * The darkroom instrument.
+ * The darkroom instrument, under glass.
  *
- * A safelight room: near-black warm ground, one amber accent, and the
- * photograph as the only bright object on screen. Everything chrome is held
- * below the image in value so nothing competes with it — which is not a style
- * choice so much as a working condition. You cannot judge a print next to a
- * white panel.
+ * Still a safelight room — the photograph is the only fully bright object on
+ * screen and every piece of chrome is held below it in value. What changed is
+ * the material: chrome is now translucent glass floating on a near-black
+ * ground, lit by a warm ambient wash rather than filled with it.
+ *
+ * The one working risk of glass in a darkroom is colour bleed — a panel that
+ * lets the print's hue through sits next to the print and skews your read of
+ * it. Every blurred surface therefore desaturates what passes through it
+ * (see --blur), so the rail can pick up a print's *value* but never its cast.
  */
 
 :root {
-  /* Ground, ascending. Warm-biased greys: a neutral grey next to a warm print
-     reads blue, which would make every render look colder than it is. */
-  --ground: #0a0908;
-  --surface: #100e0d;
-  --surface-raised: #161412;
-  --surface-hover: #1d1a17;
-  --surface-sunken: #070606;
+  /* The ground. There is only one now: every surface above it is glass, so the
+     old ascending --surface ramp had nothing left to describe. Cool-neutral,
+     because the warmth comes from the ambient wash rather than from the greys —
+     which is what lets glass over black stay neutral. */
+  --ground: #08080a;
 
-  /* Hairlines. Two weights only: a structural rule and a whisper. */
-  --rule: rgba(232, 227, 220, 0.09);
-  --rule-strong: rgba(232, 227, 220, 0.16);
+  /* Glass. Fills are white-over-black at low alpha so they read as lit
+     material rather than as painted panels, and stack predictably: a raised
+     element is simply more of the same light. */
+  --glass: rgba(255, 255, 255, 0.045);
+  --glass-hover: rgba(255, 255, 255, 0.075);
+  --glass-raised: rgba(255, 255, 255, 0.11);
+  --glass-sunken: rgba(0, 0, 0, 0.32);
 
-  /* Type. */
-  --ink: #e8e3dc;
-  --ink-muted: #948a7e;
-  --ink-faint: #635c53;
+  /* Hairlines. Two weights, as before — a structural rule and a whisper —
+     but now brighter at the top edge of a card than the bottom, which is what
+     makes a translucent panel read as having thickness. */
+  --rule: rgba(255, 255, 255, 0.075);
+  --rule-strong: rgba(255, 255, 255, 0.15);
+  --sheen: rgba(255, 255, 255, 0.11);
 
-  /* The safelight. Used for state, never for decoration. */
-  --accent: #e08a3c;
+  /* Type. Cool-neutral to match the ground. */
+  --ink: #f0f0f3;
+  --ink-muted: #8d8d97;
+  --ink-faint: #5c5c66;
+
+  /* The safelight. It survives as *light* — an ambient wash behind the glass,
+     focus rings, live numerals — never as a button fill. Active state is
+     carried by raised glass instead, which is what keeps the palette moody
+     rather than amber. */
+  --accent: #e8974a;
   --accent-dim: #a4622a;
-  --accent-wash: rgba(224, 138, 60, 0.12);
+  --accent-wash: rgba(232, 151, 74, 0.1);
 
   /* The three records, at their own hues, used consistently everywhere a
      record is shown: the curve plot, the printer lights, the readouts. */
-  --record-r: #d8574a;
-  --record-g: #5aa86b;
-  --record-b: #4d84cf;
+  --record-r: #e2604f;
+  --record-g: #5eb073;
+  --record-b: #558fdc;
 
-  --warn: #d4553c;
-  --warn-wash: rgba(212, 85, 60, 0.12);
+  --warn: #e05a3f;
+  --warn-wash: rgba(224, 90, 63, 0.12);
 
   --font-sans: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto,
     'Helvetica Neue', Arial, sans-serif;
@@ -54,15 +70,33 @@
   --s6: 32px;
   --s7: 48px;
 
-  --radius: 3px;
-  --radius-lg: 5px;
+  /* Soft geometry. Controls are pills or near-pills; cards are generously
+     rounded so they read as objects laid on the ground rather than as
+     regions cut out of it. */
+  --radius-sm: 7px;
+  --radius: 11px;
+  --radius-lg: 18px;
+  --radius-pill: 999px;
 
-  --rail-width: 336px;
+  /* saturate() below 1 is the whole safety argument for glass here: whatever
+     bleeds through arrives desaturated, so chrome beside the print cannot
+     take on the print's cast. */
+  --blur: blur(24px) saturate(0.55);
+  --blur-light: blur(14px) saturate(0.55);
+
+  /* Depth. A card is lit from above (inset sheen) and casts below it. */
+  --shadow-card: inset 0 1px 0 var(--sheen), 0 10px 30px rgba(0, 0, 0, 0.5);
+  --shadow-raised: inset 0 1px 0 rgba(255, 255, 255, 0.14),
+    0 2px 8px rgba(0, 0, 0, 0.55);
+  --shadow-puck: 0 0 0 1px rgba(0, 0, 0, 0.55), 0 2px 7px rgba(0, 0, 0, 0.6),
+    0 0 14px rgba(255, 255, 255, 0.22);
+
+  --rail-width: 348px;
   /* The header row grows by whatever the notch or status bar takes. */
-  --header-height: calc(52px + env(safe-area-inset-top, 0px));
+  --header-height: calc(56px + env(safe-area-inset-top, 0px));
 
   --ease: cubic-bezier(0.2, 0, 0.1, 1);
-  --dur: 140ms;
+  --dur: 160ms;
 }
 
 /* The interface commits to dark. A darkroom that follows the system theme into
@@ -70,6 +104,18 @@
 @media (prefers-reduced-motion: reduce) {
   :root {
     --dur: 0ms;
+  }
+}
+
+/* Where backdrop-filter is unavailable, glass would render as a flat wash of
+   near-transparent white over the ground and lose all separation. Opaque
+   fallbacks keep the hierarchy; only the blur is lost. */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  :root {
+    --glass: #16161c;
+    --glass-hover: #1d1d24;
+    --glass-raised: #26262f;
+    --glass-sunken: #050507;
   }
 }
 
@@ -102,7 +148,7 @@ body {
 :focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
-  border-radius: 2px;
+  border-radius: var(--radius-sm);
 }
 
 ::selection {
@@ -141,7 +187,7 @@ body {
 /* Scrollbars, so the rail does not sprout a bright system-coloured bar. */
 * {
   scrollbar-width: thin;
-  scrollbar-color: rgba(232, 227, 220, 0.16) transparent;
+  scrollbar-color: rgba(255, 255, 255, 0.14) transparent;
 }
 
 *::-webkit-scrollbar {
@@ -154,13 +200,13 @@ body {
 }
 
 *::-webkit-scrollbar-thumb {
-  background: rgba(232, 227, 220, 0.14);
-  border-radius: 99px;
+  background: rgba(255, 255, 255, 0.13);
+  border-radius: var(--radius-pill);
   border: 2px solid transparent;
   background-clip: content-box;
 }
 
 *::-webkit-scrollbar-thumb:hover {
-  background: rgba(232, 227, 220, 0.26);
+  background: rgba(255, 255, 255, 0.24);
   background-clip: content-box;
 }

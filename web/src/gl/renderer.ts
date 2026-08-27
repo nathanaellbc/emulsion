@@ -14,6 +14,7 @@
  */
 
 import { AP1_LUMINANCE, M_SRGB_TO_AP1 } from '../core/colorspace';
+import { developIsIdentity } from '../core/develop';
 import type { CubeLut } from '../core/cube';
 import type { ResolvedParameters } from '../core/resolve';
 import { matToGL, triToGL } from '../core/triple';
@@ -158,6 +159,16 @@ export class Renderer {
 
   get renderHeight() {
     return this.height;
+  }
+
+  /**
+   * The largest surface this context can allocate, in either dimension. The
+   * export dialog offers resolution detents up to this and no further: a
+   * render above it fails at allocation, and the failure mode worth having is
+   * the option never appearing, not the export dying mid-flight.
+   */
+  get maxTextureSize() {
+    return this.gl.getParameter(this.gl.MAX_TEXTURE_SIZE) as number;
   }
 
   get hasSource() {
@@ -565,6 +576,17 @@ export class Renderer {
       .float('uExposureGain', params.exposureGain)
       .int('uSourceIsEncoded', this.sourceEncoded ? 1 : 0)
       .int('uFlipY', this.sourceFlipY ? 1 : 0);
+    // The camera develop, uniform for uniform with chain.ts's host mirror.
+    // Identity parameters skip the stage entirely, same as the host path.
+    const cam = params.camera;
+    prep
+      .int('uDevelopOn', developIsIdentity(cam) ? 0 : 1)
+      .float('uContrast', cam.contrast)
+      .float('uHighlights', cam.highlights)
+      .float('uShadows', cam.shadows)
+      .float('uWhites', cam.whites)
+      .float('uBlacks', cam.blacks)
+      .float('uSaturation', cam.saturation);
     drawFullscreen(gl);
 
     // Pre-exposure optics: taking-lens diffusion acts on the linear scene
@@ -635,8 +657,17 @@ export class Renderer {
     drawFullscreen(gl);
 
     // --- to the canvas -----------------------------------------------------
-    this.canvas.width = this.width;
-    this.canvas.height = this.height;
+    // Resizing a canvas clears it and detaches the compositor's texture, and
+    // the spec clears it *even when the size has not changed*. Assigning both
+    // dimensions on every render — every slider tick — used to blank the
+    // canvas for the frames between the clear and the next present, which on
+    // Windows/ANGLE reads as a white flash for a few hundred milliseconds.
+    // Only touch the size when it actually differs; preserveDrawingBuffer
+    // then keeps the last frame on screen until the new composite lands.
+    if (this.canvas.width !== this.width || this.canvas.height !== this.height) {
+      this.canvas.width = this.width;
+      this.canvas.height = this.height;
+    }
     const comp = this.programs.composite!.use();
     bindTarget(gl, null, [this.width, this.height]);
     comp

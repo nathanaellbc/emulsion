@@ -19,6 +19,10 @@ web/sample-compare/
 web/sample/
 sections/*.dng
 
+# --- build caches & local session files ---
+*.tsbuildinfo
+opencodesess.bat
+
 # --- OS / editor ---
 .DS_Store
 Thumbs.db
