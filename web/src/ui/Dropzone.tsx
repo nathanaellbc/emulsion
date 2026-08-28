@@ -6,7 +6,7 @@
  */
 
 import { useRef } from 'react';
-import { ACCEPT_IMAGE_BASIC, ACCEPT_RAW, RAW_EXTENSIONS } from '../io/decode';
+import { ACCEPT_RAW, RAW_EXTENSIONS, primaryAcceptAttribute } from '../io/decode';
 
 export function Dropzone({
   onFile,
@@ -19,6 +19,9 @@ export function Dropzone({
 }) {
   const input = useRef<HTMLInputElement>(null);
   const rawInput = useRef<HTMLInputElement>(null);
+  const coarse =
+    typeof window !== 'undefined' &&
+    window.matchMedia?.('(pointer: coarse)').matches === true;
 
   return (
     <div className={`dropzone${dragging ? ' is-dragging' : ''}`}>
@@ -36,13 +39,14 @@ export function Dropzone({
         <button type="button" className="btn btn--primary btn--lg" onClick={() => input.current?.click()}>
           Choose an image
         </button>
-        {/* The main picker filters to image/* only, because a phone's picker
-            drops its own "Take Photo" option the moment file extensions join
-            the filter. RAW gets its own chooser with the extension list. */}
+        {/* The primary picker uses the shared policy: a desktop and every
+            non-Apple coarse pointer get the full extension list, so a RAW
+            file is never greyed out of the front door; Apple's picker keeps
+            image/*-only, and the RAW chooser below is its RAW route. */}
         <input
           ref={input}
           type="file"
-          accept={ACCEPT_IMAGE_BASIC}
+          accept={primaryAcceptAttribute()}
           className="sr-only"
           onChange={(e) => {
             const f = e.target.files?.[0];
@@ -66,6 +70,7 @@ export function Dropzone({
           <button type="button" className="link" onClick={() => rawInput.current?.click()}>
             choose a RAW file
           </button>
+          {coarse ? ' — some phone pickers hide RAW files; this chooser doesn’t' : null}
         </p>
 
         {error ? (

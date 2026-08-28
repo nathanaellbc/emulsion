@@ -63,7 +63,7 @@ export function Panel({ recipe, resolved, update, measuredGrey, tab }: PanelProp
   // phones, and older iOS WebKit drops the children of display:contents
   // elements entirely — the bug that hid the whole bench on those devices.
   return (
-    <div className="panel">
+    <div className="panel" id="bench-page">
       {tab === 'camera' ? (
         <CameraPage recipe={recipe} resolved={resolved} update={update} measuredGrey={measuredGrey} />
       ) : (
@@ -309,10 +309,7 @@ function FilmPage({
         <Choice
           label="Format"
           value={recipe.format}
-          options={FORMATS.map((f) => ({
-            value: f,
-            label: `${FORMAT_LABEL[f]} · ${FRAME_WIDTH_MM[f]} mm wide`,
-          }))}
+          options={FORMATS.map((f) => ({ value: f, label: FORMAT_LABEL[f] }))}
           hint="Grain and halation are specified in micrometres at the film plane. A larger frame means the same physical grain covers less of the picture."
           onChange={(f) => update((d) => (d.format = f))}
         />

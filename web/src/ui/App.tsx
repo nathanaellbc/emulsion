@@ -8,9 +8,9 @@ import { developLuma } from '../core/develop';
 import { PREVIEW_MAX_WIDTH, Renderer, type ViewMode } from '../gl/renderer';
 import {
   ACCEPT_ATTRIBUTE,
-  ACCEPT_IMAGE_BASIC,
   decodeFile,
   measureMiddleGrey,
+  primaryAcceptAttribute,
   sceneLogHistogram,
   sceneSamples,
   type DecodedSource,
@@ -38,14 +38,13 @@ function previewBudget(): number {
 }
 
 /**
- * The topbar Open input filters by pointer: a phone keeps the OS picker's own
- * "Take Photo" entry, which iOS removes the moment extension filters join
- * image/*; a desktop keeps the full list so a RAW file is one click.
+ * The topbar Open input uses the shared primary-picker policy: a desktop gets
+ * every extension so a RAW file is one click; a phone gets the filter its own
+ * OS picker can honour without hiding the product's headline input (see
+ * decode.ts, primaryAcceptAttribute).
  */
 const OPEN_ACCEPT =
-  typeof window !== 'undefined' && window.matchMedia?.('(pointer: coarse)').matches === true
-    ? ACCEPT_IMAGE_BASIC
-    : ACCEPT_ATTRIBUTE;
+  typeof window !== 'undefined' ? primaryAcceptAttribute() : ACCEPT_ATTRIBUTE;
 
 /**
  * A persisted recipe can outlive the profiles it names — a stock that existed
@@ -155,6 +154,9 @@ export function App() {
   const [renderWidth, setRenderWidth] = useState(PREVIEW_MAX_WIDTH);
   /** Bumped when a print LUT finishes loading; resolve reads the cache. */
   const [lutVersion, setLutVersion] = useState(0);
+  /** Reset is staged: the first click arms it, the second, within a beat, confirms. */
+  const [resetArmed, setResetArmed] = useState(false);
+  const resetTimer = useRef<number | null>(null);
 
   const sourceSpace: SourceSpace = source?.space ?? 'srgb';
 
@@ -338,6 +340,29 @@ export function App() {
   // beneath it for the life of the dialog.
   const openExport = useCallback(() => setExporting(true), []);
 
+  // Reset destroys the whole grade in one mutation, and the no-undo stance
+  // means nothing brings it back — so the destruction is staged. The first
+  // click arms the button for three seconds; a second click confirms, and
+  // otherwise the button disarms itself. No history stack, no modal: the
+  // mis-click that would have cost a session now costs one extra click.
+  useEffect(
+    () => () => {
+      if (resetTimer.current !== null) window.clearTimeout(resetTimer.current);
+    },
+    [],
+  );
+  const armReset = useCallback(() => {
+    setResetArmed(true);
+    if (resetTimer.current !== null) window.clearTimeout(resetTimer.current);
+    resetTimer.current = window.setTimeout(() => setResetArmed(false), 3000);
+  }, []);
+  const doReset = useCallback(() => {
+    if (resetTimer.current !== null) window.clearTimeout(resetTimer.current);
+    resetTimer.current = null;
+    setResetArmed(false);
+    setRecipe(defaultRecipe());
+  }, []);
+
   if (glError) {
     return (
       <main className="fatal">
@@ -381,11 +406,11 @@ export function App() {
           </button>
           <button
             type="button"
-            className="btn btn--ghost"
-            onClick={() => setRecipe(defaultRecipe())}
+            className={`btn btn--ghost${resetArmed ? ' btn--armed' : ''}`}
+            onClick={resetArmed ? doReset : armReset}
             disabled={!source}
           >
-            Reset
+            {resetArmed ? 'Confirm reset' : 'Reset'}
           </button>
           <button
             type="button"
@@ -430,10 +455,26 @@ export function App() {
                 plot — a plain flex child on every viewport, no
                 display:contents flattening, which older iOS WebKit renders
                 as nothing (the bug that hid the whole bench on phones). */}
-            <div className="rail-tabs" role="tablist" aria-label="Bench">
+            <div
+              className="rail-tabs"
+              role="tablist"
+              aria-label="Bench"
+              onKeyDown={(e) => {
+                if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+                e.preventDefault();
+                const next = e.key === 'ArrowRight' ? 'film' : 'camera';
+                setRailTab(next);
+                e.currentTarget
+                  .querySelector<HTMLButtonElement>(`[data-tab="${next}"]`)
+                  ?.focus();
+              }}
+            >
               <button
                 type="button"
                 role="tab"
+                data-tab="camera"
+                id="bench-tab-camera"
+                aria-controls="bench-page"
                 aria-selected={railTab === 'camera'}
                 className={`rail-tab${railTab === 'camera' ? ' is-on' : ''}`}
                 onClick={() => setRailTab('camera')}
@@ -443,6 +484,9 @@ export function App() {
               <button
                 type="button"
                 role="tab"
+                data-tab="film"
+                id="bench-tab-film"
+                aria-controls="bench-page"
                 aria-selected={railTab === 'film'}
                 className={`rail-tab${railTab === 'film' ? ' is-on' : ''}`}
                 onClick={() => setRailTab('film')}

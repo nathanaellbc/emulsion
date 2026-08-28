@@ -51,10 +51,12 @@
   --rule-strong: rgba(255, 255, 255, 0.15);
   --sheen: rgba(255, 255, 255, 0.11);
 
-  /* Type. Cool-neutral to match the ground. */
+  /* Type. Cool-neutral to match the ground. --ink-faint is the annotation
+     voice — hints, metas, ticks — and it is text, not texture: at hint sizes
+     it must still clear 4.5:1 on the slab, which #606069 never did. */
   --ink: #f2f2f5;
   --ink-muted: #9a9aa4;
-  --ink-faint: #606069;
+  --ink-faint: #8a8a94;
 
   /* The accent is silver — the palette's one active light is neutral, which is
      what keeps the chrome monochrome over the red/blue ambience. It is *light*
@@ -96,11 +98,10 @@
   --radius-lg: 20px;
   --radius-pill: 999px;
 
-  /* saturate() above 1 is deliberate here: the ambience behind the glass is
-     the point — red and blue glows drifting behind panels and arriving
-     colour-true in their blur. The old desaturation guard existed to keep the
-     print's cast out of the chrome; the print itself sits on the opaque
-     viewport, so chrome beside it never sees its colour. */
+  /* saturate() below 1 is deliberate, and milder than the deviation log
+     records: the ambience keeps its hue at the page edges, where nothing is
+     being judged, while the blur applies a slight desaturation guard so the
+     wash drifts toward the chrome only as light, never as dye. */
   --blur: blur(26px) saturate(0.85);
   --blur-light: blur(16px) saturate(0.85);
 

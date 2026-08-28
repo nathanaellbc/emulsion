@@ -224,7 +224,8 @@ void main() {
     vec3 lin = uOutMatrix * texture(uScene, vUv).rgb;
     fragColor = vec4(oetf3(clamp(lin, 0.0, 1.0)), 1.0);
   }
-  // A one-pixel seam so the boundary is legible against any image.
-  if (abs(vUv.x - uSplit) < uAspectPx) fragColor = vec4(0.88, 0.55, 0.24, 1.0);
+  // A one-pixel seam in the accent's silver, so the boundary is legible
+  // against any image and belongs to the chrome, not to the film.
+  if (abs(vUv.x - uSplit) < uAspectPx) fragColor = vec4(0.914, 0.914, 0.933, 1.0);
 }
 `;

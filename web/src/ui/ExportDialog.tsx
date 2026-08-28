@@ -109,6 +109,16 @@ export function ExportDialog({
   const [encoding, setEncoding] = useState(true);
   /** A failure the user must see *here*, not behind the backdrop. */
   const [failure, setFailure] = useState<string | null>(null);
+  /** One confirmation beat between the save landing and the bench closing. */
+  const [saved, setSaved] = useState(false);
+  const savedTimer = useRef<number | null>(null);
+
+  useEffect(
+    () => () => {
+      if (savedTimer.current !== null) window.clearTimeout(savedTimer.current);
+    },
+    [],
+  );
 
   // The share sheet is the phone's route to the photo library. A desktop
   // browser's own share target is not what "save to photos" means there, so
@@ -137,7 +147,13 @@ export function ExportDialog({
   const detents = useMemo(() => {
     const cap = Math.min(renderer.maxTextureSize, renderer.maxExportLongEdge);
     const sourceLong = Math.max(sourceW, sourceH);
-    const out: { longEdge: number | null; label: string; width: number; height: number }[] = [];
+    const out: {
+      longEdge: number | null;
+      label: string;
+      width: number;
+      height: number;
+      note?: string;
+    }[] = [];
     for (const d of WIDTH_DETENTS) {
       if (d >= sourceLong || d > cap) continue;
       const width = Math.round((sourceW * d) / sourceLong);
@@ -151,9 +167,12 @@ export function ExportDialog({
     const capped = s < sourceLong;
     out.push({
       longEdge: null,
-      label: capped ? `Capped · ${s}` : 'Source',
+      label: capped ? `Max · ${s}` : 'Source',
       width,
       height,
+      note: capped
+        ? `the largest long edge this GPU renders — the file's own ${sourceLong} px is beyond it`
+        : undefined,
     });
     return out;
   }, [renderer, sourceW, sourceH]);
@@ -186,13 +205,39 @@ export function ExportDialog({
     };
   }, []);
 
-  // --- focus, keyboard, focus return ---
+  // --- focus, keyboard, focus return ----------------------------------------
+  //
+  // A modal bench holds the tab: without a trap, Tab walks out of the dialog
+  // into the disabled-but-present top bar behind the backdrop, and focus is
+  // lost somewhere the user cannot see. Escape cancels; focus returns to
+  // whatever opened the bench.
   useEffect(() => {
     const el = dialogRef.current;
     const restore = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     el?.focus();
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape') {
+        onClose();
+        return;
+      }
+      if (e.key !== 'Tab' || !el) return;
+      const focusables = Array.from(
+        el.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), input:not([disabled]), select:not([disabled]), [href], [tabindex]:not([tabindex="-1"])',
+        ),
+      );
+      if (focusables.length === 0) return;
+      const first = focusables[0]!;
+      const last = focusables[focusables.length - 1]!;
+      const active = document.activeElement;
+      const inside = active instanceof HTMLElement && el.contains(active);
+      if (e.shiftKey && (active === first || !inside)) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && (active === last || !inside)) {
+        e.preventDefault();
+        first.focus();
+      }
     };
     window.addEventListener('keydown', onKey);
     return () => {
@@ -337,10 +382,31 @@ export function ExportDialog({
     if (!blob || !format) return;
     try {
       saveViaDownload(blob, fileName);
-      onClose();
+      // The browser's download chrome is not the app's last word: the bench
+      // stays a beat, names the save, then closes itself.
+      setSaved(true);
+      if (savedTimer.current !== null) window.clearTimeout(savedTimer.current);
+      savedTimer.current = window.setTimeout(onClose, 1000);
     } catch (err) {
       setFailure(err instanceof Error ? err.message : String(err));
     }
+  };
+
+  // The detent row is a radiogroup: one tab stop, arrows walk it.
+  const detentsRef = useRef<HTMLDivElement>(null);
+  const onDetentKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+    const group = detentsRef.current;
+    if (!group) return;
+    const radios = Array.from(group.querySelectorAll<HTMLButtonElement>('[role="radio"]'));
+    if (radios.length < 2) return;
+    const current = radios.findIndex((b) => b.getAttribute('aria-checked') === 'true');
+    const step = e.key === 'ArrowRight' ? 1 : -1;
+    const next = radios[(current + step + radios.length) % radios.length]!;
+    e.preventDefault();
+    next.focus();
+    const d = detents[Number(next.dataset.index)];
+    if (d) setPrefs((p) => ({ ...p, longEdge: d.longEdge }));
   };
 
   const saveDisabled = !blob || rendering;
@@ -397,18 +463,30 @@ export function ExportDialog({
             <div className="control__row">
               <span className="control__label">Long edge</span>
             </div>
-            <div className="export__detents" role="radiogroup" aria-label="Long edge">
-              {detents.map((d) => (
+            <div
+              className="export__detents"
+              role="radiogroup"
+              aria-label="Long edge"
+              ref={detentsRef}
+              onKeyDown={onDetentKeyDown}
+            >
+              {detents.map((d, i) => (
                 <button
                   key={d.label}
                   type="button"
                   role="radio"
+                  data-index={i}
                   aria-checked={selected.longEdge === d.longEdge}
                   className={`export__opt${selected.longEdge === d.longEdge ? ' is-on' : ''}`}
-                  title={`${d.width} × ${d.height} px`}
+                  title={
+                    d.note
+                      ? `${d.width} × ${d.height} px — ${d.note}`
+                      : `${d.width} × ${d.height} px`
+                  }
                   onClick={() => setPrefs((p) => ({ ...p, longEdge: d.longEdge }))}
                 >
                   {d.label === 'Source' ? `Source · ${Math.max(sourceW, sourceH)}` : d.label}
+                  <span className="sr-only">{` — ${d.width} × ${d.height} px`}</span>
                 </button>
               ))}
             </div>
@@ -433,7 +511,7 @@ export function ExportDialog({
           {shareable ? (
             <>
               <button type="button" className="btn" onClick={doDownload} disabled={saveDisabled}>
-                Download
+                {saved ? 'Saved' : 'Download'}
               </button>
               <button
                 type="button"
@@ -451,7 +529,13 @@ export function ExportDialog({
               onClick={doDownload}
               disabled={saveDisabled}
             >
-              {saveDisabled ? 'Preparing…' : sizeLabel ? `Download · ${sizeLabel}` : 'Download'}
+              {saved
+                ? 'Saved'
+                : saveDisabled
+                  ? 'Preparing…'
+                  : sizeLabel
+                    ? `Download · ${sizeLabel}`
+                    : 'Download'}
             </button>
           )}
         </footer>

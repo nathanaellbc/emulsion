@@ -73,14 +73,16 @@ body,
   pointer-events: none;
 }
 
-/* A drag anywhere lights the safelight around the whole window. */
+/* A drag anywhere lights the safelight around the whole window. The glow is
+   the accent's own light, not the ambience's hue — the ring is chrome state,
+   not room mood. */
 .shell.is-dragging::after {
   content: '';
   position: fixed;
   inset: 0;
   border: 2px solid var(--accent);
   border-radius: var(--radius-lg);
-  box-shadow: inset 0 0 90px rgba(232, 151, 74, 0.16);
+  box-shadow: inset 0 0 90px rgba(255, 255, 255, 0.1);
   pointer-events: none;
   z-index: 50;
 }
@@ -169,8 +171,23 @@ body,
 }
 
 .btn:disabled {
-  opacity: 0.3;
+  opacity: 0.45;
   cursor: not-allowed;
+}
+
+/* Reset armed: the destructive confirm borrows the warn lamp's language —
+   the same red, the same wash — so the second click reads as a decision,
+   not as the button changing its mind. */
+.btn--armed {
+  color: #f5c0b0;
+  border-color: rgba(224, 90, 63, 0.45);
+  background: var(--warn-wash);
+}
+
+.btn--armed:hover:not(:disabled) {
+  background: rgba(224, 90, 63, 0.2);
+  border-color: rgba(224, 90, 63, 0.6);
+  box-shadow: var(--shadow-raised);
 }
 
 .btn--primary {
@@ -403,7 +420,7 @@ body,
   padding: var(--s2) var(--s3);
   padding-bottom: max(var(--s2), env(safe-area-inset-bottom));
   border-top: 1px solid var(--rule);
-  background: rgba(13, 13, 17, 0.5);
+  background: rgba(13, 13, 17, 0.82);
   -webkit-backdrop-filter: var(--blur-light);
   backdrop-filter: var(--blur-light);
   font-size: 11px;
@@ -509,14 +526,16 @@ body,
   /* One floating slab, the way the reference workspace reads: the bench is a
      single lit panel set off the ground — a diagonal sheen from the top-left,
      a hairline that catches light along the same edge, a deep cast beneath —
-     and the sections inside are separated by whispers, not by cards of their
-     own. */
+   and the sections inside are separated by whispers, not by cards of their
+   own. The slab is held near-opaque on purpose: it is the neutrality
+   reference, so the drifting wash may light its edges but must not tint the
+   surface a grade is judged against. */
   margin: var(--s3) var(--s3) var(--s3) 0;
   border: 1px solid var(--rule-strong);
   border-radius: var(--radius-lg);
   background:
     linear-gradient(var(--panel-sheen), var(--panel-sheen)),
-    rgba(12, 12, 16, 0.78);
+    rgba(12, 12, 16, 0.86);
   -webkit-backdrop-filter: var(--blur);
   backdrop-filter: var(--blur);
   box-shadow: var(--shadow-card);
@@ -540,13 +559,30 @@ body,
   border: 1px solid var(--rule);
   border-radius: var(--radius-pill);
   background: linear-gradient(var(--glass-sunken), var(--glass-sunken)),
-    rgba(10, 10, 14, 0.82);
+    rgba(10, 10, 14, 0.97);
   -webkit-backdrop-filter: var(--blur);
   backdrop-filter: var(--blur);
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
   position: sticky;
   top: var(--s3);
   z-index: 4;
+}
+
+/* The strip's backing plate: it pins 12px below the scrollport's top edge,
+   and that 12px slot would otherwise show sections scrolling past behind the
+   strip. The plate is part of the strip — same layers, no pointer — so the
+   strip reads as one instrument with a lip, not as a pill floating in a
+   slot of moving text. */
+.rail-tabs::before {
+  content: '';
+  position: absolute;
+  top: calc(-1 * var(--s3));
+  left: calc(-1 * var(--s3));
+  right: calc(-1 * var(--s3));
+  height: calc(var(--s3) + 2px);
+  background: linear-gradient(var(--glass-sunken), var(--glass-sunken)),
+    rgba(10, 10, 14, 0.97);
+  pointer-events: none;
 }
 
 .rail-tab {
@@ -593,13 +629,20 @@ body,
   border: 1px solid var(--rule);
   border-radius: var(--radius);
   /* A sunken instrument set into the slab: dark, barely bordered, no shadow
-     of its own — the light is the slab's. */
+     of its own — the light is the slab's. The backing is near-opaque because
+     the plot is sticky: sections scroll beneath it while it is read, and an
+     instrument that shows last week's controls through its face is broken,
+     not translucent. */
   background:
     linear-gradient(var(--glass-sunken), var(--glass-sunken)),
-    rgba(8, 8, 11, 0.6);
+    rgba(8, 8, 11, 0.94);
   position: sticky;
-  /* Pins just below the tab strip, which pins at --s3 and stands ~36px. */
-  top: calc(var(--s3) * 2 + 36px);
+  /* Pins tucked a few pixels *under* the tab strip (which stands ~42px and
+     pins at --s3): a flush pin would open a hairline gutter whenever the
+     strip's height renders a pixel differently, and any gap re-opens the
+     scrolling-text slot this backing exists to close. The strip out-ranks
+     the plot, so the tuck is invisible. */
+  top: calc(var(--s3) + 38px);
   z-index: 2;
 }
 
@@ -622,12 +665,12 @@ body,
 
 .plot__tick {
   fill: var(--ink-faint);
-  font-size: 8px;
+  font-size: 11px;
 }
 
 .plot__axis {
   fill: var(--ink-faint);
-  font-size: 8px;
+  font-size: 10.5px;
   letter-spacing: 0.04em;
 }
 
@@ -859,7 +902,7 @@ body,
 .control__hint--action {
   padding: 9px 11px;
   background: var(--accent-wash);
-  border: 1px solid rgba(232, 151, 74, 0.18);
+  border: 1px solid var(--rule-strong);
   border-radius: var(--radius);
   color: var(--ink-muted);
 }
@@ -1689,16 +1732,18 @@ body,
 
   .rail {
     /* The bench becomes a sheet below the picture: full-bleed, squared to the
-       screen's bottom, still the lit slab — and translucent enough that the
-       drifting red/blue ambience reads through it, which is the point of
-       glass on a phone. */
+       screen's bottom, still the lit slab — but held near-opaque on a phone,
+       where the sheet covers the whole width and sits a thumb's length from
+       the glows. The bench is the surface a grade is judged from; the wash
+       may warm its top edge, it may not soak the page. The room's light still
+       shows in the empty state, which is where decoration belongs. */
     margin: 0;
     border: 0;
     border-top: 1px solid var(--rule);
     border-radius: var(--radius-lg) var(--radius-lg) 0 0;
     background:
       linear-gradient(var(--panel-sheen), var(--panel-sheen)),
-      rgba(12, 12, 16, 0.72);
+      rgba(12, 12, 16, 0.97);
     overflow-y: visible;
   }
 
@@ -1710,6 +1755,12 @@ body,
   .rail-tabs {
     position: static;
     margin: var(--s3);
+  }
+
+  /* The strip no longer pins on the stacked phone, so its backing plate
+     would position against the shell — remove it with the pin. */
+  .rail-tabs::before {
+    content: none;
   }
 
   .plot {
@@ -1943,6 +1994,20 @@ body,
   overflow: hidden;
   pointer-events: none;
   z-index: 0;
+  /* The lights go down when a print is on the table — a darkroom dims the
+     room to judge the paper. */
+  transition: opacity 700ms var(--ease);
+}
+
+/* On a phone the bench sits full-bleed inside the glow field, closer than any
+   desktop slab ever gets to it; loaded, the room dims so the wash reads as
+   depth at the screen's edges instead of as dye over the reading surface.
+   The empty state keeps the room at full strength — it is the one place the
+   light is the subject. */
+@media (max-width: 900px) {
+  .shell:not(.is-empty) .ambience {
+    opacity: 0.5;
+  }
 }
 
 .ambience i {

@@ -254,13 +254,34 @@ export function SegmentedControl<T extends string>({
   onChange: (v: T) => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+
+  // A radiogroup is one tab stop whose options the arrows walk — the plain
+  // tab stops browsers give a row of buttons make four modes four stops.
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+    const group = ref.current;
+    if (!group) return;
+    const radios = Array.from(group.querySelectorAll<HTMLButtonElement>('[role="radio"]')).filter(
+      (b) => !b.closest('.is-disabled'),
+    );
+    if (radios.length < 2) return;
+    const current = radios.findIndex((b) => b.getAttribute('aria-checked') === 'true');
+    const step = e.key === 'ArrowRight' ? 1 : -1;
+    const next = radios[(current + step + radios.length) % radios.length]!;
+    e.preventDefault();
+    next.focus();
+    const v = next.dataset.value;
+    if (v) onChange(v as T);
+  };
+
   return (
-    <div className="segmented" role="radiogroup" aria-label={label} ref={ref}>
+    <div className="segmented" role="radiogroup" aria-label={label} ref={ref} onKeyDown={onKeyDown}>
       {options.map((o) => (
         <button
           key={o.value}
           type="button"
           role="radio"
+          data-value={o.value}
           aria-checked={value === o.value}
           title={o.title}
           className={value === o.value ? 'is-on' : undefined}

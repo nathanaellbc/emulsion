@@ -44,6 +44,25 @@ export const ACCEPT_IMAGE_BASIC = 'image/*';
 /** RAW-only filter for the dedicated RAW chooser. */
 export const ACCEPT_RAW = RAW_EXTENSIONS.map((e) => `.${e}`).join(',');
 
+/**
+ * The filter for the *primary* picker, wherever it appears. A fine pointer
+ * gets the full list, so a RAW file is one click. A coarse pointer gets the
+ * full list too — an image/*-only picker is what greys a .dng out of the
+ * Android chooser, the product's headline input refused at its own front
+ * door — except on Apple, whose picker drops its native "Take Photo" entry
+ * the moment extensions join image/*. Apple keeps the basic filter and
+ * reaches RAW through the dedicated chooser.
+ */
+export function primaryAcceptAttribute(): string {
+  const coarse = window.matchMedia?.('(pointer: coarse)').matches === true;
+  if (!coarse) return ACCEPT_ATTRIBUTE;
+  const ua = navigator.userAgent;
+  const apple =
+    /iPad|iPhone|iPod/.test(ua) ||
+    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  return apple ? ACCEPT_IMAGE_BASIC : ACCEPT_ATTRIBUTE;
+}
+
 export interface DecodedSource {
   image: SourceImage;
   space: SourceSpace;

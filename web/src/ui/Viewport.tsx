@@ -1,7 +1,7 @@
 /**
  * The viewport. The photograph is the only bright object in the room, so the
  * chrome around it stays out of the way: controls fade in on hover, and the
- * comparison seam is a thin amber line rather than a widget.
+ * comparison seam is a thin silver line rather than a widget.
  *
  * The photograph carries its own zoom, because the interface never does: the
  * browser's pinch is refused page-wide, and the gesture is spent on the
