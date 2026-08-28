@@ -201,12 +201,17 @@ export function ExportDialog({
   const selected =
     detents.find((d) => d.longEdge === prefs.longEdge) ?? detents[detents.length - 1]!;
 
-  // renderAtResolution caps by width, so a portrait export at long edge L asks
-  // for the width that produces a height of L.
-  const widthCap =
-    selected.longEdge === null || sourceW >= sourceH
-      ? Math.min(selected.longEdge ?? sourceW, sourceW)
-      : Math.min(Math.round((selected.longEdge! * sourceW) / sourceH), sourceW);
+  // The export renders at the selected detent's own width — that number
+  // already carries the GPU memory cap (the "Max · N" detent is the largest
+  // long edge this device survives), and renderAtResolution derives height
+  // from the source's aspect, so it reproduces exactly the advertised
+  // dimensions. Reconstructing the width from `longEdge` instead is the bug
+  // that force-closed the app on iPhones: for the capped detent `longEdge`
+  // is null, `?? sourceW` read that as the source's own width, and opening
+  // the bench allocated the FULL-resolution float graph — ~700 MB on a 12 MP
+  // photograph — behind a label that said "Max · 1414". iOS kills the page
+  // for that; the label must never promise less than the render asks for.
+  const widthCap = selected.width;
 
   const format = useMemo(() => {
     if (!formats) return null;
