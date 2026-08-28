@@ -137,6 +137,36 @@ file that already exists.
 The last-used format, quality and size persist alongside the recipe, and the
 filename keeps the `name — stock on print` convention.
 
+## Offline
+
+The built app is a fully offline installable web app. Add to Home Screen on
+iOS (or install from the browser on Android/desktop), and it runs with the
+network gone: RAW decode, the film chain, the print stocks, grain and halation
+all execute on the device. No file ever leaves the machine even when online —
+the origin serves static assets and nothing else.
+
+Three pieces carry it:
+
+- **`service-worker.js`** — a template the build turns into `dist/sw.js`
+  (plugin in `vite.config.ts`), precaching every file the build emitted:
+  shell, hashed chunks, the LibRaw wasm and its worker, all print-stock LUTs,
+  icons. Navigations go network-first so updates arrive; every other asset is
+  cache-first, because a content-hashed URL is its own version. `Vary` is
+  ignored on matches: the static server stamps `Vary: Origin` on assets, and
+  Chromium honours it inside the Cache API, which would empty the cache
+  exactly when the network does. Caches are whole-generation: a new build
+  installs under a new name and activation deletes every older one.
+- **`public/manifest.webmanifest`** plus the `apple-*` meta tags in
+  `index.html` — standalone display, home-screen icons, dark status bar.
+- **localStorage** — the recipe and the export preferences already persist
+  there, which survives offline and across launches.
+
+Registration is production-only (`src/main.tsx`); the dev server serves
+nothing to cache. `node scripts/verify-offline.mjs` proves it end to end:
+it installs the worker against a preview server, *closes the server*, and
+then reloads the shell, fetches a LUT and decodes `raw.dng` through LibRaw
+with nothing listening.
+
 ## Findings against the design document
 
 Implementation is the first real test of a design document. Seven places where

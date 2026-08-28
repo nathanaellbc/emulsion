@@ -34,6 +34,22 @@ window.visualViewport?.addEventListener('resize', publishAppHeight);
 document.addEventListener('visibilitychange', publishAppHeight);
 window.addEventListener('pageshow', publishAppHeight);
 
+/**
+ * Install the offline service worker. Production only: the dev server does not
+ * serve a generated sw.js, and an unhandled registration failure must never
+ * take the app down — offline is an enhancement of an already-working page.
+ * The worker precaches the entire build (shell, chunks, wasm, LUTs, icons), so
+ * once installed the app runs with the network gone; recipes and preferences
+ * live in localStorage and persist across launches regardless.
+ */
+if (import.meta.env.PROD && 'serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch((err: unknown) => {
+      console.warn('service worker registration failed; the app needs the network', err);
+    });
+  });
+}
+
 const root = document.getElementById('root');
 if (!root) throw new Error('#root is missing from the document');
 
