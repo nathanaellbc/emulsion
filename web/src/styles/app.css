@@ -160,8 +160,15 @@ body,
   color: var(--ink);
   cursor: pointer;
   transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease),
-    color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+    color var(--dur) var(--ease), box-shadow var(--dur) var(--ease),
+    transform 100ms ease-out;
   white-space: nowrap;
+}
+
+/* Feedback lands on the press, not the release: the pill answers the
+   pointer the instant it goes down. */
+.btn:active:not(:disabled) {
+  transform: scale(0.97);
 }
 
 .btn:hover:not(:disabled) {
@@ -224,6 +231,10 @@ body,
   color: var(--ink);
   background: var(--glass-hover);
   border-color: var(--rule-strong);
+}
+
+.chip:active {
+  transform: scale(0.97);
 }
 
 .chip.is-on {
@@ -350,6 +361,11 @@ body,
   box-shadow: var(--shadow-raised);
   color: var(--ink);
   cursor: pointer;
+  transition: transform var(--dur) var(--ease);
+}
+
+.viewport__zoom-badge:active {
+  transform: scale(0.95);
 }
 
 .viewport__canvas {
@@ -387,6 +403,12 @@ body,
   border-radius: var(--radius-pill);
   background: #fff;
   box-shadow: var(--shadow-puck);
+  transition: transform var(--dur) var(--ease);
+}
+
+/* The seam answers the grab: the puck swells the instant it is taken. */
+.viewport__handle:active span {
+  transform: scale(1.3);
 }
 
 .viewport__tag {
@@ -506,6 +528,10 @@ body,
   background: var(--glass-hover);
 }
 
+.segmented button:active {
+  transform: scale(0.97);
+}
+
 .segmented button.is-on {
   color: var(--ink);
   background: var(--glass-raised);
@@ -605,6 +631,10 @@ body,
 .rail-tab:hover {
   color: var(--ink);
   background: var(--glass-hover);
+}
+
+.rail-tab:active {
+  background: var(--glass-raised);
 }
 
 .rail-tab.is-on {
@@ -1490,6 +1520,40 @@ body,
   -webkit-backdrop-filter: blur(6px) saturate(0.55);
   backdrop-filter: blur(6px) saturate(0.55);
   padding: var(--s4);
+  animation: export-backdrop-in 200ms ease-out;
+}
+
+/* Arrival and departure use the same path: the room dims while the slab
+   rises the short distance it came from and settles — a surface material-
+   izing, not a rectangle appearing. Closing reverses exactly this. */
+@keyframes export-backdrop-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes export-in {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.985);
+  }
+}
+
+@keyframes export-out {
+  to {
+    opacity: 0;
+    transform: translateY(10px) scale(0.985);
+  }
+}
+
+@keyframes export-backdrop-out {
+  to {
+    opacity: 0;
+  }
+}
+
+.export__backdrop.is-closing {
+  animation: export-backdrop-out 180ms ease-in forwards;
 }
 
 /* The dialog is the most raised object in the interface, so it takes the
@@ -1508,6 +1572,18 @@ body,
   border-radius: var(--radius-lg);
   box-shadow: inset 0 1px 0 var(--sheen), 0 30px 90px rgba(0, 0, 0, 0.7);
   position: relative;
+  animation: export-in 240ms var(--ease);
+}
+
+.export.is-closing {
+  animation: export-out 180ms ease-in forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .export__backdrop,
+  .export {
+    animation-duration: 1ms;
+  }
 }
 
 .export__head {
@@ -1573,6 +1649,10 @@ body,
 .export__opt:hover {
   color: var(--ink);
   background: var(--glass-hover);
+}
+
+.export__opt:active {
+  transform: scale(0.97);
 }
 
 .export__opt.is-on {
@@ -2098,5 +2178,64 @@ body,
 @media (prefers-reduced-motion: reduce) {
   .ambience i {
     animation: none;
+  }
+}
+
+/* ============================================================================
+   Reduced transparency
+   ========================================================================= */
+
+/* The few surfaces that carry literal translucent colours rather than the
+   tokens frost solid here, so a reader who asked for less transparency never
+   sees the room's light swimming under the chrome they are reading. */
+
+@media (prefers-reduced-transparency: reduce) {
+  .rail {
+    background: linear-gradient(var(--panel-sheen), var(--panel-sheen)), #101014;
+  }
+
+  .rail-tabs,
+  .rail-tabs::before {
+    background: #0c0c10;
+  }
+
+  .plot {
+    background: linear-gradient(var(--glass-sunken), var(--glass-sunken)), #0a0a0d;
+  }
+
+  .viewport__zoom-badge,
+  .viewport__tag,
+  .busy {
+    background: #141418;
+  }
+
+  .viewport__foot {
+    background: #101014;
+  }
+
+  .export {
+    background: #17171d;
+  }
+
+  .export__head,
+  .export__actions {
+    background: #17171d;
+  }
+
+  .export__backdrop {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    background: rgba(5, 5, 7, 0.82);
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) and (max-width: 900px) {
+  .viewport__bar,
+  .viewport__foot {
+    background: #101014;
+  }
+
+  .rail {
+    background: linear-gradient(var(--panel-sheen), var(--panel-sheen)), #101014;
   }
 }

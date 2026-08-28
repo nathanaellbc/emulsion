@@ -91,6 +91,27 @@ function clamped(z: Zoom, w: number, h: number): Zoom {
   };
 }
 
+/** Progressive resistance past the bounds: real things slow before they stop.
+    A hard clamp mid-gesture reads as frozen; this reads as "nothing more
+    here" while staying glued to the finger. */
+function rubberband(overshoot: number, dimension: number, constant = 0.55): number {
+  return (overshoot * dimension * constant) / (dimension + constant * Math.abs(overshoot));
+}
+
+/** Drag tracking with soft edges: 1:1 inside the bounds, progressively
+    resistant past them. Release is still settled by `clamped`. */
+function resistance(z: Zoom, w: number, h: number): Zoom {
+  const mx = ((z.scale - 1) * w) / 2;
+  const my = ((z.scale - 1) * h) / 2;
+  const axis = (v: number, m: number, dim: number) => {
+    if (m <= 0) return 0;
+    if (v > m) return m + rubberband(v - m, dim);
+    if (v < -m) return -m + rubberband(v + m, dim);
+    return v;
+  };
+  return { scale: z.scale, x: axis(z.x, mx, w), y: axis(z.y, my, h) };
+}
+
 export function Viewport({
   canvasRef,
   mode,
@@ -191,7 +212,18 @@ export function Viewport({
         y0: e.clientY,
         t0: performance.now(),
       });
-      if (animTimer.current !== null) commit(zoomRef.current, false);
+      // An interrupting gesture starts from the *presentation* value: a
+      // running settle animation's live on-screen transform, not the target
+      // it was heading for — grabbing mid-flight must never jump.
+      if (animTimer.current !== null) {
+        const t = layerRef.current ? getComputedStyle(layerRef.current).transform : 'none';
+        if (t !== 'none') {
+          const m = new DOMMatrixReadOnly(t);
+          commit({ scale: m.a, x: m.e, y: m.f }, false);
+        } else {
+          commit(zoomRef.current, false);
+        }
+      }
       if (pointers.current.size === 2) {
         // Second finger down: the pan becomes a pinch, anchored where the
         // fingers sit now.
@@ -234,11 +266,11 @@ export function Viewport({
         const g = pinch.current;
         const dist = Math.hypot(a.x - b.x, a.y - b.y) || 1;
         const scale = Math.min(ZOOM_MAX, Math.max(1, (g.origin.scale * dist) / g.dist));
-        commit(clamped(zoomedAround(g.mid, g.centre, g.origin, scale), w, h));
+        commit(resistance(zoomedAround(g.mid, g.centre, g.origin, scale), w, h));
       } else if (pan.current && pan.current.id === e.pointerId) {
         const g = pan.current;
         commit(
-          clamped(
+          resistance(
             {
               scale: g.origin.scale,
               x: g.origin.x + (p.x - g.down.x),
@@ -256,6 +288,15 @@ export function Viewport({
       pointers.current.delete(e.pointerId);
       if (pinch.current && pointers.current.size < 2) pinch.current = null;
       if (pan.current && pan.current.id === e.pointerId) pan.current = null;
+      // The gesture's end settles the rubber band: wherever the finger
+      // released past the bounds, the picture glides the rest of the way
+      // home instead of hanging over the edge.
+      if (p && !pinch.current && !pan.current) {
+        const { w, h } = frameGeometry();
+        const z = zoomRef.current;
+        const c = clamped(z, w, h);
+        if (c.x !== z.x || c.y !== z.y) commit(c, true);
+      }
       if (!p || e.type !== 'pointerup' || pointers.current.size > 0) return;
       // A quick, still release is a tap. Two taps, near each other, are a
       // double-tap: in to 2.5x around the tap, or back out to the full print.

@@ -112,10 +112,29 @@ export function ExportDialog({
   /** One confirmation beat between the save landing and the bench closing. */
   const [saved, setSaved] = useState(false);
   const savedTimer = useRef<number | null>(null);
+  /** Closing plays the exit, then unmounts — the same path in reverse. */
+  const [closing, setClosing] = useState(false);
+  const closeTimer = useRef<number | null>(null);
+
+  const reducedMotion = useRef(
+    typeof window !== 'undefined' &&
+      window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true,
+  );
+
+  const requestClose = useCallback(() => {
+    if (closeTimer.current !== null) return;
+    if (reducedMotion.current) {
+      onClose();
+      return;
+    }
+    setClosing(true);
+    closeTimer.current = window.setTimeout(onClose, 190);
+  }, [onClose]);
 
   useEffect(
     () => () => {
       if (savedTimer.current !== null) window.clearTimeout(savedTimer.current);
+      if (closeTimer.current !== null) window.clearTimeout(closeTimer.current);
     },
     [],
   );
@@ -217,7 +236,7 @@ export function ExportDialog({
     el?.focus();
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        onClose();
+        requestClose();
         return;
       }
       if (e.key !== 'Tab' || !el) return;
@@ -244,7 +263,7 @@ export function ExportDialog({
       window.removeEventListener('keydown', onKey);
       restore?.focus();
     };
-  }, [onClose]);
+  }, [requestClose]);
 
   // --- persistence ---
   useEffect(() => {
@@ -370,7 +389,7 @@ export function ExportDialog({
     void outcome.then(
       (r) => {
         // A dismissed sheet is the user changing their mind, not a failure.
-        if (r === 'cancelled' || r === 'shared') onClose();
+        if (r === 'cancelled' || r === 'shared') requestClose();
       },
       (err: unknown) => {
         setFailure(err instanceof Error ? err.message : String(err));
@@ -386,7 +405,7 @@ export function ExportDialog({
       // stays a beat, names the save, then closes itself.
       setSaved(true);
       if (savedTimer.current !== null) window.clearTimeout(savedTimer.current);
-      savedTimer.current = window.setTimeout(onClose, 1000);
+      savedTimer.current = window.setTimeout(requestClose, 1000);
     } catch (err) {
       setFailure(err instanceof Error ? err.message : String(err));
     }
@@ -413,10 +432,13 @@ export function ExportDialog({
   const sizeLabel = rendering ? 'rendering…' : encoding ? 'measuring…' : blob ? formatBytes(blob.size) : '';
 
   return (
-    <div className="export__backdrop" onClick={onClose}>
+    <div
+      className={`export__backdrop${closing ? ' is-closing' : ''}`}
+      onClick={requestClose}
+    >
       <div
         ref={dialogRef}
-        className="export"
+        className={`export${closing ? ' is-closing' : ''}`}
         role="dialog"
         aria-modal="true"
         aria-labelledby="export-title"
@@ -505,7 +527,7 @@ export function ExportDialog({
         </div>
 
         <footer className="export__actions">
-          <button type="button" className="btn" onClick={onClose}>
+          <button type="button" className="btn" onClick={requestClose}>
             Cancel
           </button>
           {shareable ? (

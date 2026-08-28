@@ -138,6 +138,29 @@
   }
 }
 
+/* The same frost for readers who have asked the system for less
+   transparency: the glass goes solid and the blur drops, keeping every
+   surface's value order intact. */
+@media (prefers-reduced-transparency: reduce) {
+  :root {
+    --glass: #16161c;
+    --glass-hover: #1d1d24;
+    --glass-raised: #26262f;
+    --glass-sunken: #050507;
+    --blur: none;
+    --blur-light: none;
+  }
+}
+
+/* Readers asking for more contrast get hairlines that are edges, not
+   whispers — the structure of the interface survives without the mood. */
+@media (prefers-contrast: more) {
+  :root {
+    --rule: rgba(255, 255, 255, 0.26);
+    --rule-strong: rgba(255, 255, 255, 0.42);
+  }
+}
+
 * {
   box-sizing: border-box;
 }
