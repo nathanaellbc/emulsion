@@ -14,7 +14,7 @@ The repository holds two artifacts of the same model:
 | | |
 |---|---|
 | **`main.tex` → `main.pdf`** | The design document — a 60-page IEEEtran software design specification: closed-form models for every stage, the render architecture, the persistence schema, verification methodology, and a 24-month engineering roadmap. |
-| **`web/`** | A browser implementation of that document. The whole chain runs on the GPU in the page (WebGL2); no file ever leaves the machine. |
+| **`web/`** | A browser implementation of that document. The whole chain runs on the GPU in the page (WebGL2); no file ever leaves the machine. Installed as a home-screen app it runs fully offline. |
 
 The print stage has two engines: the **calculated model** from the document,
 and — where a measurement exists — the **stock's own measured LUT** (Kodak
@@ -108,6 +108,29 @@ reports the **measured** file size, re-encoded as the slider settles; resolution
 is long-edge detents rendered again at their own pixel pitch — grain and
 halation are physical sizes, so a finer export carries finer stages. On a phone
 the primary action is **Save to Photos** via the system share sheet.
+
+### Offline
+
+The built app is a fully offline, installable web app. Add to Home Screen on
+iOS — or install from the browser on Android and desktop — and it runs with
+the network gone: RAW decode, the film chain, the print stocks, grain and
+halation all execute on the device. No file ever leaves the machine even when
+online; the origin serves static assets and nothing else.
+
+The build emits a service worker (`web/service-worker.js`, turned into
+`dist/sw.js` by the build) that precaches every asset it produced — the
+shell, the hashed chunks, the LibRaw wasm and its worker, and every
+print-stock LUT — so the whole laboratory is served from the cache, and the
+recipe and export preferences persist in localStorage. An update takes over
+on next launch, never mid-session, so a running page can never lose the
+assets it was built against.
+
+```bash
+cd web
+node scripts/verify-offline.mjs   # installs the worker, closes the origin
+                                  # server, then reloads, fetches a LUT and
+                                  # decodes a RAW from the cache alone
+```
 
 ### Verification
 
