@@ -10,7 +10,7 @@
  * already baked in before we ever saw it.
  */
 
-import type { SourceSpace } from '../core/resolve';
+import { sourceLuminance, type SourceSpace } from '../core/resolve';
 import type { SourceImage } from '../gl/renderer';
 
 export const RAW_EXTENSIONS = [
@@ -252,10 +252,13 @@ export async function measureMiddleGrey(source: DecodedSource): Promise<number> 
   const target = 220;
   const step = Math.max(1, Math.floor(Math.max(image.width, image.height) / target));
 
+  // Weighted in the file's own primaries: AP0 for a RAW decode, sRGB for the
+  // canvas the display-referred path reads back through.
+  const [wr, wg, wb] = sourceLuminance(source.space);
   let logSum = 0;
   let count = 0;
   const accumulate = (r: number, g: number, b: number) => {
-    const y = 0.2722 * r + 0.6741 * g + 0.0537 * b;
+    const y = wr * r + wg * g + wb * b;
     if (y > 1e-5) {
       logSum += Math.log(y);
       count++;
@@ -305,6 +308,7 @@ export const HISTOGRAM_MAX = 3;
  */
 export function sceneSamples(source: DecodedSource, target = 320): Float32Array | null {
   const { image } = source;
+  const [wr, wg, wb] = sourceLuminance(source.space);
   const step = Math.max(1, Math.floor(Math.max(image.width, image.height) / target));
 
   if (image.float) {
@@ -312,11 +316,7 @@ export function sceneSamples(source: DecodedSource, target = 320): Float32Array 
     for (let y = 0; y < image.height; y += step) {
       for (let x = 0; x < image.width; x += step) {
         const i = (y * image.width + x) * 4;
-        out.push(
-          0.2722 * image.float[i]! +
-            0.6741 * image.float[i + 1]! +
-            0.0537 * image.float[i + 2]!,
-        );
+        out.push(wr * image.float[i]! + wg * image.float[i + 1]! + wb * image.float[i + 2]!);
       }
     }
     return Float32Array.from(out);
@@ -335,10 +335,7 @@ export function sceneSamples(source: DecodedSource, target = 320): Float32Array 
     const eotf = (v: number) => (v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4));
     const out = new Float32Array(w * h);
     for (let i = 0, j = 0; i < data.length; i += 4, j++) {
-      out[j] =
-        0.2722 * eotf(data[i]! / 255) +
-        0.6741 * eotf(data[i + 1]! / 255) +
-        0.0537 * eotf(data[i + 2]! / 255);
+      out[j] = wr * eotf(data[i]! / 255) + wg * eotf(data[i + 1]! / 255) + wb * eotf(data[i + 2]! / 255);
     }
     return out;
   }

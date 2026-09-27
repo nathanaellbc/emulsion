@@ -12,6 +12,10 @@ await page.goto(url, { waitUntil: 'networkidle' });
 await page.setInputFiles('input[type=file]', 'public/test-chart.png');
 await page.waitForSelector('.rail', { timeout: 20000 });
 await page.waitForTimeout(900);
+// The Diffusion controls live on the Film page of the bench, not the Camera
+// page it opens on.
+await page.getByRole('tab', { name: 'Film', exact: true }).click();
+await page.waitForTimeout(300);
 
 const grab = () => page.evaluate(() => {
   const c = document.querySelector('canvas');

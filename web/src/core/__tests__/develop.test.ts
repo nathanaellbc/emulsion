@@ -25,7 +25,7 @@ import { resolve } from '../resolve';
 import { defaultRecipe } from '../recipe';
 import { lutOutputFor } from '../lut';
 import { evaluateLogExposure, sceneLogExposure } from '../chain';
-import type { Triple } from '../triple';
+import { matMulVec, type Triple } from '../triple';
 
 const IDENTITY = DEFAULT_CAMERA_DEVELOP;
 
@@ -251,6 +251,9 @@ describe('develop parity: the bake and the render', () => {
     recipe.camera.whites = -0.25;
     recipe.camera.blacks = 0.3;
     recipe.camera.saturation = 1.2;
+    // The model engine: `evaluateLogExposure` is the calculated chain, and the
+    // bake without a loaded table renders the model too.
+    recipe.printEngine = 'model';
     const p = resolve(recipe, { renderWidthPx: 2048, sourceSpace: 'srgb' });
 
     for (const y of [0.01, 0.18, 0.6, 2.5]) {
@@ -269,13 +272,15 @@ describe('develop parity: the bake and the render', () => {
       ];
       const bakeOut = lutOutputFor(cct, p);
 
-      // The bake emits display-encoded; undo it and compare in linear.
+      // The bake emits display-encoded, after the output matrix; undo the
+      // encode and carry the chain through the same matrix to compare.
+      const chainDisplay = matMulVec(p.outputMatrix, chainOut);
       for (let c = 0 as 0 | 1 | 2; c < 3; c++) {
         const decoded = bakeOut[c]! <= 0.0031308
           ? bakeOut[c]! * 12.92
           : Math.pow((bakeOut[c]! + 0.055) / 1.055, 2.4);
         const msg = `at y=${y}, channel ${c}`;
-        expect(chainOut[c], msg).toBeCloseTo(decoded, 4);
+        expect(Math.min(Math.max(chainDisplay[c], 0), 1), msg).toBeCloseTo(decoded, 4);
       }
     }
   });

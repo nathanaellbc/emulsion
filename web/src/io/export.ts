@@ -129,15 +129,29 @@ export function encodeImage(
   });
 }
 
-/** The same file name the anchor path has always used, for any extension. */
+/**
+ * A file name for the print, for any extension — in plain ASCII.
+ *
+ * Chromium drops an anchor's `download` name that carries characters such as
+ * an em dash or a middle dot and saves the file as bare "download", with no
+ * extension; the stem used to be joined with " — ". Accents are folded
+ * (é -> e), anything else outside a conservative set becomes a hyphen.
+ */
 export function exportFileName(
   sourceName: string,
   negativeName: string,
   printName: string,
   ext: string,
 ): string {
-  const stem = sourceName.replace(/\.[^.]+$/, '') || 'print';
-  return `${stem} — ${negativeName} on ${printName}.${ext}`;
+  const ascii = (v: string) =>
+    v
+      .normalize('NFKD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^A-Za-z0-9 ._()+-]+/g, '-')
+      .replace(/-{2,}/g, '-')
+      .replace(/^[\s.-]+|[\s.-]+$/g, '');
+  const stem = ascii(sourceName.replace(/\.[^.]+$/, '')) || 'print';
+  return `${stem} - ${ascii(negativeName)} on ${ascii(printName)}.${ext}`;
 }
 
 /** Can this browser hand an image file to the system share sheet? */
@@ -155,17 +169,25 @@ export function canShareImages(): boolean {
 
 /**
  * The desktop path: an anchor click, as every download in the app has been.
- * The object URL is revoked in the same tick the click is dispatched, which is
- * what the previous inline export did and works because the click resolves the
- * blob reference synchronously.
+ *
+ * The object URL outlives the click. The download itself is started
+ * asynchronously by the browser, and revoking the URL in the same tick races
+ * it: Chromium then starts the download without the anchor's `download`
+ * attribute and saves the file as plain "download", with no extension and no
+ * type. The anchor is attached for the click (Firefox ignores clicks on
+ * detached anchors) and the URL released a minute later.
  */
 export function saveViaDownload(blob: Blob, filename: string): void {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
   a.download = filename;
+  a.rel = 'noopener';
+  a.style.display = 'none';
+  document.body.appendChild(a);
   a.click();
-  URL.revokeObjectURL(url);
+  a.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
 
 /**

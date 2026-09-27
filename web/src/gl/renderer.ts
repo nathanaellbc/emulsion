@@ -8,15 +8,18 @@
  *                        recombine                   combine
  *
  * Every intermediate is float: the chain works in density, and density is not
- * an 8-bit quantity. The one 8-bit surface is the grain field, where a
- * unit-variance noise field quantised to 256 steps contributes about 0.0006
- * density of error — three orders below anything visible.
+ * an 8-bit quantity. The 8-bit surfaces are the unit-variance noise fields
+ * (the white field and the final grain field), where quantising to 256 steps
+ * contributes about 0.0006 density of error — three orders below anything
+ * visible. The blurred noise intermediates, whose variance is far below one,
+ * are float.
  */
 
-import { AP1_LUMINANCE, M_SRGB_TO_AP1 } from '../core/colorspace';
+import { AP1_LUMINANCE, M_AP1_TO_SRGB, M_SRGB_TO_AP1 } from '../core/colorspace';
 import { developIsIdentity } from '../core/develop';
 import type { CubeLut } from '../core/cube';
-import type { ResolvedParameters } from '../core/resolve';
+import type { ResolvedParameters, SourceSpace } from '../core/resolve';
+import { floatToHalf } from '../core/half';
 import { matToGL, triToGL } from '../core/triple';
 import {
   Program,
@@ -126,14 +129,35 @@ export class Renderer {
   /** The measured print stock's table, and the stock it was uploaded for. */
   private printLutTex: WebGLTexture | null = null;
   private printLutId: string | null = null;
+  /** Node count per axis and input domain of the uploaded table. */
+  private printLutSize = 1;
+  private printLutDomain: [number, number] = [0, 1];
   /** A one-node table for the frames before a LUT arrives: an active
    * sampler3D uniform with a 2D texture (or nothing) on its unit makes the
    * whole draw invalid, so the chain always has *something* legal to read. */
   private printLutDummy: WebGLTexture | null = null;
 
+  /**
+   * The encoding the canvas — and so every read-back — holds. The chain's
+   * output matrix produces Display P3, which is only right if the drawing
+   * buffer is tagged P3; a default (sRGB) canvas shows P3 numbers as sRGB
+   * ones and over-saturates everything. Where the browser can tag the buffer
+   * P3 it is; where it cannot, the chain outputs sRGB instead.
+   */
+  readonly outputColorSpace: 'display-p3' | 'srgb';
+
   constructor(readonly canvas: HTMLCanvasElement) {
     this.gl = createContext(canvas);
     const gl = this.gl;
+    const tagged = gl as WebGL2RenderingContext & { drawingBufferColorSpace?: PredefinedColorSpace };
+    if ('drawingBufferColorSpace' in tagged) {
+      try {
+        tagged.drawingBufferColorSpace = 'display-p3';
+      } catch {
+        // An unsupported value leaves the buffer sRGB, which is handled below.
+      }
+    }
+    this.outputColorSpace = tagged.drawingBufferColorSpace === 'display-p3' ? 'display-p3' : 'srgb';
     this.programs = {
       prepare: new Program(gl, FRAG_PREPARE, 'prepare'),
       halSource: new Program(gl, FRAG_HAL_SOURCE, 'halation source'),
@@ -207,7 +231,7 @@ export class Renderer {
   get maxExportLongEdge() {
     const coarse = window.matchMedia?.('(pointer: coarse)').matches === true;
     const BUDGET_BYTES = coarse ? 192 * 1024 * 1024 : 640 * 1024 * 1024;
-    const BYTES_PER_PIXEL = 96; // ~12 full-frame RGBA16F surfaces
+    const BYTES_PER_PIXEL = 108; // ~13.5 full-frame RGBA16F surfaces
     const byMemory = Math.floor(Math.sqrt(BUDGET_BYTES / BYTES_PER_PIXEL));
     return Math.min(this.maxTextureSize, byMemory);
   }
@@ -266,10 +290,22 @@ export class Renderer {
     gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_WRAP_R, gl.CLAMP_TO_EDGE);
     this.printLutTex = tex;
     this.printLutId = id;
+    this.printLutSize = lut.size;
+    this.printLutDomain = [lut.domainMin, lut.domainMax];
   }
 
-  /** Uploads a decoded image and sizes the graph to it. */
-  setSource(image: SourceImage, maxWidth = PREVIEW_MAX_WIDTH) {
+  /**
+   * Uploads a decoded image and sizes the graph to it. Returns the encoding
+   * the texture actually holds when the upload chose it, or null when the
+   * decoder's own declaration stands.
+   *
+   * A display-referred file may carry a wider profile than sRGB — every iPhone
+   * photograph is Display P3 — and the browser's default upload converts it to
+   * sRGB, clipping exactly the saturated colours a film stock has the most to
+   * say about. Where the context can unpack into Display P3, it does: P3
+   * contains sRGB, so an sRGB file loses nothing and a P3 file keeps its gamut.
+   */
+  setSource(image: SourceImage, maxWidth = PREVIEW_MAX_WIDTH): SourceSpace | null {
     const gl = this.gl;
     if (this.sourceTex) gl.deleteTexture(this.sourceTex);
 
@@ -278,6 +314,7 @@ export class Renderer {
     gl.bindTexture(gl.TEXTURE_2D, tex);
     gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+    let uploadedSpace: SourceSpace | null = null;
 
     if (image.float) {
       gl.texImage2D(
@@ -285,7 +322,15 @@ export class Renderer {
         gl.RGBA, gl.FLOAT, image.float,
       );
     } else if (image.bitmap) {
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, image.bitmap);
+      const p3 = gl as WebGL2RenderingContext & { unpackColorSpace?: PredefinedColorSpace };
+      if ('unpackColorSpace' in p3) {
+        p3.unpackColorSpace = 'display-p3';
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, image.bitmap);
+        p3.unpackColorSpace = 'srgb';
+        uploadedSpace = 'displayP3';
+      } else {
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, image.bitmap);
+      }
     } else {
       throw new Error('source image carries neither pixels nor a bitmap');
     }
@@ -304,6 +349,7 @@ export class Renderer {
 
     const scale = Math.min(1, maxWidth / image.width);
     this.allocate(Math.max(1, Math.round(image.width * scale)), Math.max(1, Math.round(image.height * scale)));
+    return uploadedSpace;
   }
 
   /** Reallocates every intermediate for a new working resolution. */
@@ -339,10 +385,15 @@ export class Renderer {
       this.halLevels.push(createTarget(gl, w, h, gl.R16F));
     }
 
+    // The white field and the final unit-variance grain field are 8-bit: at
+    // unit variance one code step is 0.031 sigma. The blurred intermediates
+    // are not — a Gaussian of width s leaves a standard deviation of
+    // 1/(2 sqrt(pi) s), so at s = 3 px one 8-bit step would be a third of a
+    // sigma and the clustered grain would posterise. They are float.
     this.noiseA = createTarget(gl, width, height, gl.RGBA8);
-    this.noiseB = createTarget(gl, width, height, gl.RGBA8);
-    this.noiseNarrow = createTarget(gl, width, height, gl.RGBA8);
-    this.noiseWide = createTarget(gl, width, height, gl.RGBA8);
+    this.noiseB = createTarget(gl, width, height, gl.RGBA16F);
+    this.noiseNarrow = createTarget(gl, width, height, gl.RGBA16F);
+    this.noiseWide = createTarget(gl, width, height, gl.RGBA16F);
     this.grainField = createTarget(gl, width, height, gl.RGBA8);
     this.grainKey = null;
   }
@@ -479,6 +530,11 @@ export class Renderer {
     for (let j = 0; j < PYRAMID_LEVELS; j++) {
       comb.texture(`uL${j}`, 1 + j, this.halLevels[j]!.texture);
     }
+    // Level 0's source slot still holds the unblurred source term: its blur
+    // went to halLevels[0], and only the coarser slots were overwritten.
+    comb
+      .texture('uSourceTerm', 1 + PYRAMID_LEVELS, this.halSrc[0]!.texture)
+      .vec3('uLuminance', triToGL(AP1_LUMINANCE));
     comb.vec3Array('uW[0]', weights).vec3('uWeight', triToGL(halation.weight));
     comb.float('uTint', halation.tint).float('uBoost', halation.boost);
     drawFullscreen(gl);
@@ -668,11 +724,19 @@ export class Renderer {
       .int('uSubMode', params.subtractive.densityMode === 'multiply' ? 1 : 0)
       .int('uBypass', params.bypass ? 1 : 0)
       .mat3('uCrosstalk', matToGL(params.crosstalk))
-      .vec3('uPrintOffset', triToGL(params.printExposureOffset))
+      // A measured engine whose table is not on the GPU yet renders the model,
+      // and the model needs its aim balance — the measured-engine offset holds
+      // only the user's lights, which on the model prints a grey as paper white.
+      .vec3(
+        'uPrintOffset',
+        triToGL(lutOn ? params.printExposureOffset : params.modelPrintExposureOffset),
+      )
       .int('uLutOn', lutOn ? 1 : 0);
     if (lutOn) {
       chain
         .texture3d('uPrintLut', 5, this.printLutTex!)
+        .float('uLutSize', this.printLutSize)
+        .vec2('uLutDomain', this.printLutDomain[0], this.printLutDomain[1])
         .vec3('uLutAnchor', triToGL(params.printLut!.anchor))
         .mat3('uSRGBToAP1', matToGL(M_SRGB_TO_AP1));
     } else {
@@ -687,7 +751,7 @@ export class Renderer {
       .float('uSilver', params.silverRetention)
       .float('uSilverRange', 0.9)
       .vec3('uNeutralAxis', triToGL(params.neutralAxis))
-      .mat3('uOutMatrix', matToGL(params.outputMatrix))
+      .mat3('uOutMatrix', matToGL(this.outputMatrix(params)))
       .float('uSurround', params.surroundExponent)
       .int('uViewMode', VIEW_MODE_CODE[view.mode])
       .int('uClipWarn', view.clipWarning ? 1 : 0);
@@ -710,10 +774,15 @@ export class Renderer {
     comp
       .texture('uProcessed', 0, this.processed!.texture)
       .texture('uScene', 1, this.scene.texture)
-      .mat3('uOutMatrix', matToGL(params.outputMatrix))
+      .mat3('uOutMatrix', matToGL(this.outputMatrix(params)))
       .float('uSplit', view.split)
       .float('uAspectPx', view.split > 0 ? 1 / this.width : -1);
     drawFullscreen(gl);
+  }
+
+  /** Working space to whatever the canvas is tagged as. */
+  private outputMatrix(params: ResolvedParameters) {
+    return this.outputColorSpace === 'display-p3' ? params.outputMatrix : M_AP1_TO_SRGB;
   }
 
   /** Reads the processed surface back for export or for the histogram. */
@@ -729,7 +798,13 @@ export class Renderer {
     for (let y = 0; y < this.height; y++) {
       flipped.set(data.subarray((this.height - 1 - y) * stride, (this.height - y) * stride), y * stride);
     }
-    return new ImageData(flipped, this.width, this.height);
+    // Tagged with the encoding the pixels are in, so an export carries the
+    // right profile rather than being read as sRGB.
+    try {
+      return new ImageData(flipped, this.width, this.height, { colorSpace: this.outputColorSpace });
+    } catch {
+      return new ImageData(flipped, this.width, this.height);
+    }
   }
 
   /** Re-renders at a higher working resolution for export, then restores. */
@@ -755,22 +830,3 @@ export class Renderer {
   }
 }
 
-/** IEEE 754 binary16, round-to-nearest-even. LUT values live in [0, 1]. */
-function floatToHalf(v: number): number {
-  const f = new Float32Array(1);
-  const i = new Uint32Array(f.buffer);
-  f[0] = v;
-  const x = i[0]!;
-  const sign = (x >>> 16) & 0x8000;
-  const exp = (x >>> 23) & 0xff;
-  const man = x & 0x7fffff;
-  if (exp === 0xff) return sign | 0x7c00; // infinity / NaN
-  let e = exp - 127 + 15;
-  if (e >= 0x1f) return sign | 0x7c00;
-  if (e <= 0) {
-    // Subnormal or zero: the LUT's values never get near this, but stay exact.
-    if (e < -10) return sign;
-    return sign | (((man | 0x800000) >>> (1 - e)) & 0x3ff);
-  }
-  return sign | (e << 10) | (man >>> 13);
-}

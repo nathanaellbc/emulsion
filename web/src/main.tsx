@@ -44,7 +44,7 @@ window.addEventListener('pageshow', publishAppHeight);
  */
 if (import.meta.env.PROD && 'serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js').catch((err: unknown) => {
+    navigator.serviceWorker.register(`${import.meta.env.BASE_URL}sw.js`).catch((err: unknown) => {
       console.warn('service worker registration failed; the app needs the network', err);
     });
   });

@@ -11,7 +11,7 @@ import { GLSL_COMMON } from './common';
  *   5  print exposure         logE' = log L_aim + 0.025(p_c + p_master) - D_eff
  *   6  print curve            same form, print parameters
  *   7  silver retention       D' += rho * D_bar
- *   8  neutral axis           D'_R += d_RG psi, D'_B += d_BG psi
+ *   8  neutral axis           D' += delta psi   (delta = [-warm, -tint, +warm])
  *   9  display                normalise, surround, primaries
  *
  * Stages 1-3 left this shader when interlayer inhibition arrived: the operator
@@ -57,6 +57,8 @@ uniform vec3  uNeutralAxis;
 // gamma 2.4, decoded here and handed to the shared output matrix.
 uniform bool          uLutOn;
 uniform highp sampler3D uPrintLut;
+uniform float         uLutSize;     // nodes per axis
+uniform vec2          uLutDomain;   // the table's declared input domain
 uniform vec3          uLutAnchor;   // the stock's own neutral density
 uniform mat3          uSRGBToAP1;   // sRGB/709 primaries -> working space
 
@@ -124,7 +126,15 @@ void main() {
       fragColor = vec4(oetf3(cine), 1.0);
       return;
     }
-    Y = uSRGBToAP1 * pow(texture(uPrintLut, cine).rgb, vec3(2.4));
+    // Node k of an N-node table sits at texel centre (k + 0.5) / N, not at
+    // k / (N - 1): sampling the raw code would shift every lookup by up to
+    // half a cell — for 2393's 13-node table, some forty code values. This
+    // remap makes the hardware filter the same trilinear interpolation
+    // core/cube.ts sampleCube performs on the host.
+    vec3 u = (clamp(cine, vec3(uLutDomain.x), vec3(uLutDomain.y)) - uLutDomain.x)
+           / max(uLutDomain.y - uLutDomain.x, 1e-6);
+    vec3 coord = (u * (uLutSize - 1.0) + 0.5) / uLutSize;
+    Y = uSRGBToAP1 * pow(texture(uPrintLut, coord).rgb, vec3(2.4));
   } else {
     // Stage 4.
     vec3 dEff = uCrosstalk * D;

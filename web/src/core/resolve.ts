@@ -14,6 +14,7 @@ import { activity, modulate } from './development';
 import type { CameraDevelopParams } from './develop';
 import { card, speedPoint, type SensitometricCard } from './sensitometry';
 import {
+  AP1_LUMINANCE,
   M_AP0_TO_AP1,
   M_AP1_TO_P3,
   M_P3_TO_AP1,
@@ -36,7 +37,7 @@ import {
   type NegativeProfile,
 } from './profiles/negatives';
 import { printStockById } from './profiles/printStocks';
-import { printLutEntry, printLutIlluminants } from './printLuts';
+import { printLutEntry, printLutIlluminants, type PrintIlluminant } from './printLuts';
 import { FRAME_WIDTH_MM, contentHash, type Recipe } from './recipe';
 import { matMul, triFill, type Matrix3, type Triple } from './triple';
 
@@ -139,8 +140,20 @@ export interface ResolvedParameters {
   readonly curve: CurveParameters;
   readonly printCurve: PrintCurve;
   readonly crosstalk: Matrix3;
-  /** log10 L_aim + 0.025 (p_c + p_master), already summed. */
+  /**
+   * log10 L_aim + 0.025 (p_c + p_master), already summed, for the engine that
+   * `printEngine` names. Under the measured engine the aim balance is not in
+   * it — the LUT's Cineon anchor carries the balance instead.
+   */
   readonly printExposureOffset: Triple;
+  /**
+   * The model's own offset, aim balance included, whichever engine was
+   * chosen. When the measured engine is selected but its table has not
+   * arrived (still loading, offline, failed), the render falls back to the
+   * model — and the model must then be balanced, or a normally exposed grey
+   * renders as paper white. See `printExposureOffsetFor`.
+   */
+  readonly modelPrintExposureOffset: Triple;
   readonly silverRetention: number;
   readonly neutralAxis: Triple;
   readonly bypass: boolean;
@@ -163,6 +176,11 @@ export interface ResolvedParameters {
     readonly displayName: string;
     readonly source: string;
     readonly anchor: Triple;
+    /**
+     * The illuminant rendered: the recipe's where this stock was measured
+     * under it, else the first it was. Tables are loaded and keyed by this,
+     * never by `recipe.printIlluminant`.
+     */
     readonly illuminant: 'D55' | 'D60' | 'D65';
     /** The illuminants this stock actually has measurements for. */
     readonly illuminants: readonly ('D55' | 'D60' | 'D65')[];
@@ -194,10 +212,17 @@ export type SourceSpace = 'srgb' | 'displayP3' | 'linearAP1' | 'acesAP0';
 export interface ResolveContext {
   /** Render target width in pixels — grain and halation are physical sizes. */
   renderWidthPx: number;
+  /**
+   * Render target height in pixels. The frame's long edge maps onto the
+   * image's long edge whichever way the camera was held, so the pixel pitch
+   * is taken from the longer of the two; omitted, the width is the long edge.
+   */
+  renderHeightPx?: number;
   sourceSpace: SourceSpace;
 }
 
-function sourceMatrix(space: SourceSpace): Matrix3 {
+/** The source encoding's primaries into the working space. */
+export function sourceMatrix(space: SourceSpace): Matrix3 {
   switch (space) {
     case 'srgb':
       return M_SRGB_TO_AP1;
@@ -212,6 +237,22 @@ function sourceMatrix(space: SourceSpace): Matrix3 {
         [0, 0, 1],
       ];
   }
+}
+
+/**
+ * Luminance weights for linear values in the source encoding: the working
+ * space's luminance row carried back through the source matrix. What the
+ * exposure meter and the histogram weight a decoded pixel with — the AP1 row
+ * applied to sRGB or AP0 values directly would weight the wrong primaries.
+ */
+export function sourceLuminance(space: SourceSpace): Triple {
+  const m = sourceMatrix(space);
+  const [a, b, c] = AP1_LUMINANCE;
+  return [
+    a * m[0][0] + b * m[1][0] + c * m[2][0],
+    a * m[0][1] + b * m[1][1] + c * m[2][1],
+    a * m[0][2] + b * m[1][2] + c * m[2][2],
+  ];
 }
 
 /**
@@ -342,8 +383,19 @@ export function resolve(recipe: Recipe, ctx: ResolveContext): ResolvedParameters
   const printCurve = buildPrintCurve(print, recipe);
   const crosstalk = crosstalkMatrix(print, recipe.printing.saturationDensity);
   const lutEntry = printLutEntry(recipe.printId);
+  // The illuminant actually rendered: the recipe's choice where this stock was
+  // measured under it, otherwise the first illuminant it was measured under.
+  // A recipe carried over from a stock with more measurements (2383 at D55,
+  // then switched to 2393, which exists only at D65) must not ask for a table
+  // that does not exist.
+  const lutIlluminants = printLutIlluminants(recipe.printId);
+  const lutIlluminant: PrintIlluminant | null = lutIlluminants.includes(recipe.printIlluminant)
+    ? recipe.printIlluminant
+    : (lutIlluminants[0] ?? null);
   const printEngine: 'model' | 'lut' =
-    recipe.printEngine === 'lut' && lutEntry !== null && !print.bypass ? 'lut' : 'model';
+    recipe.printEngine === 'lut' && lutEntry !== null && lutIlluminant !== null && !print.bypass
+      ? 'lut'
+      : 'model';
 
   // The lab balances the stock under its intended illuminant, so the layer
   // balance is deliberately excluded here: including it would cancel the very
@@ -351,36 +403,41 @@ export function resolve(recipe: Recipe, ctx: ResolveContext): ResolvedParameters
   const neutralLogE = anchorShift + Math.log10(0.18);
   const neutralDensity = densityWithMask(triFill(neutralLogE), curve);
 
-  let printExposureOffset: Triple = [0, 0, 0];
-  if (printEngine === 'lut') {
-    // The measurement carries its own balance: a normally printed negative is
-    // defined by the Cineon anchor, so the model's aim balance must not be
-    // added on top of it — only the user's lights move the print.
-    const master = PRINTER_POINT * recipe.printing.printDensity;
-    printExposureOffset = [
-      PRINTER_POINT * recipe.printing.printerLightR + master,
-      PRINTER_POINT * recipe.printing.printerLightG + master,
-      PRINTER_POINT * recipe.printing.printerLightB + master,
-    ];
-  } else if (!print.bypass) {
+  // The user's lights and master, identical under either engine.
+  const master = PRINTER_POINT * recipe.printing.printDensity;
+  const lights: Triple = [
+    PRINTER_POINT * recipe.printing.printerLightR + master,
+    PRINTER_POINT * recipe.printing.printerLightG + master,
+    PRINTER_POINT * recipe.printing.printerLightB + master,
+  ];
+
+  // The model's offset is always computed, aim balance included: it is what
+  // renders under the model engine, and what a measured-engine render falls
+  // back to while its table is missing.
+  let modelPrintExposureOffset: Triple = [0, 0, 0];
+  if (!print.bypass) {
     try {
       const aim = aimBalance(neutralDensity, printCurve, print, crosstalk, negative.id);
-      const master = PRINTER_POINT * recipe.printing.printDensity;
-      printExposureOffset = [
-        aim[0] + PRINTER_POINT * recipe.printing.printerLightR + master,
-        aim[1] + PRINTER_POINT * recipe.printing.printerLightG + master,
-        aim[2] + PRINTER_POINT * recipe.printing.printerLightB + master,
-      ];
+      modelPrintExposureOffset = [aim[0] + lights[0], aim[1] + lights[1], aim[2] + lights[2]];
     } catch (err) {
       warnings.push(
         `Aim balance did not converge for ${negative.displayName} on ${print.displayName}; the print is unbalanced.`,
       );
-      printExposureOffset = [0, 0, 0];
     }
   }
 
+  // The measurement carries its own balance: a normally printed negative is
+  // defined by the Cineon anchor, so the model's aim balance must not be added
+  // on top of it — only the user's lights move the print.
+  const printExposureOffset: Triple = printEngine === 'lut' ? lights : modelPrintExposureOffset;
+
   // --- Physical scaling --------------------------------------------------
-  const pitchUm = (FRAME_WIDTH_MM[recipe.format] * 1000) / Math.max(ctx.renderWidthPx, 1);
+  // A portrait photograph is the same frame turned on its side: its long edge
+  // is still FRAME_WIDTH_MM. Dividing by the width alone gave a portrait frame
+  // a pitch 1.5x too coarse — grain, halation, glow and interlayer all a third
+  // off from the same picture shot landscape.
+  const longEdgePx = Math.max(ctx.renderWidthPx, ctx.renderHeightPx ?? 0, 1);
+  const pitchUm = (FRAME_WIDTH_MM[recipe.format] * 1000) / longEdgePx;
 
   const g = negative.grain;
   const sigma1Px = (g.sigma1um * recipe.grain.size) / pitchUm;
@@ -444,6 +501,7 @@ export function resolve(recipe: Recipe, ctx: ResolveContext): ResolvedParameters
     printCurve,
     crosstalk,
     printExposureOffset,
+    modelPrintExposureOffset,
     printEngine,
     printLut: lutEntry
       ? {
@@ -451,13 +509,24 @@ export function resolve(recipe: Recipe, ctx: ResolveContext): ResolvedParameters
           displayName: lutEntry.displayName,
           source: lutEntry.source,
           anchor: neutralDensity,
-          illuminant: recipe.printIlluminant,
-          illuminants: printLutIlluminants(recipe.printId),
+          illuminant: lutIlluminant ?? 'D65',
+          illuminants: lutIlluminants,
         }
       : null,
     subtractive: { ...recipe.subtractive },
     silverRetention: recipe.printing.silverRetention,
-    neutralAxis: [recipe.printing.neutralAxisWarm, 0, recipe.printing.neutralAxisTint],
+    // Print density is dye density: more density in a record means *less* of
+    // that primary. psi is positive in the shadows, so "warm" (warm shadows,
+    // cool highlights) must take density out of the red record and add it to
+    // the blue one there — the paper's eq. neutralaxis carries the opposite
+    // sign on delta_RG; see DEVIATIONS.md, finding 16. Tint follows the white
+    // balance's convention, positive is green: green shadows, magenta
+    // highlights.
+    neutralAxis: [
+      -recipe.printing.neutralAxisWarm,
+      -recipe.printing.neutralAxisTint,
+      recipe.printing.neutralAxisWarm,
+    ],
     bypass: print.bypass,
     surroundExponent: recipe.output.surroundExponent,
     halation: {

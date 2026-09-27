@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { clampRecipe, defaultRecipe, type Recipe } from '../core/recipe';
+import { clampRecipe, defaultRecipe, mergeRecipe, type Recipe } from '../core/recipe';
 import { NEGATIVES } from '../core/profiles/negatives';
 import { PRINT_STOCKS } from '../core/profiles/printStocks';
 import { CHEMISTRY } from '../core/profiles/chemistry';
@@ -66,7 +66,7 @@ function sanitizeRecipe(r: Recipe): Recipe {
 function loadRecipe(): Recipe {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) return sanitizeRecipe(clampRecipe({ ...defaultRecipe(), ...(JSON.parse(raw) as Recipe) }));
+    if (raw) return sanitizeRecipe(clampRecipe(mergeRecipe(defaultRecipe(), JSON.parse(raw) as Partial<Recipe>)));
   } catch {
     // A corrupt stored recipe is not worth a broken first run.
   }
@@ -152,6 +152,8 @@ export function App() {
   /** Which rail page shows; the camera develop comes before the film. */
   const [railTab, setRailTab] = useState<RailTab>('camera');
   const [renderWidth, setRenderWidth] = useState(PREVIEW_MAX_WIDTH);
+  /** The render's height: the pixel pitch is taken from the long edge. */
+  const [renderHeight, setRenderHeight] = useState(0);
   /** Bumped when a print LUT finishes loading; resolve reads the cache. */
   const [lutVersion, setLutVersion] = useState(0);
   /** Reset is staged: the first click arms it, the second, within a beat, confirms. */
@@ -161,8 +163,9 @@ export function App() {
   const sourceSpace: SourceSpace = source?.space ?? 'srgb';
 
   const resolved: ResolvedParameters = useMemo(
-    () => resolve(recipe, { renderWidthPx: renderWidth, sourceSpace }),
-    [recipe, renderWidth, sourceSpace, lutVersion],
+    () =>
+      resolve(recipe, { renderWidthPx: renderWidth, renderHeightPx: renderHeight, sourceSpace }),
+    [recipe, renderWidth, renderHeight, sourceSpace, lutVersion],
   );
 
   const update = useCallback((mutate: (draft: Recipe) => void) => {
@@ -225,15 +228,17 @@ export function App() {
   // The measured stock arrives asynchronously; until it does, the model
   // renders, and the bump re-resolves so the LUT takes over mid-session
   // without a reload.
+  const lutIlluminant = resolved.printLut?.illuminant ?? null;
   useEffect(() => {
+    if (!lutIlluminant) return;
     let alive = true;
-    void loadPrintLut(recipe.printId, recipe.printIlluminant).then(() => {
+    void loadPrintLut(recipe.printId, lutIlluminant).then(() => {
       if (alive) setLutVersion((v) => v + 1);
     });
     return () => {
       alive = false;
     };
-  }, [recipe.printId, recipe.printIlluminant]);
+  }, [recipe.printId, lutIlluminant]);
 
   // One render per animation frame, however fast a slider moves.
   useEffect(() => {
@@ -251,9 +256,12 @@ export function App() {
           );
           return;
         }
-        const { printId, printIlluminant } = resolved.recipe;
-        const lut = resolved.printLut ? loadedPrintLut(printId, printIlluminant) : null;
-        renderer.setPrintLut(lut, resolved.printLut && lut ? `${printId}:${printIlluminant}` : '');
+        // Keyed by the illuminant actually rendered, which falls back when the
+        // stock was never measured under the recipe's choice.
+        const { printId } = resolved.recipe;
+        const illuminant = resolved.printLut?.illuminant;
+        const lut = illuminant ? loadedPrintLut(printId, illuminant) : null;
+        renderer.setPrintLut(lut, illuminant && lut ? `${printId}:${illuminant}` : '');
         renderer.render(resolved, { mode, split, clipWarning });
       } catch (err) {
         setGlError(err instanceof Error ? err.message : String(err));
@@ -272,9 +280,12 @@ export function App() {
         const decoded = await decodeFile(file);
         const renderer = rendererRef.current;
         if (!renderer) throw new Error('the renderer is not ready yet');
-        renderer.setSource(decoded.image, previewBudget());
+        // The upload may widen the declared encoding (an 8-bit file unpacked
+        // into Display P3); the chain's input matrix must follow the texture.
+        const uploaded = renderer.setSource(decoded.image, previewBudget());
         setRenderWidth(renderer.renderWidth);
-        setSource(decoded);
+        setRenderHeight(renderer.renderHeight);
+        setSource(uploaded ? { ...decoded, space: uploaded } : decoded);
         setSamples(sceneSamples(decoded));
         // A new photograph arrives at the aspect's own size; the grip's last
         // choice belonged to the previous picture.

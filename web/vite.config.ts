@@ -37,7 +37,9 @@ function emulsionServiceWorker(): Plugin {
 
       const urls = files
         .filter((f) => !f.endsWith('sw.js'))
-        .map((f) => '/' + relative(outDir, f).split(sep).join('/'));
+        // Relative to the worker's scope, which the worker resolves them
+        // against — the build works at a domain root or under a sub-path.
+        .map((f) => relative(outDir, f).split(sep).join('/'));
       const bytes = files.reduce((n, f) => n + statSync(f).size, 0);
 
       const template = readFileSync(join(root, 'service-worker.js'), 'utf8');
@@ -48,7 +50,7 @@ function emulsionServiceWorker(): Plugin {
         .slice(0, 13);
       const sw = template
         .replace('__CACHE_VERSION__', version)
-        .replace('__PRECACHE_URLS__', JSON.stringify([...urls, '/']));
+        .replace('__PRECACHE_URLS__', JSON.stringify([...urls, './']));
 
       writeFileSync(join(outDir, 'sw.js'), sw);
       console.log(

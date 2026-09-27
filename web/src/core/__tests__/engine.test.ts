@@ -127,7 +127,10 @@ describe('the measured print engine', () => {
     const p = resolved();
     const withLut = evaluateSceneLinearWithEngine([0.4, 0.3, 0.2], p, LUTS['prt.2383']!);
     const without = evaluateSceneLinearWithEngine([0.4, 0.3, 0.2], p, null);
-    const model = evaluateSceneLinear([0.4, 0.3, 0.2], p);
+    // The model it degrades to is the *balanced* model — the measured-engine
+    // offset carries only the user's lights, and the model on those prints a
+    // grey as paper white (DEVIATIONS.md finding 18).
+    const model = evaluateSceneLinear([0.4, 0.3, 0.2], resolved({ printEngine: 'model' }));
     expect(without).toEqual(model);
     expect(withLut).not.toEqual(model);
   });
