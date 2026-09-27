@@ -2885,3 +2885,160 @@ body,
 .rail > .notices {
   padding-top: var(--s2);
 }
+
+/* ============================================================================
+   Corners, as Apple's Human Interface Guidelines draw them
+   ========================================================================= */
+
+/* Two rules, applied everywhere:
+
+   1. Controls are capsules. Buttons, toolbar groups, chips, segmented
+      controls and their thumbs, the bench tabs, pop-up menus and badges are
+      all fully rounded, as Liquid Glass draws them; a capsule inside a
+      capsule on an even inset is concentric by construction.
+
+   2. Containers are concentric with what they hold. A shape nested at an
+      inset takes its container's radius less that inset, so the curves run
+      parallel. The inspector's radius is derived from the capsule of tabs in
+      its corner — the tabs' radius plus the 12 pt inset — and the cards
+      inside take the inspector's radius less the same inset.
+
+   The photograph itself is content, not chrome: it keeps a hairline radius. */
+:root {
+  --r-capsule: 999px;
+  /* Tab trough 32 tall (28 + 2 + 2) → 16, plus the 12 inset. */
+  --r-panel: 28px;
+  --r-card: calc(var(--r-panel) - var(--s3));
+}
+
+@media (pointer: coarse) {
+  :root {
+    /* Tab trough 48 tall (44 + 2 + 2) → 24, plus the 12 inset. */
+    --r-panel: 36px;
+  }
+}
+
+.btn,
+.btn--lg,
+.topbar .btn--primary,
+.topbar__group,
+.topbar__group .btn,
+.chip,
+.viewport__bar,
+.viewport__bar .segmented button,
+.viewport__bar .segmented__thumb,
+.segmented,
+.segmented__thumb,
+.segmented button,
+.rail-tabs,
+.rail-tabs::after,
+.rail-tab,
+.select select,
+.export__detents,
+.export__opt,
+.export__actions .btn,
+.lens-card .btn,
+.viewport__tag,
+.viewport__zoom-badge,
+.busy {
+  border-radius: var(--r-capsule);
+  /* A capsule's ends are true half-circles. The continuous (squircle)
+     corner applied everywhere else would draw a full radius as a
+     superellipse — a rounded square, not a capsule. */
+  corner-shape: round;
+}
+
+@media (min-width: 561px) {
+  .viewport__foot {
+    corner-shape: round;
+  }
+}
+
+/* A capsule's end is a half-circle: text starts clear of it. */
+.select select {
+  padding-left: 14px;
+}
+
+.select__swatch {
+  left: 14px;
+}
+
+.select.has-swatch select {
+  padding-left: 36px;
+}
+
+.rail {
+  border-radius: var(--r-panel);
+}
+
+.plot,
+.lights,
+.readout,
+.control__hint--action,
+.panel .notice--warn,
+.panel-section__head,
+.lens-card {
+  border-radius: var(--r-card);
+}
+
+.dropzone,
+.dropzone__facts {
+  border-radius: var(--r-panel);
+}
+
+/* Inside the export sheet: its radius less the 16 pt content inset. */
+.export__file,
+.export__fail {
+  border-radius: calc(var(--r-sheet) - var(--s4));
+}
+
+/* The caption chip on the desktop frame is a capsule too. */
+@media (min-width: 561px) {
+  .viewport__foot {
+    border-radius: var(--r-capsule);
+  }
+}
+
+/* The wordmark is a word, not a control: no glass container around it. */
+.topbar__brand {
+  background: none;
+  border: 0;
+  box-shadow: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  padding-left: var(--s1);
+}
+
+/* On a phone the bench is a sheet whose top corners are the panel's, and the
+   export sheet floats inside the display the way an iOS sheet does: inset
+   from every edge, its corners concentric with the display's own (about
+   55 pt on a current iPhone, less the 8 pt inset). */
+@media (max-width: 560px) {
+  .rail {
+    border-radius: var(--r-panel) var(--r-panel) 0 0;
+  }
+
+  .export__backdrop {
+    padding: var(--s2);
+  }
+
+  .export {
+    border-radius: 47px;
+    border-bottom: 1px solid var(--material-edge);
+    max-height: calc(100dvh - env(safe-area-inset-top, 0px) - 2 * var(--s2));
+  }
+
+  .export__head {
+    padding-top: 22px;
+    padding-inline: 24px;
+  }
+
+  .export__body {
+    padding-inline: 20px;
+  }
+
+  .export__actions {
+    padding: var(--s3) 20px 20px;
+    border-radius: 0 0 47px 47px;
+  }
+}

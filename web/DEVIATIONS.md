@@ -828,3 +828,39 @@ histogram's samples are weighted with the source primaries' luminance before
 the white balance, while the shader's tone gain reads AP1 luminance after it.
 For anything but an extreme white balance the two differ by a small fraction
 of a stop.
+
+
+## 22. Every RAW rendered upside down, and its Compare looked like log
+
+**Orientation.** The renderer read float sources, which are all RAW
+decodes, without the vertical flip it applies to bitmaps. The comment
+claimed LibRaw's rows were "already in texture order". They are not:
+LibRaw delivers the top row first, as every image does, and `texImage2D`
+puts the first row at the bottom of a GL render. Every RAW was therefore
+previewed and exported mirrored top to bottom. An independent decode of
+the test file (rawpy/LibRaw) has the bottle and the can upright; EMULSION
+had them upside down. **Fixed** (`renderer.ts`, setSource): every source
+is read flipped. The depth map's special case for float row order is gone
+with it.
+
+**The before half of Compare.** For a RAW, the "Scene" half put linear
+light straight on the display. No camera shows a picture that way, and it
+reads as flat and grey, like log footage beside a finished print. The half
+is now "Original". For an ordinary file it is still the file itself. For a
+RAW decode it passes through a neutral filmic curve (the Narkowicz fit of
+ACES), a clean camera render without film. Exposure and the camera develop
+still apply to both halves.
+
+**Corners.** The interface follows the HIG's two rules for corners:
+
+- Controls are capsules. That covers buttons, toolbar groups, chips,
+  segmented controls and their thumbs, the bench tabs, pop-up menus and
+  badges. They keep true half-circle ends even where the continuous
+  (squircle) corner is used for everything else.
+- Containers are concentric with their contents. The inspector's radius is
+  the tab capsule's radius plus its 12 pt inset: 28 pt with a pointer,
+  36 pt on touch. Cards inside it take that radius less the same inset.
+
+On a phone the export sheet floats 8 pt inside the display, with 47 pt
+corners concentric with the display's. The wordmark is plain text, not a
+control, so it no longer sits in a glass container.

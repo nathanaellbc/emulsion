@@ -139,6 +139,13 @@ export function Viewport({
   onPictureResize,
   focus,
 }: ViewportProps) {
+  // Where the photograph actually sits inside the picture layer. The canvas is
+  // letterboxed (object-fit: contain), so a portrait print on a wide frame, or
+  // any print on a desktop, is narrower or shorter than the layer: anything
+  // drawn over the picture — the seam's handle, the tags, the focus ring —
+  // is placed in this box, never in the layer's.
+  const box = useCanvasBox(canvasRef);
+
   // The tap handler lives in a long-lived effect; it reads these through refs.
   const focusRef = useRef(focus);
   focusRef.current = focus;
@@ -445,12 +452,20 @@ export function Viewport({
           onPointerDown={onPointerDown}
         >
           <canvas ref={canvasRef} className="viewport__canvas" />
-          {focus && mode === 'focus' ? <FocusMark canvasRef={canvasRef} x={focus.x} y={focus.y} /> : null}
-          {comparing ? (
+          {focus && mode === 'focus' && box ? (
+            <span
+              className="viewport__focus"
+              aria-hidden="true"
+              style={{ left: box.left + focus.x * box.width, top: box.top + focus.y * box.height }}
+            />
+          ) : null}
+          {comparing && box ? (
             <button
               type="button"
               className="viewport__handle"
-              style={{ left: `${split * 100}%` }}
+              // On the seam the shader draws — the same fraction of the
+              // picture's width — and exactly as tall as the picture.
+              style={{ left: box.left + split * box.width, top: box.top, height: box.height }}
               onPointerDown={(e) => {
                 e.stopPropagation();
                 e.preventDefault();
@@ -470,10 +485,17 @@ export function Viewport({
               <span aria-hidden="true" />
             </button>
           ) : null}
-          {comparing ? (
+          {comparing && box ? (
             <>
-              <span className="viewport__tag viewport__tag--left">Scene</span>
-              <span className="viewport__tag viewport__tag--right">Print</span>
+              <span className="viewport__tag" style={{ left: box.left + 8, top: box.top + 8 }}>
+                Original
+              </span>
+              <span
+                className="viewport__tag"
+                style={{ right: `calc(100% - ${box.left + box.width - 8}px)`, top: box.top + 8 }}
+              >
+                Print
+              </span>
             </>
           ) : null}
         </div>
@@ -528,41 +550,37 @@ export function Viewport({
 }
 
 /**
- * The focus point, drawn over the picture in the focus view. Positioned in
- * the canvas's untransformed layout box, inside the zoom layer, so it rides
- * the zoom with the picture like the seam does.
+ * The canvas's untransformed layout box inside the picture layer, kept current
+ * as the picture or the frame resizes. Offsets, not a client rect, so the
+ * zoom transform (which carries the layer and everything in it) does not
+ * enter into it.
  */
-function FocusMark({
-  canvasRef,
-  x,
-  y,
-}: {
-  canvasRef: React.RefObject<HTMLCanvasElement>;
-  x: number;
-  y: number;
-}) {
+function useCanvasBox(canvasRef: React.RefObject<HTMLCanvasElement>) {
   const [box, setBox] = useState<{ left: number; top: number; width: number; height: number } | null>(null);
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const measure = () =>
-      setBox({
-        left: canvas.offsetLeft,
-        top: canvas.offsetTop,
-        width: canvas.offsetWidth,
-        height: canvas.offsetHeight,
+      setBox((prev) => {
+        const next = {
+          left: canvas.offsetLeft,
+          top: canvas.offsetTop,
+          width: canvas.offsetWidth,
+          height: canvas.offsetHeight,
+        };
+        return prev &&
+          prev.left === next.left &&
+          prev.top === next.top &&
+          prev.width === next.width &&
+          prev.height === next.height
+          ? prev
+          : next;
       });
     measure();
     const ro = new ResizeObserver(measure);
     ro.observe(canvas);
+    if (canvas.parentElement) ro.observe(canvas.parentElement);
     return () => ro.disconnect();
   }, [canvasRef]);
-  if (!box) return null;
-  return (
-    <span
-      className="viewport__focus"
-      aria-hidden="true"
-      style={{ left: box.left + x * box.width, top: box.top + y * box.height }}
-    />
-  );
+  return box;
 }

@@ -213,8 +213,16 @@ void main() {
 
 /**
  * The split-view comparison pass. Kept separate from the chain so the "before"
- * side is the decoded source rendered honestly, not the chain with its
- * parameters neutralised — which would still be film, just flat film.
+ * side is the photograph without film, not the chain with its parameters
+ * neutralised — which would still be film, just flat film.
+ *
+ * "Without film" means what the photograph looked like before: for an
+ * ordinary file, the file itself (its tone curve is already baked in, and
+ * undoing the transfer function and redoing it gives it back). A RAW decode
+ * has no tone curve at all — linear light put straight on a display reads as
+ * a flat, grey, log-like picture that no camera ever showed anyone — so it
+ * gets a neutral one: the ACES filmic fit (Narkowicz 2015), the look of a
+ * clean camera render. Exposure and the camera develop are in both halves.
  */
 export const FRAG_COMPOSITE = /* glsl */ `#version 300 es
 ${GLSL_COMMON}
@@ -227,6 +235,12 @@ uniform sampler2D uScene;
 uniform mat3 uOutMatrix;
 uniform float uSplit;
 uniform float uAspectPx;
+uniform bool uSceneLinear;   // the source had no tone curve of its own (a RAW decode)
+
+vec3 filmicFit(vec3 x) {
+  x *= 0.6;
+  return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0);
+}
 // The focus view: the zone of acceptable sharpness, from the lens's own CoC.
 uniform bool uFocusView;
 uniform float uAcceptCoc;   // permissible CoC diameter, render px
@@ -244,8 +258,9 @@ void main() {
     }
     fragColor = vec4(print, 1.0);
   } else {
-    // The unprocessed side: working space straight to display, no film at all.
+    // The before side: the photograph as it was, no film at all.
     vec3 lin = uOutMatrix * texture(uScene, vUv).rgb;
+    if (uSceneLinear) lin = filmicFit(max(lin, 0.0));
     fragColor = vec4(oetf3(clamp(lin, 0.0, 1.0)), 1.0);
   }
   // A one-pixel seam in the accent's silver, so the boundary is legible

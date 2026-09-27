@@ -414,9 +414,13 @@ export class Renderer {
     this.sourceTex = tex;
     this.setDepth(null);
     this.sourceEncoded = image.encoded;
-    // A DOM image or bitmap arrives with its origin top-left; float data we
-    // decoded ourselves is already in texture order.
-    this.sourceFlipY = !image.float;
+    // Every source arrives top row first — a DOM image or bitmap, and LibRaw's
+    // float rows alike — and texImage2D puts the first row at v = 0, the
+    // bottom of a GL render. So every source is read flipped. Float decodes
+    // used to be read unflipped, on the assumption that they were already in
+    // texture order; they are not, and every RAW rendered and exported upside
+    // down (DEVIATIONS.md, finding 22).
+    this.sourceFlipY = true;
 
     const scale = Math.min(1, maxWidth / image.width);
     this.allocate(Math.max(1, Math.round(image.width * scale)), Math.max(1, Math.round(image.height * scale)));
@@ -1033,7 +1037,8 @@ export class Renderer {
       .texture('uScene', 1, this.scene.texture)
       .mat3('uOutMatrix', matToGL(this.outputMatrix(params)))
       .float('uSplit', view.split)
-      .float('uAspectPx', view.split > 0 ? 1 / this.width : -1);
+      .float('uAspectPx', view.split > 0 ? 1 / this.width : -1)
+      .int('uSceneLinear', this.sourceEncoded ? 0 : 1);
     const focusView = view.mode === 'focus' && this.depthTex !== null;
     comp.int('uFocusView', focusView ? 1 : 0).float('uAcceptCoc', params.defocus.acceptableCocPx);
     if (focusView) this.setCocUniforms(comp, params, 2);

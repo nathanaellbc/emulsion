@@ -30,8 +30,6 @@ export interface DepthMap {
   height: number;
   /** Normalised disparity, source row order: 0 at infinity, 1 at the near anchor. */
   data: Float32Array;
-  /** True when rows run bottom-up on screen (a float RAW decode, uploaded unflipped). */
-  rowsBottomUp: boolean;
   backend: DepthBackend;
   variant: 'fp16' | 'int8';
   inferMs: number;
@@ -152,7 +150,7 @@ export function buildGuide(
  * top-left), read from the map's own row order.
  */
 export function disparityAt(map: DepthMap, x: number, y: number): number {
-  return sampleDisparity(map.data, map.width, map.height, x, map.rowsBottomUp ? 1 - y : y);
+  return sampleDisparity(map.data, map.width, map.height, x, y);
 }
 
 /**
@@ -172,7 +170,6 @@ export class DepthEstimator {
     resolve: (m: DepthMap) => void;
     reject: (e: Error) => void;
     onProgress?: (p: DepthProgress) => void;
-    rowsBottomUp: boolean;
     lowMemory: boolean;
   } | null = null;
 
@@ -220,7 +217,6 @@ export class DepthEstimator {
       width: msg.width,
       height: msg.height,
       data: msg.depth,
-      rowsBottomUp: p.rowsBottomUp,
       backend: msg.backend,
       variant: msg.variant,
       inferMs: msg.inferMs,
@@ -254,10 +250,6 @@ export class DepthEstimator {
         resolve,
         reject,
         onProgress: opts.onProgress,
-        // The renderer flips a bitmap's rows and leaves a float decode's
-        // alone (renderer.ts, setSource), so a float decode's first row is
-        // the bottom of the picture on screen.
-        rowsBottomUp: !!source.image.float,
         lowMemory: profile.lowMemory,
       };
       const req: DepthRequest = {
