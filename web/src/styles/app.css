@@ -282,7 +282,7 @@ body,
 }
 
 .btn--lg {
-  font-size: 14px;
+  font-size: 15px;
   height: 40px;
   padding: 0 20px;
   border-radius: var(--r-group);
@@ -788,7 +788,10 @@ body,
    thumb follows aria-selected with no script. */
 .rail-tabs {
   position: sticky;
-  top: var(--s3);
+  /* Sticky offsets count from the rail's content edge, which already sits
+     12 inside the glass: 0 here keeps the tabs on the same 12 inset at the
+     top as at the sides. */
+  top: 0;
   z-index: 4;
   flex-shrink: 0;
   display: grid;
@@ -874,7 +877,7 @@ body,
 .plot {
   flex-shrink: 0;
   margin: 0;
-  padding: 10px 10px 6px;
+  padding: var(--s3) var(--s3) var(--s2);
   border-radius: var(--r);
   /* Pinned under the tabs while the sections scroll: solid, with the same
      spread backing, and a short fade below it where content slides under —
@@ -882,7 +885,7 @@ body,
   background: var(--rail-trough);
   box-shadow: 0 0 0 var(--s3) var(--rail-solid);
   position: sticky;
-  top: calc(var(--s3) + 32px + var(--s3));
+  top: calc(32px + var(--s3));
   z-index: 3;
 }
 
@@ -933,12 +936,12 @@ body,
 
 .plot__tick {
   fill: var(--ink-faint);
-  font-size: 11px;
+  font-size: calc(11px * var(--plot-k, 1.45));
 }
 
 .plot__axis {
   fill: var(--ink-faint);
-  font-size: 10.5px;
+  font-size: calc(11px * var(--plot-k, 1.45));
   letter-spacing: 0.02em;
 }
 
@@ -1008,7 +1011,7 @@ body,
   display: flex;
   flex-direction: column;
   gap: var(--s1);
-  padding: 0 4px;
+  padding: 0 var(--s3);
 }
 
 /* An annunciator, not a callout card: a lit indicator and the text it belongs
@@ -1020,7 +1023,7 @@ body,
   align-items: start;
   margin: 0;
   padding: var(--s1) 0;
-  font-size: 11.5px;
+  font-size: 12px;
   line-height: 1.5;
   color: var(--ink-muted);
   background: transparent;
@@ -1107,7 +1110,7 @@ body,
   gap: var(--s2);
   width: 100%;
   height: 38px;
-  padding: 0 6px;
+  padding: 0 var(--s3);
   font: inherit;
   text-align: left;
   color: var(--ink);
@@ -1174,8 +1177,8 @@ body,
 .panel-section__body {
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  padding: 4px 6px 16px;
+  gap: var(--s3);
+  padding: var(--s1) var(--s3) var(--s4);
   opacity: 0;
   visibility: hidden;
   transform: translateY(-4px);
@@ -1249,8 +1252,9 @@ body,
   position: relative;
   display: inline-grid;
   place-items: center;
-  width: 18px;
-  height: 18px;
+  width: 20px;
+  height: 20px;
+  margin: -1px 0;
   padding: 0;
   border: 0;
   border-radius: 50%;
@@ -1331,7 +1335,7 @@ body,
 }
 
 .control__hint--action {
-  padding: 10px 12px;
+  padding: var(--s3);
   background: var(--glass-sunken);
   border: 0;
   border-radius: var(--r);
@@ -1697,7 +1701,7 @@ body,
 }
 
 .stat__label {
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 500;
   color: var(--ink-faint);
 }
@@ -2216,7 +2220,11 @@ body,
 @media (max-width: 900px) {
   .stage {
     grid-template-columns: minmax(0, 1fr);
-  /* The viewport row sizes to the PICTURE, not to a fixed share of the
+  /* The bench row is 1fr with its automatic minimum, not minmax(0, 1fr): it
+     fills the screen when the bench is short and grows to the bench's full
+     height when it is long, so the sheet's glass always runs under every
+     control instead of stopping at the fold while its content spills on.
+     The viewport row sizes to the PICTURE, not to a fixed share of the
      screen. --picture-h (set by the drag grip between the picture and the
      bench) overrides when the user has chosen a size, from a sliver up to the
      print's natural full-size height. Without it, --print-aspect (published
@@ -2225,7 +2233,7 @@ body,
      yet, or a very old browser) is the old 44vh. */
     grid-template-rows:
       var(--picture-h, clamp(160px, calc((100vw - 2 * var(--s3)) / var(--print-aspect, 1.5) + 80px), 70svh))
-      minmax(0, 1fr);
+      1fr;
     overflow-y: auto;
     overscroll-behavior: contain;
   }
@@ -2237,7 +2245,7 @@ body,
     .stage {
       grid-template-rows:
         var(--picture-h, clamp(160px, calc((100vw - 2 * var(--s3)) / var(--print-aspect, 1.5) + 80px), 70svh))
-        minmax(0, 1fr);
+        1fr;
     }
   }
 
@@ -2284,11 +2292,14 @@ body,
 
   /* The size grip closes the pinned block: a native-feeling sheet handle at
      exactly the seam it controls. */
+  /* The pill sits with even air above and below: the caption line above it
+     already carries 6 of its own, so the pill rides 6 into a 24 strip —
+     12 to the caption's text, 13 to the sheet. */
   .viewport__grip {
     display: grid;
-    place-items: center;
-    height: 22px;
-    padding: 0;
+    place-items: start center;
+    height: 24px;
+    padding: 6px 0 0;
     background: var(--ground);
     touch-action: none;
     cursor: row-resize;
@@ -2297,9 +2308,15 @@ body,
   .rail {
     /* The bench becomes a sheet below the picture: full width, its top
        corners the sheet's, and the page scrolls it rather than itself. */
-    margin: 0 6px;
+    margin: 0 var(--s3);
+    /* Its content sets its height (see the 1fr bench row above); the
+       desktop's min-height: 0 would let the row clamp it to the fold. */
+    min-height: auto;
     border-bottom: 0;
-    border-radius: var(--r-sheet) var(--r-sheet) 0 0;
+    /* The panel radius, not the sheet's: it is derived from the tab capsule
+       in the corner (capsule radius + the 12 inset), so the capsule's curve
+       runs parallel to the sheet's instead of pressing into it. */
+    border-radius: var(--r-panel) var(--r-panel) 0 0;
     overflow: visible;
     animation-name: sheet-in;
   }
@@ -2369,6 +2386,7 @@ body,
     /* Landscape phone: the panel returns to a floating side panel, slimmer,
        and scrolls as a whole. */
     margin: var(--s2);
+    min-height: 0;
     border-bottom: 1px solid var(--material-edge);
     border-radius: var(--r-panel);
     overflow-y: auto;
@@ -2687,8 +2705,13 @@ body,
     max-width: none;
   }
 
+  /* Here the row above is the 44 toolbar, which has no air of its own:
+     the pill centres in its strip. */
   .viewport__grip {
     grid-area: grip;
+    place-items: center;
+    height: 22px;
+    padding: 0;
   }
 
   /* The row the picture needs: its width over its aspect, plus the frame's
@@ -2696,7 +2719,7 @@ body,
   .stage {
     grid-template-rows:
       var(--picture-h, clamp(160px, calc((100vw - 2 * var(--s3)) / var(--print-aspect, 1.5) + 90px), 68svh))
-      minmax(0, 1fr);
+      1fr;
   }
 
   /* A sheet on a phone is solid: over a scrim, a translucent sheet lets the
@@ -2836,6 +2859,18 @@ body,
     height: 18px;
     background: linear-gradient(var(--ground), rgba(11, 11, 12, 0));
     pointer-events: none;
+    /* At rest nothing is under it — the bench's top edge and corners sit
+       right there and must read whole. It fades in over the first 24 of
+       scroll, as the bench starts to pass beneath the picture. */
+    opacity: 0;
+  }
+
+  @supports (animation-timeline: scroll()) {
+    .viewport::after {
+      animation: edge-in linear both;
+      animation-timeline: scroll(nearest);
+      animation-range: 0 24px;
+    }
   }
 }
 
@@ -2880,12 +2915,6 @@ body,
   }
 }
 
-/* The notices never sit flush against the pinned plot's lower edge: a few
-   points of air keep their first line clear of it at every scroll position. */
-.rail > .notices {
-  padding-top: var(--s2);
-}
-
 /* ============================================================================
    Corners, as Apple's Human Interface Guidelines draw them
    ========================================================================= */
@@ -2915,6 +2944,14 @@ body,
   :root {
     /* Tab trough 48 tall (44 + 2 + 2) → 24, plus the 12 inset. */
     --r-panel: 36px;
+  }
+}
+
+/* The pinned plot sits one 12 gap under the tab trough, whichever height the
+   trough is: 32 with a pointer, 48 under a finger. */
+@media (pointer: coarse) and (min-width: 901px) {
+  .plot {
+    top: calc(48px + var(--s3));
   }
 }
 
@@ -3013,10 +3050,22 @@ body,
    export sheet floats inside the display the way an iOS sheet does: inset
    from every edge, its corners concentric with the display's own (about
    55 pt on a current iPhone, less the 8 pt inset). */
-@media (max-width: 560px) {
+/* Wherever the bench is a sheet under the picture, it runs off the bottom
+   of the screen: only its top corners round. A phone held sideways gets the
+   floating panel back, rounded all round. */
+@media (max-width: 900px) {
   .rail {
     border-radius: var(--r-panel) var(--r-panel) 0 0;
   }
+}
+
+@media (orientation: landscape) and (max-height: 520px) {
+  .rail {
+    border-radius: var(--r-panel);
+  }
+}
+
+@media (max-width: 560px) {
 
   .export__backdrop {
     padding: var(--s2);

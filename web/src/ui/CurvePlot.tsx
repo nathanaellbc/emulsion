@@ -9,7 +9,7 @@
  * much easier to see than to explain.
  */
 
-import { useMemo } from 'react';
+import { useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { density, type CurveParameters } from '../core/curve';
 import { developLuma, type CameraDevelopParams } from '../core/develop';
 import { speedPoint } from '../core/sensitometry';
@@ -18,13 +18,15 @@ import { HISTOGRAM_BINS, HISTOGRAM_MAX, HISTOGRAM_MIN } from '../io/decode';
 const X_MIN = -5.2;
 const X_MAX = 1.2;
 const W = 460;
-const H = 206;
-const PAD_L = 30;
+const H = 214;
+// Wide enough for a y tick ("3.5") at its true 11 px once the labels are
+// counter-scaled (see `k` below).
+const PAD_L = 36;
 const PAD_R = 10;
 const PAD_T = 10;
 // Deep enough for a row of ticks and the axis caption beneath them, without
 // the two sharing a baseline.
-const PAD_B = 38;
+const PAD_B = 46;
 
 const RECORD_COLOURS = ['var(--record-r)', 'var(--record-g)', 'var(--record-b)'] as const;
 
@@ -125,14 +127,32 @@ export function CurvePlot({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [curve, yMax, greyLogE, spLogE]);
 
+  // The viewBox is drawn at W units but shown at the rail's width (~317 px),
+  // so anything sized in SVG units shrinks with it. Labels are text people
+  // read: they take the inverse of that scale, so they land at a true 11 px —
+  // the smallest size the Human Interface Guidelines allow — while the
+  // geometry keeps its proportions.
+  const svgRef = useRef<SVGSVGElement>(null);
+  const [k, setK] = useState(W / 317);
+  useLayoutEffect(() => {
+    const svg = svgRef.current;
+    if (!svg || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(([entry]) => {
+      const w = entry!.contentRect.width;
+      if (w > 0) setK(W / w);
+    });
+    ro.observe(svg);
+    return () => ro.disconnect();
+  }, []);
+
   const xTicks: number[] = [];
   for (let x = Math.ceil(X_MIN); x <= X_MAX; x++) xTicks.push(x);
   const yTicks: number[] = [];
   for (let d = 0; d <= yMax + 1e-6; d += 0.5) yTicks.push(d);
 
   return (
-    <figure className="plot">
-      <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Characteristic curve, density against log exposure">
+    <figure className="plot" style={{ '--plot-k': k } as CSSProperties}>
+      <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Characteristic curve, density against log exposure">
         <defs>
           <clipPath id="plot-clip">
             <rect x={PAD_L} y={PAD_T} width={W - PAD_L - PAD_R} height={H - PAD_T - PAD_B} />
@@ -168,7 +188,7 @@ export function CurvePlot({
         {yTicks.map((d) => (
           <g key={`y${d}`}>
             <line x1={PAD_L} x2={W - PAD_R} y1={sy(d)} y2={sy(d)} className="plot__grid" />
-            <text x={PAD_L - 6} y={sy(d) + 3} className="plot__tick num" textAnchor="end">
+            <text x={PAD_L - 6} y={sy(d) + 5} className="plot__tick num" textAnchor="end">
               {d.toFixed(1)}
             </text>
           </g>
@@ -176,7 +196,7 @@ export function CurvePlot({
         {xTicks.map((x) => (
           <g key={`x${x}`}>
             <line x1={sx(x)} x2={sx(x)} y1={PAD_T} y2={H - PAD_B} className="plot__grid" />
-            <text x={sx(x)} y={H - PAD_B + 12} className="plot__tick num" textAnchor="middle">
+            <text x={sx(x)} y={H - PAD_B + 16} className="plot__tick num" textAnchor="middle">
               {x}
             </text>
           </g>
@@ -236,7 +256,7 @@ export function CurvePlot({
         </text>
         <text x={W - PAD_R} y={H - 6} className="plot__axis" textAnchor="end">
           <tspan className="plot__key plot__key--grey">18% grey</tspan>
-          <tspan dx="10" className="plot__key plot__key--speed">
+          <tspan dx="14" className="plot__key plot__key--speed">
             speed point
           </tspan>
         </text>

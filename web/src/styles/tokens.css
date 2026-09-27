@@ -71,8 +71,9 @@
   --record-g: #6fc285;
   --record-b: #6ea2ea;
 
-  --warn: #e05a3f;
-  --warn-wash: rgba(224, 90, 63, 0.14);
+  /* Apple's system red, dark variant. */
+  --warn: #ff4245;
+  --warn-wash: rgba(255, 66, 69, 0.14);
 
   --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro Display',
     'Helvetica Neue', 'Segoe UI', Roboto, ui-sans-serif, Arial, sans-serif;
@@ -193,6 +194,9 @@
     --rule: rgba(255, 255, 255, 0.26);
     --rule-strong: rgba(255, 255, 255, 0.42);
     --material-edge: rgba(255, 255, 255, 0.4);
+    --ink-muted: rgba(235, 235, 245, 0.8);
+    --ink-faint: rgba(235, 235, 245, 0.7);
+    --warn: #ff6165;
     --material-thick: #1c1c1f;
     --material-regular: #242428;
   }
