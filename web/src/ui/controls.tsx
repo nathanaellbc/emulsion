@@ -7,8 +7,44 @@
  * labelled "warmth 0–100" would be a small lie about what the model is doing.
  */
 
-import { useCallback, useId, useRef, type ReactNode } from 'react';
+import {
+  useCallback,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
 
+/** Which sections the user has folded, by title — a per-device convenience. */
+const SECTIONS_KEY = 'emulsion.sections.v1';
+
+function readFolded(): Record<string, boolean> {
+  try {
+    return JSON.parse(localStorage.getItem(SECTIONS_KEY) ?? '{}') as Record<string, boolean>;
+  } catch {
+    return {};
+  }
+}
+
+function writeFolded(title: string, folded: boolean) {
+  try {
+    const all = readFolded();
+    if (folded) all[title] = true;
+    else delete all[title];
+    localStorage.setItem(SECTIONS_KEY, JSON.stringify(all));
+  } catch {
+    // A refused write (private mode, quota) only costs the fold on reload.
+  }
+}
+
+/**
+ * A disclosure group. The header is one button — chevron, title and the
+ * section's summary reading — so a folded section still reports its state.
+ * The body springs open on a 0fr→1fr grid row: the height is the content's
+ * own, never a guessed max-height, and an interrupted fold retargets from
+ * wherever it is.
+ */
 export function Section({
   title,
   meta,
@@ -20,14 +56,88 @@ export function Section({
   children: ReactNode;
   accent?: boolean;
 }) {
+  const bodyId = useId();
+  const [open, setOpen] = useState(() => readFolded()[title] !== true);
+  const toggle = () =>
+    setOpen((was) => {
+      writeFolded(title, was);
+      return !was;
+    });
+
   return (
-    <section className={`panel-section${accent ? ' is-accent' : ''}`}>
-      <header className="panel-section__head">
-        <h2 className="label">{title}</h2>
-        {meta ? <div className="panel-section__meta num">{meta}</div> : null}
-      </header>
-      <div className="panel-section__body">{children}</div>
+    <section className={`panel-section${accent ? ' is-accent' : ''}${open ? ' is-open' : ''}`}>
+      <h2 className="panel-section__heading">
+        <button
+          type="button"
+          className="panel-section__head"
+          aria-expanded={open}
+          aria-controls={bodyId}
+          onClick={toggle}
+        >
+          <svg className="panel-section__chevron" viewBox="0 0 10 10" aria-hidden="true">
+            <path d="M3.5 2 L6.5 5 L3.5 8" />
+          </svg>
+          <span className="label">{title}</span>
+          {meta ? <span className="panel-section__meta num">{meta}</span> : null}
+        </button>
+      </h2>
+      <div className="panel-section__collapse" id={bodyId}>
+        <div className="panel-section__clip">
+          <div className="panel-section__body">{children}</div>
+        </div>
+      </div>
     </section>
+  );
+}
+
+/**
+ * The explanation behind a control, one tap away. The bench's hints are long
+ * and they are the point — they say what the model is doing — but read once
+ * they are clutter, so they fold behind an info button rather than going.
+ * The hint stays the control's accessible description either way.
+ */
+function useHint() {
+  const [open, setOpen] = useState(false);
+  return { open, toggle: () => setOpen((o) => !o) };
+}
+
+function HintButton({
+  label,
+  hintId,
+  open,
+  onToggle,
+}: {
+  label: string;
+  hintId: string;
+  open: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      className={`control__info${open ? ' is-on' : ''}`}
+      aria-expanded={open}
+      aria-controls={hintId}
+      aria-label={`About ${label}`}
+      onClick={onToggle}
+    >
+      <svg viewBox="0 0 16 16" aria-hidden="true">
+        <circle cx="8" cy="8" r="6.25" />
+        <path d="M8 7.2 V11.2 M8 4.9 V5" />
+      </svg>
+    </button>
+  );
+}
+
+function Hint({ id, open, children }: { id: string; open: boolean; children: ReactNode }) {
+  return (
+    <div className={`control__hint-wrap${open ? ' is-open' : ''}`}>
+      <div className="control__hint-clip">
+        <p className="control__hint" id={id}>
+          {children}
+        </p>
+      </div>
+    </div>
   );
 }
 
@@ -61,6 +171,7 @@ export function Slider({
   onChange,
 }: SliderProps) {
   const id = useId();
+  const tip = useHint();
   const decimals = step >= 1 ? 0 : Math.min(3, Math.ceil(-Math.log10(step)));
   const text = format ? format(value) : value.toFixed(decimals);
   const pct = ((value - min) / (max - min)) * 100;
@@ -68,9 +179,14 @@ export function Slider({
   return (
     <div className={`control${disabled ? ' is-disabled' : ''}`}>
       <div className="control__row">
-        <label className="control__label" htmlFor={id} title={hint}>
-          {label}
-        </label>
+        <span className="control__name">
+          <label className="control__label" htmlFor={id}>
+            {label}
+          </label>
+          {hint ? (
+            <HintButton label={label} hintId={`${id}-hint`} open={tip.open} onToggle={tip.toggle} />
+          ) : null}
+        </span>
         <output className="control__value num" htmlFor={id}>
           {text}
           {unit ? <span className="control__unit">{unit}</span> : null}
@@ -100,9 +216,9 @@ export function Slider({
         />
       </div>
       {hint ? (
-        <p className="control__hint" id={`${id}-hint`}>
+        <Hint id={`${id}-hint`} open={tip.open}>
           {hint}
-        </p>
+        </Hint>
       ) : null}
     </div>
   );
@@ -182,18 +298,30 @@ export function Choice<T extends string>({
   swatch?: string;
 }) {
   const id = useId();
+  const tip = useHint();
   const selected = options.find((o) => o.value === value);
   const dot = selected?.swatch ?? swatch;
+  const note = selected?.detail ?? hint;
   return (
     <div className="control control--choice">
       <div className="control__row">
-        <label className="control__label" htmlFor={id}>
-          {label}
-        </label>
+        <span className="control__name">
+          <label className="control__label" htmlFor={id}>
+            {label}
+          </label>
+          {note ? (
+            <HintButton label={label} hintId={`${id}-hint`} open={tip.open} onToggle={tip.toggle} />
+          ) : null}
+        </span>
       </div>
       <div className={`select${dot ? ' has-swatch' : ''}`}>
         {dot ? <span className="select__swatch" aria-hidden="true" style={{ background: dot }} /> : null}
-        <select id={id} value={value} onChange={(e) => onChange(e.target.value as T)}>
+        <select
+          id={id}
+          value={value}
+          aria-describedby={note ? `${id}-hint` : undefined}
+          onChange={(e) => onChange(e.target.value as T)}
+        >
           {options.map((o) => (
             <option key={o.value} value={o.value}>
               {o.label}
@@ -204,8 +332,10 @@ export function Choice<T extends string>({
           <path d="M3 5l3 3 3-3" fill="none" stroke="currentColor" strokeWidth="1.2" />
         </svg>
       </div>
-      {(selected?.detail ?? hint) ? (
-        <p className="control__hint">{selected?.detail ?? hint}</p>
+      {note ? (
+        <Hint id={`${id}-hint`} open={tip.open}>
+          {note}
+        </Hint>
       ) : null}
     </div>
   );
@@ -254,6 +384,34 @@ export function SegmentedControl<T extends string>({
   onChange: (v: T) => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  /** The selected segment's box, which the sliding thumb takes. */
+  const [thumb, setThumb] = useState<{ x: number; w: number } | null>(null);
+  /** Off for the first placement, so the thumb appears in place instead of
+      sliding in from the left edge on mount. */
+  const [ready, setReady] = useState(false);
+
+  // One thumb that slides between segments, rather than each segment lighting
+  // itself: the selection reads as one object moving, which is the motion
+  // that tells you where it went. Measured from the live layout, so segments
+  // of any width work, and re-measured when the group reflows.
+  useLayoutEffect(() => {
+    const group = ref.current;
+    if (!group) return;
+    const place = () => {
+      const on = group.querySelector<HTMLButtonElement>('[aria-checked="true"]');
+      setThumb(on ? { x: on.offsetLeft, w: on.offsetWidth } : null);
+    };
+    place();
+    const ro = new ResizeObserver(place);
+    ro.observe(group);
+    return () => ro.disconnect();
+  }, [value, options.length]);
+
+  useLayoutEffect(() => {
+    if (!thumb || ready) return;
+    const raf = requestAnimationFrame(() => setReady(true));
+    return () => cancelAnimationFrame(raf);
+  }, [thumb, ready]);
 
   // A radiogroup is one tab stop whose options the arrows walk — the plain
   // tab stops browsers give a row of buttons make four modes four stops.
@@ -275,7 +433,20 @@ export function SegmentedControl<T extends string>({
   };
 
   return (
-    <div className="segmented" role="radiogroup" aria-label={label} ref={ref} onKeyDown={onKeyDown}>
+    <div
+      className={`segmented${ready ? ' is-ready' : ''}`}
+      role="radiogroup"
+      aria-label={label}
+      ref={ref}
+      onKeyDown={onKeyDown}
+    >
+      {thumb ? (
+        <span
+          className="segmented__thumb"
+          aria-hidden="true"
+          style={{ width: thumb.w, transform: `translateX(${thumb.x}px)` }}
+        />
+      ) : null}
       {options.map((o) => (
         <button
           key={o.value}

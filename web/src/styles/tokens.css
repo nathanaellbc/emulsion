@@ -1,82 +1,80 @@
 /*
- * The darkroom instrument, under glass.
+ * The darkroom instrument, in Liquid Glass.
  *
- * Still a safelight room — the photograph is the only fully bright object on
- * screen and every piece of chrome is held below it in value. What changed is
- * the material: chrome is now translucent glass floating on a near-black
- * ground, lit by a warm ambient wash rather than filled with it.
+ * Still a safelight room: the photograph is the only fully bright object on
+ * screen and every piece of chrome is held below it in value. The chrome is a
+ * functional layer floating over the work — toolbar groups and one inspector
+ * panel of neutral glass on a near-black ground — and nothing in it carries a
+ * hue except the one primary action.
  *
  * The one working risk of glass in a darkroom is colour bleed — a panel that
  * lets the print's hue through sits next to the print and skews your read of
  * it. Every blurred surface therefore desaturates what passes through it
- * (see --blur), so the rail can pick up a print's *value* but never its cast.
+ * (see --blur), so the chrome can pick up a print's *value* but never its cast.
+ *
+ * Geometry is concentric: a nested shape's radius is its container's radius
+ * minus the inset between them, so every curve in a stack runs parallel. The
+ * ramp below is built that way — panel 18 with a 12 inset holds 6, a toolbar
+ * group 14 with a 4 inset holds 10, a 6 trough with a 2 inset holds 4.
  */
 
 :root {
-  /* The ground. There is only one now: every surface above it is glass, so the
-     old ascending --surface ramp had nothing left to describe. Cool-neutral,
-     because the warmth comes from the ambient wash rather than from the greys —
-     which is what lets glass over black stay neutral. */
-  --ground: #060608;
+  /* The ground: neutral, near-black, and the only opaque colour on screen
+     besides the print. */
+  --ground: #0b0b0c;
 
-  /* Glass. Fills are white-over-black at low alpha so they read as lit
-     material rather than as painted panels, and stack predictably: a raised
-     element is simply more of the same light. */
-  --glass: rgba(255, 255, 255, 0.045);
-  --glass-hover: rgba(255, 255, 255, 0.075);
-  --glass-raised: rgba(255, 255, 255, 0.11);
-  --glass-sunken: rgba(0, 0, 0, 0.32);
+  /* Materials — the glass itself. Thick for the structural inspector, regular
+     for the floating toolbar groups. Both are neutral: no warm or cool cast
+     reaches the surface a grade is judged against. */
+  --material-thick: rgba(30, 30, 34, 0.72);
+  --material-regular: rgba(44, 44, 48, 0.62);
+  --material-edge: rgba(255, 255, 255, 0.1);
 
-  /* Panels are LIT, not filled: a diagonal gradient from a lighter top-left
-     down to near-invisible, over the glass fill, is what makes a floating
-     card read as a physical slab catching light rather than as a grey box. */
-  --panel-sheen: linear-gradient(
-    145deg,
-    rgba(255, 255, 255, 0.085) 0%,
-    rgba(255, 255, 255, 0.028) 42%,
-    rgba(255, 255, 255, 0.008) 100%
-  );
-  --panel-border: linear-gradient(
-    160deg,
-    rgba(255, 255, 255, 0.16) 0%,
-    rgba(255, 255, 255, 0.05) 38%,
-    rgba(255, 255, 255, 0.03) 70%,
-    rgba(255, 255, 255, 0.09) 100%
-  );
+  /* Fills that live ON glass. Never glass on glass: a control on the panel is
+     a plain translucent fill, not another blurred layer. */
+  --glass: rgba(255, 255, 255, 0.06);
+  --glass-hover: rgba(255, 255, 255, 0.1);
+  --glass-raised: rgba(255, 255, 255, 0.16);
+  --glass-sunken: rgba(0, 0, 0, 0.24);
 
-  /* Hairlines. Two weights, as before — a structural rule and a whisper —
-     but now brighter at the top edge of a card than the bottom, which is what
-     makes a translucent panel read as having thickness. */
-  --rule: rgba(255, 255, 255, 0.075);
-  --rule-strong: rgba(255, 255, 255, 0.15);
-  --sheen: rgba(255, 255, 255, 0.11);
+  /* Kept for the few rules that still layer a sheen; flat now — the edge-lit
+     bevel read as a lopsided corner and is gone. */
+  --panel-sheen: linear-gradient(transparent, transparent);
+  --panel-border: linear-gradient(transparent, transparent);
 
-  /* Type. Cool-neutral to match the ground. --ink-faint is the annotation
-     voice — hints, metas, ticks — and it is text, not texture: at hint sizes
-     it must still clear 4.5:1 on the slab, which #606069 never did. */
+  /* Hairlines, even on every side. */
+  --rule: rgba(255, 255, 255, 0.08);
+  --rule-strong: rgba(255, 255, 255, 0.14);
+  --sheen: transparent;
+
+  /* Type, as Apple's dark label ramp: primary, secondary, tertiary. Tertiary
+     is still text — at hint sizes it clears 4.5:1 on the thick material. */
   --ink: #f2f2f5;
-  --ink-muted: #9a9aa4;
-  --ink-faint: #8a8a94;
+  --ink-muted: rgba(235, 235, 245, 0.66);
+  --ink-faint: rgba(235, 235, 245, 0.55);
 
-  /* The accent is silver — the palette's one active light is neutral, which is
-     what keeps the chrome monochrome over the red/blue ambience. It is *light*
-     — numerals, slider fills, focus rings, the one primary action — never a
-     button fill. Active state is carried by raised glass, which is what keeps
-     the palette moody rather than tinted. */
+  /* The data light stays silver: numerals, slider fills, the metered grey.
+     It is light, not colour. */
   --accent: #e9e9ee;
   --accent-dim: #9a9aa4;
-  --accent-wash: rgba(233, 233, 238, 0.09);
+  --accent-wash: rgba(233, 233, 238, 0.08);
+
+  /* The one tint in the interface: the primary action and the focus ring.
+     Dark enough under white text to clear 4.5:1. */
+  --tint: #0b6bd6;
+  --tint-hover: #1877e0;
+  --on-tint: #ffffff;
 
   /* The three records, at their own hues, used consistently everywhere a
      record is shown: the curve plot, the printer lights, the readouts. */
-  --record-r: #e2604f;
-  --record-g: #5eb073;
-  --record-b: #558fdc;
+  --record-r: #ef7462;
+  --record-g: #6fc285;
+  --record-b: #6ea2ea;
 
   --warn: #e05a3f;
-  --warn-wash: rgba(224, 90, 63, 0.12);
+  --warn-wash: rgba(224, 90, 63, 0.14);
 
-  --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text',
+  --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro Display',
     'Helvetica Neue', 'Segoe UI', Roboto, ui-sans-serif, Arial, sans-serif;
   --font-mono: ui-monospace, 'SF Mono', 'Cascadia Mono', 'JetBrains Mono',
     'Roboto Mono', Menlo, Consolas, monospace;
@@ -90,51 +88,89 @@
   --s6: 32px;
   --s7: 48px;
 
-  /* Soft geometry. Controls are pills or near-pills; cards are generously
-     rounded so they read as objects laid on the ground rather than as
-     regions cut out of it. */
-  --radius-sm: 8px;
-  --radius: 12px;
-  --radius-lg: 20px;
+  /* The concentric ramp (see the header). */
+  --r: 6px;
+  --r-in: 4px;
+  --r-btn: 10px;
+  --r-group: 14px;
+  --r-panel: 18px;
+  --r-sheet: 22px;
+  --radius-sm: var(--r-in);
+  --radius: var(--r);
+  --radius-lg: var(--r-panel);
   --radius-pill: 999px;
 
-  /* saturate() below 1 is deliberate, and milder than the deviation log
-     records: the ambience keeps its hue at the page edges, where nothing is
-     being judged, while the blur applies a slight desaturation guard so the
-     wash drifts toward the chrome only as light, never as dye. */
-  --blur: blur(26px) saturate(0.85);
-  --blur-light: blur(16px) saturate(0.85);
+  /* saturate() below 1 is the colour-bleed guard described in the header. */
+  --blur: blur(36px) saturate(0.8);
+  --blur-light: blur(24px) saturate(0.8);
 
-  /* Depth. A card is lit from above (inset sheen) and casts below it. */
-  --shadow-card: inset 0 1px 0 var(--sheen), 0 18px 44px rgba(0, 0, 0, 0.55);
-  --shadow-raised: inset 0 1px 0 rgba(255, 255, 255, 0.14),
-    0 2px 8px rgba(0, 0, 0, 0.55);
-  --shadow-puck: 0 0 0 1px rgba(0, 0, 0, 0.55), 0 2px 7px rgba(0, 0, 0, 0.6),
-    0 0 14px rgba(255, 255, 255, 0.22);
+  /* Depth is an even, soft falloff on every side — never a light from above,
+     which reads as a bevel and makes a symmetric corner look lopsided. */
+  --shadow-card: 0 0 60px rgba(0, 0, 0, 0.45);
+  --shadow-group: 0 0 24px rgba(0, 0, 0, 0.35);
+  --shadow-raised: 0 0 3px rgba(0, 0, 0, 0.3);
+  --shadow-puck: 0 0 0 0.5px rgba(0, 0, 0, 0.4), 0 0 6px rgba(0, 0, 0, 0.45);
 
-  --rail-width: 356px;
+  /* The inspector's material as it actually composites over the ground,
+     made solid — for the pinned strips that sit over scrolling content — and
+     its sunken trough over that. */
+  --rail-solid: rgb(25, 25, 28);
+  --rail-trough: rgb(18, 18, 20);
 
-  --ease: cubic-bezier(0.2, 0, 0.1, 1);
-  --dur: 160ms;
+  --rail-width: 340px;
+  --toolbar-h: 40px;
+
+  /* Motion. Two families, as Apple uses them:
+     - --spring: anything that MOVES (indicators, sheets, expanding sections).
+       A critically damped spring, response 0.35 s — quick out of the gate,
+       settles without overshoot. CSS transitions retarget from the current
+       value, so an interrupted move continues from where it is.
+     - --ease: anything that only CHANGES (colour, opacity) — a symmetric
+       ease-in-out, so a state crossfades in and out at the same pace.
+     --ease-in is for exits: things leave accelerating, the mirror of the way
+     they arrived. */
+  --spring: cubic-bezier(0.32, 0.72, 0, 1);
+  --spring-bouncy: cubic-bezier(0.34, 1.3, 0.64, 1);
+  --ease: cubic-bezier(0.42, 0, 0.58, 1);
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in: cubic-bezier(0.42, 0, 1, 1);
+  --dur-fast: 140ms;
+  --dur: 240ms;
+  --dur-move: 560ms;
+  --dur-exit: 180ms;
+}
+
+/* Where the engine can draw a real spring, use one: the same critically
+   damped response 0.35 s, sampled — and a 0.85-damped one, kept for the few
+   moves a gesture has thrown. */
+@supports (transition-timing-function: linear(0, 1)) {
+  :root {
+    --spring: linear(0, 0.0751, 0.2266, 0.3895, 0.5357, 0.656, 0.75, 0.821, 0.8734, 0.9113,
+      0.9383, 0.9574, 0.9707, 0.98, 0.9864, 0.9908, 0.9938, 0.9958, 0.9972, 0.9981, 0.9987,
+      0.9992, 0.9994, 0.9996, 1);
+    --spring-bouncy: linear(0, 0.0809, 0.2498, 0.4348, 0.6007, 0.7341, 0.8334, 0.9028, 0.9486,
+      0.977, 0.9933, 1.0018, 1.0054, 1.0063, 1.0058, 1.0047, 1.0036, 1.0025, 1.0017, 1.0011,
+      1.0006, 1.0003, 1.0001, 1, 1);
+  }
 }
 
 /* The interface commits to dark. A darkroom that follows the system theme into
-   daylight is not a darkroom, and the print would be unjudgeable. */
+   daylight is not a darkroom, and the print would be unjudgeable.
+   Reduced motion keeps the crossfades — they carry meaning without moving
+   anything — and drops every translation, scale and spring to an instant. */
 @media (prefers-reduced-motion: reduce) {
   :root {
-    --dur: 0ms;
+    --dur-move: 0ms;
   }
 }
 
 /* Where backdrop-filter is unavailable, glass would render as a flat wash of
-   near-transparent white over the ground and lose all separation. Opaque
+   near-transparent grey over the ground and lose all separation. Opaque
    fallbacks keep the hierarchy; only the blur is lost. */
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   :root {
-    --glass: #16161c;
-    --glass-hover: #1d1d24;
-    --glass-raised: #26262f;
-    --glass-sunken: #050507;
+    --material-thick: #1c1c1f;
+    --material-regular: #242428;
   }
 }
 
@@ -143,21 +179,22 @@
    surface's value order intact. */
 @media (prefers-reduced-transparency: reduce) {
   :root {
-    --glass: #16161c;
-    --glass-hover: #1d1d24;
-    --glass-raised: #26262f;
-    --glass-sunken: #050507;
+    --material-thick: #1c1c1f;
+    --material-regular: #242428;
     --blur: none;
     --blur-light: none;
   }
 }
 
 /* Readers asking for more contrast get hairlines that are edges, not
-   whispers — the structure of the interface survives without the mood. */
+   whispers, and solid materials. */
 @media (prefers-contrast: more) {
   :root {
     --rule: rgba(255, 255, 255, 0.26);
     --rule-strong: rgba(255, 255, 255, 0.42);
+    --material-edge: rgba(255, 255, 255, 0.4);
+    --material-thick: #1c1c1f;
+    --material-regular: #242428;
   }
 }
 
@@ -200,13 +237,12 @@ body {
 }
 
 :focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--tint);
   outline-offset: 2px;
-  border-radius: var(--radius-sm);
 }
 
 ::selection {
-  background: var(--accent-dim);
+  background: var(--tint);
   color: #fff;
 }
 
@@ -220,12 +256,13 @@ body {
   letter-spacing: 0.01em;
 }
 
+/* A heading voice, not a caption voice: sentence case, semibold, the tracking
+   Apple's text styles give 13 pt. */
 .label {
-  font-size: 10px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--ink-muted);
-  font-weight: 500;
+  font-size: 13px;
+  letter-spacing: -0.005em;
+  color: var(--ink);
+  font-weight: 600;
 }
 
 .sr-only {

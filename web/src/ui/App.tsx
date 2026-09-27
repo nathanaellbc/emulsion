@@ -516,17 +516,19 @@ export function App() {
           <span className="topbar__sub">Digital film laboratory</span>
         </div>
         <div className="topbar__actions">
-          <button type="button" className="btn btn--ghost" onClick={() => fileInput.current?.click()}>
-            Open
-          </button>
-          <button
-            type="button"
-            className={`btn btn--ghost${resetArmed ? ' btn--armed' : ''}`}
-            onClick={resetArmed ? doReset : armReset}
-            disabled={!source}
-          >
-            {resetArmed ? 'Confirm reset' : 'Reset'}
-          </button>
+          <div className="topbar__group">
+            <button type="button" className="btn btn--ghost" onClick={() => fileInput.current?.click()}>
+              Open
+            </button>
+            <button
+              type="button"
+              className={`btn btn--ghost${resetArmed ? ' btn--armed' : ''}`}
+              onClick={resetArmed ? doReset : armReset}
+              disabled={!source}
+            >
+              {resetArmed ? 'Confirm reset' : 'Reset'}
+            </button>
+          </div>
           <button
             type="button"
             className="btn btn--primary"
