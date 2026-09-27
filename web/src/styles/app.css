@@ -589,21 +589,7 @@ body,
 }
 
 /* Depth estimation progress: a label and a hairline bar in the data light. */
-.depth-status {
-  display: grid;
-  gap: 8px;
-  padding: 10px 12px;
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--ink);
-  background: var(--glass-sunken);
-  border-radius: var(--r);
-  animation: fade-in var(--dur) var(--ease) both;
-}
 
-.depth-status__label .num {
-  color: var(--ink-muted);
-}
 
 .depth-status__bar {
   position: relative;
@@ -631,11 +617,6 @@ body,
   to { transform: translateX(340%); }
 }
 
-.depth-status__meta {
-  font-size: 10.5px;
-  font-weight: 500;
-  color: var(--ink-faint);
-}
 
 @media (prefers-reduced-motion: reduce) {
   .depth-status__bar i.is-indeterminate { animation: none; width: 100%; opacity: 0.4; }
@@ -2594,4 +2575,313 @@ body,
   .panel-section.is-open .panel-section__body {
     transform: none;
   }
+}
+
+/* ============================================================================
+   The lens card — where the depth map stands, and the one action it needs
+   ========================================================================= */
+
+/* A sunken card on the panel (never glass on glass): a line of status or
+   explanation, a full-width action, and the small print under it. */
+.lens-card {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border-radius: var(--r-btn);
+  background: var(--glass-sunken);
+  animation: fade-in var(--dur) var(--ease) both;
+}
+
+.lens-card--warn {
+  background: var(--warn-wash);
+}
+
+.lens-card__row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s2);
+}
+
+.lens-card__title {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink);
+}
+
+.lens-card__text {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--ink-muted);
+}
+
+.lens-card__meta {
+  font-size: 11px;
+  color: var(--ink-faint);
+}
+
+/* A full-width action: the natural button for a card's one decision. */
+.btn--block {
+  display: flex;
+  width: 100%;
+  height: 40px;
+}
+
+.lens-card .btn:not(.btn--primary) {
+  background: var(--glass-hover);
+}
+
+/* ============================================================================
+   iPhone — the layout this app is used on most
+   ========================================================================= */
+
+/* One row under the picture, not two chrome rows around it: the caption on
+   the left and the Compare / Clipping group on the right share the strip
+   between the photograph and the bench. The picture gets the height the
+   second row used to take, and nothing floats over it but its own focus
+   ring and seam. */
+@media (max-width: 560px) {
+  .viewport {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-rows: minmax(0, 1fr) auto auto;
+    grid-template-areas:
+      'frame frame'
+      'foot bar'
+      'grip grip';
+    column-gap: var(--s2);
+  }
+
+  .viewport__frame {
+    grid-area: frame;
+    padding: var(--s2) var(--s3) var(--s2);
+  }
+
+  .viewport__foot {
+    grid-area: foot;
+    align-self: center;
+    min-height: var(--toolbar-h);
+    padding: 0 0 0 var(--s4);
+    gap: var(--s2);
+    background: transparent;
+  }
+
+  /* The file name alone: the stock pairing is on the Film bench, and a
+     half-cut sentence reads as a mistake. */
+  .viewport__caption {
+    display: none;
+  }
+
+  .viewport__file {
+    max-width: none;
+    flex-shrink: 1;
+    color: var(--ink-muted);
+    font-size: 12px;
+  }
+
+  .viewport__bar {
+    grid-area: bar;
+    align-self: center;
+    justify-self: end;
+    margin: 0 var(--s3) 0 0;
+    max-width: none;
+  }
+
+  .viewport__grip {
+    grid-area: grip;
+  }
+
+  /* The row the picture needs: its width over its aspect, plus the frame's
+     padding (16), the caption strip (44 + 8) and the grip (22). */
+  .stage {
+    grid-template-rows:
+      var(--picture-h, clamp(160px, calc((100vw - 2 * var(--s3)) / var(--print-aspect, 1.5) + 90px), 68svh))
+      minmax(0, 1fr);
+  }
+
+  /* A sheet on a phone is solid: over a scrim, a translucent sheet lets the
+     bench's controls read through its own, which is two interfaces at once.
+     The scrim is deeper for the same reason. */
+  .export__backdrop {
+    background: rgba(0, 0, 0, 0.62);
+    padding: 0;
+  }
+
+  .export {
+    background: var(--rail-solid);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    border-radius: var(--r-sheet) var(--r-sheet) 0 0;
+    border-bottom: 0;
+    max-height: calc(100dvh - env(safe-area-inset-top, 0px) - var(--s5));
+  }
+
+  .export__actions {
+    position: sticky;
+    bottom: 0;
+    background: var(--rail-solid);
+  }
+
+  .export__actions .btn {
+    height: 44px;
+    border-radius: var(--r-btn);
+    font-size: 15px;
+  }
+
+  /* The one line a toolbar row has room for. */
+  .topbar {
+    flex-wrap: nowrap;
+  }
+
+  .topbar__brand {
+    padding: 0 12px;
+  }
+}
+
+/* Every touch target is 44 pt, as the Human Interface Guidelines ask. Where
+   the drawn control is smaller — the info glyph, a button inside a toolbar
+   group — its hit area grows invisibly around it instead of the drawing
+   growing, so the density of the bench is unchanged. */
+@media (pointer: coarse) {
+  .control__info {
+    width: 22px;
+    height: 22px;
+    margin: -2px 0;
+  }
+
+  .control__info::before {
+    content: '';
+    position: absolute;
+    inset: -11px;
+  }
+
+  .topbar__group .btn,
+  .viewport__bar .chip {
+    position: relative;
+    height: 36px;
+  }
+
+  .topbar__group .btn::before,
+  .viewport__bar .chip::before {
+    content: '';
+    position: absolute;
+    inset: -4px 0;
+  }
+
+  .topbar .btn--primary,
+  .topbar__brand,
+  .topbar__group,
+  .viewport__bar {
+    height: 44px;
+  }
+
+  .panel .segmented button,
+  .export .segmented button {
+    min-height: 44px;
+  }
+
+  .rail-tab {
+    height: 44px;
+  }
+
+  .btn--block {
+    height: 44px;
+    font-size: 15px;
+  }
+
+  .link {
+    padding: 12px 0;
+  }
+}
+
+/* On a phone a segmented control in the bench spans the column, as iOS draws
+   one in a form: equal segments, each an easy target, the thumb sliding the
+   full width. */
+@media (max-width: 560px) {
+  .panel .segmented {
+    display: flex;
+    width: 100%;
+  }
+
+  .panel .segmented button {
+    flex: 1 1 0;
+  }
+}
+
+@media (pointer: coarse) {
+  .select select {
+    height: 44px;
+  }
+
+  .export__opt {
+    min-height: 44px;
+  }
+
+  .link {
+    line-height: 20px;
+  }
+}
+
+/* The scroll edge. Where the bench slides under the pinned picture, it
+   dissolves into the ground over a few points instead of being cut at a hard
+   line — the edge effect iOS draws under a bar, and only where content
+   actually meets the pinned block. */
+@media (max-width: 900px) and (min-height: 521px), (max-width: 560px) {
+  .viewport::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 100%;
+    height: 18px;
+    background: linear-gradient(var(--ground), rgba(11, 11, 12, 0));
+    pointer-events: none;
+  }
+}
+
+/* The empty state on a touch screen: nothing can be dropped on a phone, so
+   the dashed drop outline — a desktop affordance — goes, and the page is a
+   plain title, the lede and a stack of two full-width buttons. The second is
+   quieter: it is the RAW route for when the photo library hides RAW files. */
+@media (pointer: coarse) {
+  .dropzone {
+    border-color: transparent;
+    padding-inline: var(--s3);
+  }
+
+  .dropzone__actions--touch {
+    display: grid;
+    gap: var(--s2);
+  }
+
+  .dropzone__actions--touch .btn:not(.btn--primary) {
+    background: var(--material-regular);
+    border: 1px solid var(--material-edge);
+  }
+
+  .dropzone__actions--touch .dropzone__drop {
+    margin-top: 2px;
+    font-size: 12px;
+    color: var(--ink-faint);
+    text-align: center;
+  }
+
+  .dropzone__lede {
+    margin-bottom: var(--s5);
+  }
+}
+
+/* A slider's touchable band is 44 pt tall while its track stays a hairline:
+   the input grows, and a negative margin keeps the row's rhythm. */
+@media (pointer: coarse) {
+  .slider input[type='range'] {
+    height: 44px;
+    margin-block: -12px;
+  }
+}
+
+/* The notices never sit flush against the pinned plot's lower edge: a few
+   points of air keep their first line clear of it at every scroll position. */
+.rail > .notices {
+  padding-top: var(--s2);
 }

@@ -22,7 +22,7 @@ import { F_STOPS, NORMAL_FOCAL_MM, nearestStop } from '../core/defocus';
 import type { DepthMap } from '../depth/estimate';
 import { DEPTH_MODEL } from '../depth/model';
 import type { DepthStatus } from './App';
-import { Choice, PointStepper, Section, SegmentedControl, Slider } from './controls';
+import { Choice, Field, PointStepper, Section, SegmentedControl, Slider } from './controls';
 
 /* The dot at the head of the stock dropdown. It is not decoration: each family
    is a physically different thing to hold up to the light, and the swatch says
@@ -321,10 +321,10 @@ function LensSection({
       title="Lens"
       meta={d.enabled ? <>{Math.round(r.focalLengthMm)} mm · f/{r.fNumber}</> : <>defocus off</>}
     >
-      <div className="control">
-        <div className="control__row">
-          <span className="control__label">Synthetic defocus</span>
-        </div>
+      <Field
+        label="Synthetic defocus"
+        hint={`The picture’s depth is estimated on this device by ${DEPTH_MODEL.name} (${DEPTH_MODEL.license}); the photograph never leaves it. The blur is a thin lens’s circle of confusion, applied to the scene’s light before the film — so defocused highlights reach the negative as bright discs, and the halation and the film’s shoulder act on them.`}
+      >
         <SegmentedControl
           label="Synthetic defocus"
           value={d.enabled ? 'on' : 'off'}
@@ -338,27 +338,22 @@ function LensSection({
           ]}
           onChange={(v) => update((draft) => (draft.defocus.enabled = v === 'on'))}
         />
-        <p className="control__hint">
-          The picture’s depth is estimated on this device by {DEPTH_MODEL.name} ({DEPTH_MODEL.license});
-          the photograph never leaves it. The blur is a thin lens’s circle of confusion, applied to the
-          scene’s light before the film — so defocused highlights reach the negative as bright discs,
-          and the halation and the film’s shoulder act on them.
-        </p>
-      </div>
+      </Field>
 
       {d.enabled ? (
         <>
           {status.kind === 'working' ? (
-            <div className="depth-status" role="status">
-              <span className="depth-status__label">
-                {progress ? PHASE_LABEL[progress.phase] : 'Starting'}
+            <div className="lens-card" role="status">
+              <div className="lens-card__row">
+                <span className="lens-card__title">
+                  {progress ? PHASE_LABEL[progress.phase] : 'Starting'}
+                </span>
                 {measured ? (
-                  <span className="num">
-                    {' '}
+                  <span className="lens-card__meta num">
                     {(progress.loaded / 1e6).toFixed(1)} / {(progress.total / 1e6).toFixed(1)} MB
                   </span>
                 ) : null}
-              </span>
+              </div>
               <span className="depth-status__bar" aria-hidden="true">
                 <i
                   className={measured ? undefined : 'is-indeterminate'}
@@ -373,39 +368,45 @@ function LensSection({
           ) : null}
 
           {status.kind === 'needs-download' ? (
-            <p className="control__hint control__hint--action">
-              The depth model is not on this device yet. It downloads once — about{' '}
-              <span className="num">{status.megabytes} MB</span> — and stays for every photograph
-              after, offline included.{' '}
-              <button type="button" className="link" onClick={lens.onEstimate}>
-                Download and estimate depth
+            <div className="lens-card">
+              <p className="lens-card__text">
+                The depth model downloads once and stays on this device — offline included.
+              </p>
+              <button type="button" className="btn btn--primary btn--block" onClick={lens.onEstimate}>
+                Download depth model · <span className="num">{status.megabytes} MB</span>
               </button>
-            </p>
+            </div>
           ) : null}
 
           {status.kind === 'error' ? (
-            <p className="notice notice--warn">
-              Depth estimation failed: {status.message}{' '}
-              <button type="button" className="link" onClick={lens.onEstimate}>
+            <div className="lens-card lens-card--warn" role="alert">
+              <p className="lens-card__text">Depth estimation failed: {status.message}</p>
+              <button type="button" className="btn btn--block" onClick={lens.onEstimate}>
                 Try again
               </button>
-            </p>
+            </div>
           ) : null}
 
           {depth ? (
-            <p className="control__hint control__hint--action">
-              {lens.focusView
-                ? 'Tap the picture to focus there. The dimmed parts fall outside the depth of field.'
-                : 'The focus point is picked by tapping the picture in the Focus view.'}{' '}
-              <button type="button" className="link" onClick={() => lens.onFocusView(!lens.focusView)}>
-                {lens.focusView ? 'Back to the print' : 'Pick the focus point'}
+            <div className="lens-card">
+              <p className="lens-card__text">
+                {lens.focusView
+                  ? 'Tap the picture where it should be sharp. Dimmed parts fall outside the depth of field.'
+                  : 'Focus lands where you tap the picture.'}
+              </p>
+              <button
+                type="button"
+                className={`btn btn--block${lens.focusView ? ' btn--primary' : ''}`}
+                aria-pressed={lens.focusView}
+                onClick={() => lens.onFocusView(!lens.focusView)}
+              >
+                {lens.focusView ? 'Done' : 'Pick the focus point'}
               </button>
-              <br />
-              <span className="depth-status__meta num">
+              <span className="lens-card__meta num">
                 {depth.variant} · {depth.backend === 'webgpu' ? 'GPU' : 'CPU'} · {depth.inferMs} ms ·{' '}
                 {depth.width}×{depth.height}
               </span>
-            </p>
+            </div>
           ) : null}
 
           <Slider
@@ -683,14 +684,9 @@ function FilmPage({
           step={0.05}
           format={(v) => `${Math.round(v * 100)}%`}
           detents={[1]}
-          hint="DIR couplers release an inhibitor that suppresses development next to where it was released — a rim at every edge, and a green region suppressing the red and blue beside it. Not a sharpness control: it works on the local difference between records, which no saturation slider can reach. Agitation sets how far the inhibitor travels."
+          hint="DIR couplers release an inhibitor that suppresses development next to where it was released — a rim at every edge, and a green region suppressing the red and blue beside it. Not a sharpness control: it works on the local difference between records, which no saturation slider can reach. Agitation sets how far the inhibitor travels. The diffusion lengths are 1.2 µm and 6 µm at the film plane; a 35 mm frame rendered 2048 px across has a 17.6 µm pixel, so the effect is genuinely below the resolution until the export — it is not floored into visibility here."
           onChange={(v) => update((d) => (d.interlayer.couplerActivity = v))}
         />
-        <p className="control__hint">
-          The diffusion lengths are 1.2 µm and 6 µm at the film plane. A 35 mm frame rendered
-          2048 px across has a 17.6 µm pixel, so the effect is genuinely below the resolution
-          until the export — it is not floored into visibility here.
-        </p>
       </Section>
 
       <Section
@@ -710,10 +706,14 @@ function FilmPage({
         }
       >
         {resolved.printLut ? (
-          <div className="control">
-            <div className="control__row">
-              <span className="control__label">Engine</span>
-            </div>
+          <Field
+            label="Engine"
+            hint={
+              resolved.printEngine === 'lut'
+                ? 'Saturation, roll-off, shadow lift, neutral axis and silver are inside the measurement — they describe the print stock itself, and this LUT is that stock, measured.'
+                : 'The print is computed from the stock’s published curve parameters. The measured LUT for this stock is one toggle away.'
+            }
+          >
             <SegmentedControl
               label="Print engine"
               value={recipe.printEngine}
@@ -731,12 +731,7 @@ function FilmPage({
               ]}
               onChange={(v) => update((d) => (d.printEngine = v))}
             />
-            <p className="control__hint">
-              {resolved.printEngine === 'lut'
-                ? 'Saturation, roll-off, shadow lift, neutral axis and silver are inside the measurement — they describe the print stock itself, and this LUT is that stock, measured.'
-                : 'The print is computed from the stock’s published curve parameters. The measured LUT for this stock is one toggle away.'}
-            </p>
-          </div>
+          </Field>
         ) : (
           <p className="control__hint">
             No measured LUT ships for this stock, so it renders through the calculated model.
@@ -755,10 +750,17 @@ function FilmPage({
         />
 
         {resolved.printLut ? (
-          <div className={`control${lutIlluminantLive ? '' : ' is-disabled'}`}>
-            <div className="control__row">
-              <span className="control__label">Print illuminant</span>
-            </div>
+          <Field
+            label="Print illuminant"
+            disabled={!lutIlluminantLive}
+            hint={
+              lutIlluminantLive
+                ? 'The white point the print was measured under: 5500 K daylight, 6000 K, or 6500 K.'
+                : resolved.printLut.illuminants.length > 1
+                  ? 'The illuminant follows the measurement — switch the engine to Measured to choose it.'
+                  : 'This measurement ships in a single white point, so there is nothing to switch.'
+            }
+          >
             <SegmentedControl
               label="Print illuminant"
               value={resolved.printLut.illuminant}
@@ -771,14 +773,7 @@ function FilmPage({
                 lutIlluminantLive && update((d) => (d.printIlluminant = v as 'D55' | 'D60' | 'D65'))
               }
             />
-            <p className="control__hint">
-              {lutIlluminantLive
-                ? 'The white point the print was measured under: 5500 K daylight, 6000 K, or 6500 K.'
-                : resolved.printLut.illuminants.length > 1
-                  ? 'The illuminant follows the measurement — switch the engine to Measured to choose it.'
-                  : 'This measurement ships in a single white point, so there is nothing to switch.'}
-            </p>
-          </div>
+          </Field>
         ) : null}
 
         <div className={`lights${print.bypass ? ' is-inert' : ''}`}>
@@ -971,24 +966,17 @@ function FilmPage({
           }
           onChange={(v) => update((d) => (d.subtractive.density = v))}
         />
-        <div className="control">
-          <div className="control__row">
-            <span className="control__label">Density mode</span>
-          </div>
-          <div className={print.bypass ? 'control is-disabled' : 'control'}>
-            <SegmentedControl
-              label="Density mode"
-              value={recipe.subtractive.densityMode}
-              options={[
-                { value: 'suppress', label: 'Suppress', title: 'The slider adds neutral density' },
-                { value: 'multiply', label: 'Multiply', title: 'The slider thins the dyes' },
-              ]}
-              onChange={(v) =>
-                update((d) => (d.subtractive.densityMode = v as 'suppress' | 'multiply'))
-              }
-            />
-          </div>
-        </div>
+        <Field label="Density mode" disabled={print.bypass}>
+          <SegmentedControl
+            label="Density mode"
+            value={recipe.subtractive.densityMode}
+            options={[
+              { value: 'suppress', label: 'Suppress', title: 'The slider adds neutral density' },
+              { value: 'multiply', label: 'Multiply', title: 'The slider thins the dyes' },
+            ]}
+            onChange={(v) => update((d) => (d.subtractive.densityMode = v as 'suppress' | 'multiply'))}
+          />
+        </Field>
       </Section>
 
       <Section

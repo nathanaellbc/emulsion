@@ -33,18 +33,34 @@ export function Dropzone({
           the light that scatters off the back of the base and comes home red.
         </p>
 
-        <div className="dropzone__actions">
-          <button type="button" className="btn btn--primary btn--lg" onClick={() => input.current?.click()}>
-            Choose an image
-          </button>
-          <p className="dropzone__drop">
-            or drop one anywhere ·{' '}
-            <button type="button" className="link" onClick={() => rawInput.current?.click()}>
-              choose a RAW file
+        {coarse ? (
+          // A phone has no "drop anywhere", and a link mid-sentence is a
+          // small target in a paragraph: two stacked buttons, the photo
+          // library first, then the RAW route the library can hide.
+          <div className="dropzone__actions dropzone__actions--touch">
+            <button type="button" className="btn btn--primary btn--block" onClick={() => input.current?.click()}>
+              Choose a photo
             </button>
-            {coarse ? ' — some phone pickers hide RAW files; this chooser doesn’t' : null}
-          </p>
-        </div>
+            <button type="button" className="btn btn--block" onClick={() => rawInput.current?.click()}>
+              Choose a RAW file
+            </button>
+            <p className="dropzone__drop">
+              Some photo pickers hide RAW files (DNG, CR3, NEF…). The second button shows them.
+            </p>
+          </div>
+        ) : (
+          <div className="dropzone__actions">
+            <button type="button" className="btn btn--primary btn--lg" onClick={() => input.current?.click()}>
+              Choose an image
+            </button>
+            <p className="dropzone__drop">
+              or drop one anywhere ·{' '}
+              <button type="button" className="link" onClick={() => rawInput.current?.click()}>
+                choose a RAW file
+              </button>
+            </p>
+          </div>
+        )}
         {/* The primary picker uses the shared policy: a desktop and every
             non-Apple coarse pointer get the full extension list, so a RAW
             file is never greyed out of the front door; Apple's picker keeps

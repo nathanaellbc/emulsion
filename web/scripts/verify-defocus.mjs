@@ -11,20 +11,35 @@
  * the Depth Anything V2 Space (the bus, and the tower against the sky). The
  * photograph needs real depth — the test chart is flat. Writes the rendered
  * canvas for each state to outDir for inspection.
+ *
+ * DEVICE=iphone runs WebKit — Safari's engine — as an iPhone 15, which takes
+ * the phone profile (model.ts, depthProfile): the CPU worker, the 392 px
+ * input, the 1024 px guide and a worker torn down after the estimate.
+ * WebKit here is not iOS: it proves the path runs in Safari's engine, not
+ * that it fits an iPhone's memory.
  */
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { chromium } from 'playwright';
+import { chromium, devices, webkit } from 'playwright';
 
 const url = process.argv[2] ?? 'http://localhost:4173';
 const photo = process.argv[3] ?? 'public/test-chart.png';
 const outDir = process.argv[4] ?? 'defocus-out';
 mkdirSync(outDir, { recursive: true });
 
-const browser = await chromium.launch({ args: ['--enable-unsafe-swiftshader'] });
-const page = await browser.newPage({ viewport: { width: 2100, height: 1500 } });
+const iphone = process.env.DEVICE === 'iphone';
+const browser = iphone
+  ? await webkit.launch()
+  : await chromium.launch({ args: ['--enable-unsafe-swiftshader'] });
+const page = iphone
+  ? await (await browser.newContext({ ...devices['iPhone 15'] })).newPage()
+  : await browser.newPage({ viewport: { width: 2100, height: 1500 } });
 const errs = [];
-page.on('pageerror', (e) => errs.push('PAGEERR: ' + e.message));
+page.on('pageerror', (e) => {
+  // WebKit reports a ResizeObserver loop that settles within the frame as a
+  // page error; it predates defocus (the layout's own observers) and is not one.
+  if (!e.message.includes('ResizeObserver loop')) errs.push('PAGEERR: ' + e.message);
+});
 page.on('console', (m) => {
   // ONNX Runtime reports its node placement as a console error; it is a note.
   if (m.type() === 'error' && !m.text().includes('onnxruntime')) errs.push('CONSOLE: ' + m.text());
@@ -84,14 +99,16 @@ const offSubject = await sharpness(...subject);
 const offBack = await sharpness(...backdrop);
 
 await page.locator('[aria-label="Synthetic defocus"] [data-value="on"]').click();
-await page.getByRole('button', { name: 'Download and estimate depth' }).click();
+await page.getByRole('button', { name: /Download depth model/ }).click();
 const t0 = Date.now();
-await page.waitForSelector('.depth-status__meta', { timeout: 240000 });
-const meta = await page.locator('.depth-status__meta').innerText();
+await page.getByRole('button', { name: 'Pick the focus point' }).waitFor({ timeout: 240000 });
+const meta = await page.locator('.lens-card__meta').last().innerText();
 console.log(`depth: ${meta} (${((Date.now() - t0) / 1000).toFixed(1)} s including download)`);
 
-// Focus on the subject's centre through the Focus view, as a user would.
-await page.locator('[aria-label="Inspect stage"] [data-value="focus"]').click();
+// Focus on the subject's centre through the Focus view, as a user would —
+// entered from the Lens section, which is there on every layout (the phone
+// layout hides the inspect bar).
+await page.getByRole('button', { name: 'Pick the focus point' }).click();
 const box = await page.locator('canvas').first().boundingBox();
 await page.mouse.click(
   box.x + ((subject[0] + subject[2]) / 2) * box.width,
@@ -100,7 +117,7 @@ await page.mouse.click(
 await page.waitForTimeout(600);
 await shot('1-focus-view');
 
-await page.locator('[aria-label="Inspect stage"] [data-value="print"]').click();
+await page.getByRole('button', { name: 'Done' }).click();
 await setSlider('Focus distance', 1); // log10: 10 m
 await setSlider('Focal length', Math.log2(85));
 await setSlider('Aperture', 2); // f/1.6

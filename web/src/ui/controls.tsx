@@ -225,6 +225,46 @@ export function Slider({
 }
 
 /**
+ * A labelled control that is not a slider — a segmented choice, a group of
+ * them — with the same folding explanation every slider has, so no control
+ * on the bench spends the phone's height on a paragraph nobody asked to read.
+ */
+export function Field({
+  label,
+  hint,
+  disabled,
+  children,
+}: {
+  label: string;
+  hint?: ReactNode;
+  disabled?: boolean;
+  children: ReactNode;
+}) {
+  const id = useId();
+  const tip = useHint();
+  return (
+    <div className={`control${disabled ? ' is-disabled' : ''}`} role="group" aria-labelledby={`${id}-label`}>
+      <div className="control__row">
+        <span className="control__name">
+          <span className="control__label" id={`${id}-label`}>
+            {label}
+          </span>
+          {hint ? (
+            <HintButton label={label} hintId={`${id}-hint`} open={tip.open} onToggle={tip.toggle} />
+          ) : null}
+        </span>
+      </div>
+      {children}
+      {hint ? (
+        <Hint id={`${id}-hint`} open={tip.open}>
+          {hint}
+        </Hint>
+      ) : null}
+    </div>
+  );
+}
+
+/**
  * The printer point control. Integer by design: printer points are integers in
  * practice, the quantisation is finer than the visual threshold, and integers
  * are what makes a grade communicable between a lab and a client. A continuous
