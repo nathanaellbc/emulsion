@@ -18,7 +18,7 @@
 .viewport__peek-tag {
   transform: translateX(-50%);
   pointer-events: none;
-  animation: peek-in 120ms cubic-bezier(0.42, 0, 0.58, 1) both;
+  animation: peek-in 120ms cubic-bezier(0.42, 0, 0.58, 1) backwards;
 }
 
 @keyframes peek-in {

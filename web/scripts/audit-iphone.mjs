@@ -316,12 +316,57 @@ async function inspect(label) {
         corners.push(`${name(el)} r${ri.toFixed(1)} in ${name(c)} R${R.toFixed(1)} (${why}): wants r${expected.toFixed(1)}`);
       }
     }
-    return { overlaps, overflow, small, insets, corners };
+
+    // --- frost: glass must be able to see what is behind it -------------
+    // A backdrop-filter blurs only what lies inside its nearest "backdrop
+    // root": an ancestor with an opacity animation, opacity below 1, a
+    // filter, a mask, a clip-path or a backdrop-filter of its own. Glass
+    // inside one of those frosts nothing but that ancestor, and the page
+    // shows through it sharp.
+    const frost = [];
+    // An entrance still playing is a backdrop root for its few hundred
+    // milliseconds, which nobody sees; one that holds its fill after it ends
+    // (fill: both / forwards), or never ends, is one for good.
+    const fadesOpacity = (el) =>
+      el
+        .getAnimations()
+        .some(
+          (a) =>
+            (a.playState === 'finished' || a.effect?.getTiming?.().iterations === Infinity) &&
+            a.effect?.getKeyframes?.().some((k) => 'opacity' in k),
+        );
+    for (const el of document.querySelectorAll('body *')) {
+      const cs = getComputedStyle(el);
+      const bf = cs.backdropFilter || cs.webkitBackdropFilter;
+      if (!bf || bf === 'none') continue;
+      const r = el.getBoundingClientRect();
+      if (r.width < 1 || r.height < 1) continue;
+      for (let a = el.parentElement; a && a !== document.documentElement; a = a.parentElement) {
+        const as = getComputedStyle(a);
+        const why =
+          (fadesOpacity(a) && 'an opacity animation') ||
+          (parseFloat(as.opacity) < 1 && `opacity ${as.opacity}`) ||
+          (as.filter !== 'none' && `filter ${as.filter}`) ||
+          ((as.backdropFilter || as.webkitBackdropFilter || 'none') !== 'none' && 'a backdrop-filter of its own') ||
+          (as.maskImage && as.maskImage !== 'none' && 'a mask') ||
+          (as.clipPath && as.clipPath !== 'none' && 'a clip-path');
+        if (why) {
+          frost.push(`${name(el)} frosts nothing past ${name(a)}, which has ${why}`);
+          break;
+        }
+      }
+    }
+    return { overlaps, overflow, small, insets, corners, frost };
   });
   const n =
-    report.overlaps.length + report.overflow.length + report.small.length + report.insets.length + report.corners.length;
+    report.overlaps.length +
+    report.overflow.length +
+    report.small.length +
+    report.insets.length +
+    report.corners.length +
+    report.frost.length;
   console.log(`\n[${label}] ${n ? n + ' finding(s)' : 'clean'}`);
-  for (const k of ['overlaps', 'overflow', 'small', 'insets', 'corners']) {
+  for (const k of ['overlaps', 'overflow', 'small', 'insets', 'corners', 'frost']) {
     for (const f of report[k]) {
       console.log(`  ${k}: ${f}`);
       findings.push(`${label} ${k}: ${f}`);

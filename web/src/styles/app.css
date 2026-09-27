@@ -62,7 +62,7 @@ body,
 /* The picture's chrome arrives with the picture: when the first photograph
    lands, the bar, the frame and the caption fade up together. */
 .shell:not(.is-empty) .viewport {
-  animation: fade-in var(--dur) var(--ease) both;
+  animation: fade-in var(--dur) var(--ease) backwards;
 }
 
 /* The drifting ambience is retired with the coloured glows; the element stays
@@ -81,7 +81,7 @@ body,
   background: rgba(11, 107, 214, 0.06);
   pointer-events: none;
   z-index: 50;
-  animation: fade-in var(--dur-fast) var(--ease) both;
+  animation: fade-in var(--dur-fast) var(--ease) backwards;
 }
 
 @keyframes fade-in {
@@ -268,6 +268,16 @@ body,
   -webkit-backdrop-filter: var(--blur-light);
   backdrop-filter: var(--blur-light);
   border: 1px solid rgba(255, 255, 255, 0.18);
+}
+
+/* The tint's glass is for where the button floats over the page — the
+   toolbar. Inside a sheet or a card it would be glass on glass: a plain
+   tinted fill there. */
+.export .btn--primary,
+.lens-card .btn--primary,
+.dropzone .btn--primary {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
 }
 
 .btn--primary:hover:not(:disabled) {
@@ -475,7 +485,7 @@ body,
   border-radius: var(--r-btn);
   color: var(--ink);
   cursor: pointer;
-  animation: pop-in var(--dur-move) var(--spring) both;
+  animation: pop-in var(--dur-move) var(--spring) backwards;
   transition: transform var(--dur-move) var(--spring);
 }
 
@@ -544,7 +554,7 @@ body,
   padding: 4px 10px;
   border-radius: var(--r-btn);
   pointer-events: none;
-  animation: fade-in var(--dur) var(--ease) both;
+  animation: fade-in var(--dur) var(--ease) backwards;
 }
 
 .viewport__tag--left {
@@ -572,7 +582,7 @@ body,
   transition:
     left var(--dur-move) var(--spring),
     top var(--dur-move) var(--spring);
-  animation: pop-in var(--dur-move) var(--spring-bouncy) both;
+  animation: pop-in var(--dur-move) var(--spring-bouncy) backwards;
 }
 
 .viewport__focus::after {
@@ -773,7 +783,7 @@ body,
   box-shadow: var(--shadow-card);
   /* The inspector arrives with the photograph: it slides the short way in
      from the edge it lives on. */
-  animation: rail-in var(--dur-move) var(--spring) both;
+  animation: rail-in var(--dur-move) var(--spring) backwards;
 }
 
 @keyframes rail-in {
@@ -1029,7 +1039,7 @@ body,
   background: transparent;
   border: 0;
   border-radius: 0;
-  animation: fade-in var(--dur) var(--ease) both;
+  animation: fade-in var(--dur) var(--ease) backwards;
 }
 
 .notice::before {
@@ -1073,7 +1083,7 @@ body,
   background: transparent;
   box-shadow: none;
   /* Sections rise into place when a bench page opens, one after another. */
-  animation: section-in var(--dur-move) var(--spring) both;
+  animation: section-in var(--dur-move) var(--spring) backwards;
 }
 
 .panel-section:nth-child(2) { animation-delay: 25ms; }
@@ -1340,7 +1350,7 @@ body,
   border: 0;
   border-radius: var(--r);
   color: var(--ink-muted);
-  animation: fade-in var(--dur) var(--ease) both;
+  animation: fade-in var(--dur) var(--ease) backwards;
 }
 
 /* --- slider --- */
@@ -1756,7 +1766,7 @@ body,
 /* The page arrives in reading order: each block rises a few pixels as it
    fades up, one beat after the last. */
 .dropzone__inner > * {
-  animation: rise-in var(--dur-move) var(--spring) both;
+  animation: rise-in var(--dur-move) var(--spring) backwards;
 }
 
 .dropzone__inner > :nth-child(2) { animation-delay: 40ms; }
@@ -1894,7 +1904,7 @@ body,
   font-size: 13px;
   font-weight: 500;
   z-index: 60;
-  animation: busy-in var(--dur-move) var(--spring) both;
+  animation: busy-in var(--dur-move) var(--spring) backwards;
 }
 
 @keyframes busy-in {
@@ -1963,12 +1973,26 @@ body,
   z-index: 70;
   display: grid;
   place-items: center;
-  background: rgba(0, 0, 0, 0.42);
   padding: var(--s4);
-  animation: fade-in var(--dur) var(--ease) both;
+  --scrim: rgba(0, 0, 0, 0.42);
 }
 
-.export__backdrop.is-closing {
+/* The scrim is its own layer, and it — not the backdrop element — carries the
+   fade. An element with an opacity animation becomes a backdrop root: every
+   backdrop-filter inside it sees only what is inside it. With the fade on the
+   parent, the sheet's frost blurred nothing but the scrim, and the print
+   showed through the glass sharp and unblurred. Fading a sibling layer
+   leaves the sheet's backdrop the page itself. */
+.export__backdrop::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background: var(--scrim);
+  animation: fade-in var(--dur) var(--ease) backwards;
+}
+
+.export__backdrop.is-closing::before {
   animation: fade-out var(--dur-exit) var(--ease-in) forwards;
 }
 
@@ -2007,7 +2031,14 @@ body,
   border-radius: var(--r-sheet);
   box-shadow: 0 0 80px rgba(0, 0, 0, 0.55);
   position: relative;
-  animation: export-in var(--dur-move) var(--spring) both;
+  animation: export-in var(--dur-move) var(--spring) backwards;
+}
+
+/* The sheet takes focus so the trap has somewhere to start; the ring
+   belongs on the control the next Tab lands on, not around the whole sheet. */
+.export:focus,
+.export:focus-visible {
+  outline: none;
 }
 
 .export.is-closing {
@@ -2607,7 +2638,7 @@ body,
   padding: 12px;
   border-radius: var(--r-btn);
   background: var(--glass-sunken);
-  animation: fade-in var(--dur) var(--ease) both;
+  animation: fade-in var(--dur) var(--ease) backwards;
 }
 
 .lens-card--warn {
@@ -2726,7 +2757,7 @@ body,
      bench's controls read through its own, which is two interfaces at once.
      The scrim is deeper for the same reason. */
   .export__backdrop {
-    background: rgba(0, 0, 0, 0.62);
+    --scrim: rgba(0, 0, 0, 0.62);
     padding: 0;
   }
 
