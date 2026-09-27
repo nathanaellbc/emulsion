@@ -1,0 +1,11 @@
+/*
+ * The home page (the empty state, Dropzone.tsx). A title, a lede, the
+ * actions and the facts, on the ground itself: no dashed drop outline around
+ * them. Dragging a file in still answers — the whole window outlines in the
+ * tint (.shell.is-dragging::after), which is where the drop actually lands.
+ */
+.dropzone,
+.dropzone.is-dragging {
+  border-color: transparent;
+  background: transparent;
+}

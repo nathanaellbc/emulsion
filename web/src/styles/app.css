@@ -2935,15 +2935,17 @@ body,
    The photograph itself is content, not chrome: it keeps a hairline radius. */
 :root {
   --r-capsule: 999px;
-  /* Tab trough 32 tall (28 + 2 + 2) → 16, plus the 12 inset. */
-  --r-panel: 28px;
-  --r-card: calc(var(--r-panel) - var(--s3));
+  /* Tab trough 32 tall (28 + 2 + 2) → 16, plus the 13 inset (the 12 pt
+     padding and the 1 pt hairline — the inset is measured from the outer
+     edge). Cards in the column take the same 16. */
+  --r-panel: 29px;
+  --r-card: calc(var(--r-panel) - var(--s3) - 1px);
 }
 
 @media (pointer: coarse) {
   :root {
-    /* Tab trough 48 tall (44 + 2 + 2) → 24, plus the 12 inset. */
-    --r-panel: 36px;
+    /* Tab trough 48 tall (44 + 2 + 2) → 24, plus the 13 inset. */
+    --r-panel: 37px;
   }
 }
 
@@ -3077,17 +3079,153 @@ body,
     max-height: calc(100dvh - env(safe-area-inset-top, 0px) - 2 * var(--s2));
   }
 
+  /* One 24 inset across the sheet — 25 from its outer edge with the
+     hairline — so the 44 capsules in its bottom corners are concentric with
+     it: 22 + 25 = 47. The sheet scrolls, so it clips its own contents to
+     its corners; the pinned action strip needs no radius of its own. */
   .export__head {
-    padding-top: 22px;
+    padding-top: 24px;
     padding-inline: 24px;
   }
 
   .export__body {
-    padding-inline: 20px;
+    padding-inline: 24px;
   }
 
   .export__actions {
-    padding: var(--s3) 20px 20px;
-    border-radius: 0 0 47px 47px;
+    padding: var(--s3) 24px 24px;
+    padding-bottom: max(24px, env(safe-area-inset-bottom));
+    border-radius: 0;
+  }
+}
+
+/* ============================================================================
+   Toolbar groups: one inset, concentric by construction
+   ========================================================================= */
+
+/* A glass group (Open · Reset, Compare · Clipping, the inspect stages) holds
+   its buttons on ONE inset, measured from the group's outer edge and equal on
+   every side, and the buttons are sized from it rather than given a height
+   of their own:
+
+     inner height = group height − 2 × inset
+     inner radius = inner height / 2 = outer radius − inset
+
+   so Inner radius + Inset = Outer radius holds at every size. The inset is
+   6 pt on the 40 pt desktop bar and 7 pt on the 44 pt touch bar — room for
+   the buttons to breathe inside their capsule instead of filling it. */
+:root {
+  --bar-inset: 6px;
+  --bar-btn-h: calc(var(--toolbar-h) - 2 * var(--bar-inset));
+}
+
+@media (pointer: coarse) {
+  :root {
+    --bar-inset: 7px;
+  }
+}
+
+/* The 1 px hairline is part of the inset, so the padding is the inset less
+   the border. */
+.topbar__group,
+.viewport__bar {
+  padding: 0 calc(var(--bar-inset) - 1px);
+  gap: 2px;
+}
+
+.topbar__group .btn,
+.viewport__bar .chip,
+.viewport__bar .segmented button {
+  height: var(--bar-btn-h);
+  min-height: 0;
+  padding: 0 14px;
+}
+
+.viewport__bar .segmented__thumb {
+  top: 0;
+  bottom: 0;
+}
+
+/* The primary action stands on its own at the bar's full height, with the
+   same text air as the group's buttons plus the inset they sit in. */
+.topbar .btn--primary {
+  padding: 0 20px;
+}
+
+.topbar__actions {
+  gap: var(--s2);
+}
+
+/* A drawn button of 30 is under a finger's 44: the hit area runs the full
+   height of the group, invisibly. */
+@media (pointer: coarse) {
+  .topbar__group .btn::before,
+  .viewport__bar .chip::before {
+    inset: calc(-1 * var(--bar-inset) + 1px) 0;
+  }
+}
+
+/* A phone has 351 pt of bar: the text air tightens a step so the wordmark,
+   the group and the primary action still share one row. */
+@media (max-width: 560px) {
+  .topbar__group .btn,
+  .viewport__bar .chip {
+    padding: 0 12px;
+  }
+
+  .topbar .btn--primary {
+    padding: 0 16px;
+  }
+
+  /* The wordmark is text, not a capsule: the bar's own 12 gap is its only
+     right-hand space. */
+  .topbar__brand {
+    padding-right: 0;
+  }
+}
+
+/* The narrowest phones (360 pt Android, 320 pt SE): the text air steps down
+   once more. The 7 pt inset — and with it every corner — stays put. */
+@media (max-width: 380px) {
+  .topbar {
+    gap: var(--s2);
+  }
+
+  .topbar__actions {
+    gap: 6px;
+  }
+
+  .topbar__group .btn,
+  .viewport__bar .chip {
+    padding: 0 10px;
+  }
+
+  .topbar .btn--primary {
+    padding: 0 14px;
+  }
+}
+
+/* The floating export sheet (tablet and desktop) takes its corner from the
+   capsules in its own bottom corners, the way the inspector takes its corner
+   from its tabs: button radius + the 17 inset (16 padding + 1 hairline).
+   A phone's sheet is concentric with the display instead (47, above). */
+@media (min-width: 561px) {
+  .export__actions .btn {
+    height: 32px;
+    min-height: 0;
+  }
+
+  .export {
+    border-radius: calc(16px + var(--s4) + 1px);
+  }
+}
+
+@media (min-width: 561px) and (pointer: coarse) {
+  .export__actions .btn {
+    height: 44px;
+  }
+
+  .export {
+    border-radius: calc(22px + var(--s4) + 1px);
   }
 }

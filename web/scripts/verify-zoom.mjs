@@ -139,7 +139,9 @@ const getTransform = (p) =>
   const aligned = await p.evaluate(() => {
     const canvas = document.querySelector('canvas').getBoundingClientRect();
     const handle = document.querySelector('.viewport__handle').getBoundingClientRect();
-    const split = Number(document.querySelector('.viewport__handle').style.left.replace('%', '')) / 100;
+    // The seam's position is the handle's value; its style is in pixels of
+    // the picture's own box.
+    const split = Number(document.querySelector('.viewport__handle').getAttribute('aria-valuenow')) / 100;
     const seamX = canvas.left + canvas.width * split;
     const handleX = handle.left + handle.width / 2;
     return Math.abs(seamX - handleX) < 3;

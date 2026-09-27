@@ -1,0 +1,39 @@
+/*
+ * Text inside its box. Measured by scripts/audit-iphone.mjs (the "insets"
+ * check) on the phone and the desktop: every label centred where its control
+ * centres it, clear of every edge, and clear of a capsule's rounded ends.
+ */
+
+/* A capsule's label keeps a third of the capsule's height from either end,
+   so it never runs into the curve: 44 pt buttons take 20 pt of air a side. */
+.export__actions .btn,
+.btn--block {
+  padding-inline: 20px;
+}
+
+/* The lens's readout carries four long labels (Hyperfocal, …): two to a row,
+   so no label runs to the edge of a quarter-width cell. */
+.readout--pairs {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+/* Whatever height the toolbar draws its buttons at, the finger gets 44 pt:
+   an invisible band, centred on the button, 44 tall. */
+@media (pointer: coarse) {
+  .topbar__group .btn,
+  .viewport__bar .chip {
+    position: relative;
+  }
+
+  .topbar__group .btn::before,
+  .viewport__bar .chip::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 50%;
+    bottom: auto;
+    height: 44px;
+    transform: translateY(-50%);
+  }
+}

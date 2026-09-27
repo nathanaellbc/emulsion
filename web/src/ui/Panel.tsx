@@ -460,7 +460,7 @@ function LensSection({
             onChange={(v) => update((draft) => (draft.defocus.fNumber = F_STOPS[Math.round(v)]!))}
           />
 
-          <div className="readout">
+          <div className="readout readout--pairs">
             <Stat label="Near" value={fmtMetres(r.nearLimitM)} title="The nearest distance that is acceptably sharp" />
             <Stat label="Far" value={fmtMetres(r.farLimitM)} title="The farthest distance that is acceptably sharp" />
             <Stat

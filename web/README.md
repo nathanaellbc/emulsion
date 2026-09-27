@@ -119,6 +119,16 @@ density that is actually on the film, the print density before the display
 transform, the halation source term, and — once a depth map exists — the
 lens's zone of acceptable sharpness.
 
+**Before and after.** Compare splits the picture into the **Original** —
+read straight from the file, with no exposure, white balance, develop, lens
+or film applied (a RAW gets only a neutral camera tone curve, since linear
+light on a display is not a picture anyone has seen) — and the **Edited**
+print, with a seam to drag. **Hold** the picture (a finger or the mouse, held
+still for a fifth of a second) or hold the `\` key to see the original
+in the whole frame for as long as you hold; let go and the edit is back.
+`node scripts/verify-peek.mjs` checks that the original ignores every edit,
+matches the file's own pixels, and that taps and double-taps still work.
+
 The first entry in the stock list, **None — ideal negative**, is the fifth
 instrument. It is a straight line of gamma 1 with no toe, no shoulder, no fog
 and no orange mask, so everything left in the picture is the print stock and the

@@ -1,0 +1,135 @@
+/*
+ * Corners, by one rule: Outer radius = Inner radius + Padding (or Gap).
+ *
+ * Every drawn shape nested in another takes the outer shape's radius less the
+ * distance between their edges, so the curves run parallel all the way in.
+ * The inset is measured from the outer shape's OUTER edge, hairline included.
+ * Capsules (radius = half the height) satisfy it by construction when they
+ * are sized from their container: inner height = outer height − 2 × inset.
+ * scripts/audit-iphone.mjs (the "corners" check) holds every pair to it.
+ */
+
+/* One curve for every corner: the circular arc. The rule only produces
+   parallel curves between shapes of the same kind, and only the circle is
+   closed under it — offset a circular corner by the gap and you get a
+   circular corner with the same centre, its radius exactly the inner one
+   plus the gap. A continuous (squircle) corner is not: its offset is no
+   squircle, so an inner capsule never runs parallel to it, whatever the
+   numbers say (the continuous corners set on every element where the engine
+   supports them put a squircle inspector around round capsules). So every
+   corner is round, and the arithmetic below is exact. */
+@supports (corner-shape: round) {
+  *,
+  *::before,
+  *::after {
+    corner-shape: round;
+  }
+}
+
+/* --- toolbars: a compact capsule, its buttons sized from it --------------
+   36 tall on every device, a 4 pt inset: buttons 28, and 14 + 4 = 18. The
+   finger still gets 44 pt — insets.css draws the hit band invisibly. */
+:root {
+  --toolbar-h: 36px;
+  --bar-inset: 4px;
+}
+
+@media (pointer: coarse) {
+  :root {
+    --toolbar-h: 36px;
+    --bar-inset: 4px;
+  }
+
+  .topbar .btn--primary,
+  .topbar__brand,
+  .topbar__group,
+  .viewport__bar {
+    height: var(--toolbar-h);
+  }
+
+  .topbar__group .btn,
+  .viewport__bar .chip,
+  .viewport__bar .segmented button {
+    height: var(--bar-btn-h);
+  }
+
+  .topbar .btn--primary {
+    position: relative;
+  }
+
+  .topbar .btn--primary::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 50%;
+    height: 44px;
+    transform: translateY(-50%);
+  }
+}
+
+.topbar .btn,
+.viewport__bar .chip,
+.viewport__bar .segmented button {
+  font-size: 13px;
+}
+
+.topbar .btn--primary {
+  padding: 0 16px;
+}
+
+/* --- cards in the inspector ----------------------------------------------
+   A card spans the column at the same 13 inset as the plot and the section
+   heads (12 padding + the 1 hairline), so its radius is the panel's less
+   13 — --r-card — and its own 12 padding puts its text on the column's text
+   line. */
+.panel-section__body > .lens-card,
+.panel-section__body > .lights,
+.panel-section__body > .readout,
+.panel-section__body > .control__hint--action,
+.notices > .notice--warn {
+  margin-inline: calc(-1 * var(--s3));
+  border-radius: var(--r-card);
+}
+
+/* A button inside a card: the card's radius less the card's padding. */
+.lens-card {
+  padding: var(--s3);
+}
+
+.lens-card .btn {
+  border-radius: calc(var(--r-card) - var(--s3));
+}
+
+/* On a pointer the card is 16 round: a 12 padding would leave a 4 pt button
+   corner, so the card pads 8 and the button takes 8. */
+@media (pointer: fine) {
+  .lens-card {
+    padding: var(--s2);
+  }
+
+  .lens-card .btn {
+    border-radius: calc(var(--r-card) - var(--s2));
+  }
+
+  .lens-card .lens-card__text,
+  .lens-card .lens-card__row,
+  .lens-card .lens-card__meta {
+    padding-inline: 4px;
+  }
+}
+
+/* --- inside the export sheet ---------------------------------------------
+   The sheet is 33 round on a pointer (16 + 17) and 47 on a phone (22 + 25):
+   a box spanning its content inset takes the sheet's radius less that inset. */
+.export__file,
+.export__fail {
+  border-radius: 16px;
+}
+
+@media (max-width: 560px) {
+  .export__file,
+  .export__fail {
+    border-radius: 22px;
+  }
+}

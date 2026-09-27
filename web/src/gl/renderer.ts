@@ -63,6 +63,8 @@ export interface ViewOptions {
   /** 0 disables the comparison; otherwise the seam position in [0,1]. */
   split: number;
   clipWarning: boolean;
+  /** Held: the whole frame shows the untouched original, no seam. */
+  peek?: boolean;
 }
 
 export interface SourceImage {
@@ -1032,12 +1034,17 @@ export class Renderer {
     }
     const comp = this.programs.composite!.use();
     bindTarget(gl, null, [this.width, this.height]);
+    // A peek is the comparison with the seam past the right edge.
+    const split = view.peek ? 2 : view.split;
     comp
       .texture('uProcessed', 0, this.processed!.texture)
-      .texture('uScene', 1, this.scene.texture)
+      .texture('uSource', 1, this.sourceTex!)
+      .int('uSourceIsEncoded', this.sourceEncoded ? 1 : 0)
+      .int('uSourceFlipY', this.sourceFlipY ? 1 : 0)
+      .mat3('uSourceToWorking', matToGL(params.sourceToWorking))
       .mat3('uOutMatrix', matToGL(this.outputMatrix(params)))
-      .float('uSplit', view.split)
-      .float('uAspectPx', view.split > 0 ? 1 / this.width : -1)
+      .float('uSplit', split)
+      .float('uAspectPx', split > 0 && split <= 1 ? 1 / this.width : -1)
       .int('uSceneLinear', this.sourceEncoded ? 0 : 1);
     const focusView = view.mode === 'focus' && this.depthTex !== null;
     comp.int('uFocusView', focusView ? 1 : 0).float('uAcceptCoc', params.defocus.acceptableCocPx);

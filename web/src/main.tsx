@@ -3,6 +3,10 @@ import { createRoot } from 'react-dom/client';
 import { App } from './ui/App';
 import './styles/tokens.css';
 import './styles/app.css';
+import './styles/peek.css';
+import './styles/home.css';
+import './styles/insets.css';
+import './styles/geometry.css';
 
 /**
  * Publish the real glass height as --app-height. The shell takes this rather

@@ -153,6 +153,12 @@ export interface ResolvedParameters {
    * but not the source-primaries matrix.
    */
   readonly whiteBalance: Matrix3;
+  /**
+   * The source encoding's primaries into the working space and nothing else:
+   * no white balance, no exposure, no develop. What the untouched original
+   * (Compare, and the hold-to-peek) is shown through.
+   */
+  readonly sourceToWorking: Matrix3;
   readonly outputMatrix: Matrix3;
 
   /** log10(E) + this = the film's log exposure, before the layer balance. */
@@ -569,6 +575,7 @@ export function resolve(recipe: Recipe, ctx: ResolveContext): ResolvedParameters
     print,
     inputMatrix,
     whiteBalance: wb,
+    sourceToWorking: sourceMatrix(ctx.sourceSpace),
     outputMatrix: M_AP1_TO_P3,
     anchorShift,
     exposureGain: Math.pow(2, recipe.capture.exposureCompensation),

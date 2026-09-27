@@ -212,17 +212,19 @@ void main() {
 `;
 
 /**
- * The split-view comparison pass. Kept separate from the chain so the "before"
- * side is the photograph without film, not the chain with its parameters
- * neutralised — which would still be film, just flat film.
+ * The split-view comparison pass, and the hold-to-peek. Kept separate from the
+ * chain so the "before" is the photograph as it came in, not the chain with
+ * its parameters neutralised — which would still be film, just flat film.
  *
- * "Without film" means what the photograph looked like before: for an
- * ordinary file, the file itself (its tone curve is already baked in, and
- * undoing the transfer function and redoing it gives it back). A RAW decode
- * has no tone curve at all — linear light put straight on a display reads as
- * a flat, grey, log-like picture that no camera ever showed anyone — so it
- * gets a neutral one: the ACES filmic fit (Narkowicz 2015), the look of a
- * clean camera render. Exposure and the camera develop are in both halves.
+ * The before is read from the SOURCE texture, not from any stage of the
+ * graph: no exposure, no white balance, no camera develop, no lens, no film.
+ * Only what it takes to show the file on this display — undo its transfer
+ * function, carry its primaries to the display's, encode. An ordinary file
+ * therefore comes back exactly as it is. A RAW decode has no tone curve at
+ * all — linear light put straight on a display reads as a flat, grey,
+ * log-like picture that no camera ever showed anyone — so it gets a neutral
+ * one, the ACES filmic fit (Narkowicz 2015): the look of a clean camera
+ * render, and nothing the bench chose.
  */
 export const FRAG_COMPOSITE = /* glsl */ `#version 300 es
 ${GLSL_COMMON}
@@ -231,7 +233,10 @@ out vec4 fragColor;
 
 ${GLSL_DOF_FOR_COMPOSITE}
 uniform sampler2D uProcessed;
-uniform sampler2D uScene;
+uniform sampler2D uSource;
+uniform bool uSourceIsEncoded;
+uniform bool uSourceFlipY;
+uniform mat3 uSourceToWorking;   // the file's primaries to AP1 — nothing else
 uniform mat3 uOutMatrix;
 uniform float uSplit;
 uniform float uAspectPx;
@@ -258,8 +263,10 @@ void main() {
     }
     fragColor = vec4(print, 1.0);
   } else {
-    // The before side: the photograph as it was, no film at all.
-    vec3 lin = uOutMatrix * texture(uScene, vUv).rgb;
+    // The before side: the file itself, untouched.
+    vec3 c = texture(uSource, uSourceFlipY ? vec2(vUv.x, 1.0 - vUv.y) : vUv).rgb;
+    if (uSourceIsEncoded) c = eotf3(c);
+    vec3 lin = uOutMatrix * (uSourceToWorking * c);
     if (uSceneLinear) lin = filmicFit(max(lin, 0.0));
     fragColor = vec4(oetf3(clamp(lin, 0.0, 1.0)), 1.0);
   }

@@ -161,6 +161,8 @@ export function App() {
   const [mode, setMode] = useState<ViewMode>('print');
   const [split, setSplit] = useState(0);
   const [clipWarning, setClipWarning] = useState(false);
+  /** The untouched original is being held up (Viewport, hold-to-peek). */
+  const [peek, setPeek] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [glError, setGlError] = useState<string | null>(null);
@@ -306,7 +308,7 @@ export function App() {
         const illuminant = resolved.printLut?.illuminant;
         const lut = illuminant ? loadedPrintLut(printId, illuminant) : null;
         renderer.setPrintLut(lut, illuminant && lut ? `${printId}:${illuminant}` : '');
-        renderer.render(resolved, { mode, split, clipWarning });
+        renderer.render(resolved, { mode, split, clipWarning, peek });
       } catch (err) {
         setGlError(err instanceof Error ? err.message : String(err));
       }
@@ -314,7 +316,7 @@ export function App() {
     return () => {
       if (frameRef.current !== null) cancelAnimationFrame(frameRef.current);
     };
-  }, [resolved, mode, split, clipWarning, source]);
+  }, [resolved, mode, split, clipWarning, source, peek]);
 
   /**
    * Estimates the open photograph's depth. Without `allowDownload` it only
@@ -517,29 +519,34 @@ export function App() {
           <span className="topbar__word">EMULSION</span>
           <span className="topbar__sub">Digital film laboratory</span>
         </div>
-        <div className="topbar__actions">
-          <div className="topbar__group">
-            <button type="button" className="btn btn--ghost" onClick={() => fileInput.current?.click()}>
-              Open
-            </button>
+        {/* The home page offers one thing — open a photograph — and it says so
+            in the middle of the screen; the bench's actions arrive with the
+            photograph they act on. The file input stays mounted either way. */}
+        {source ? (
+          <div className="topbar__actions">
+            <div className="topbar__group">
+              <button type="button" className="btn btn--ghost" onClick={() => fileInput.current?.click()}>
+                Open
+              </button>
+              <button
+                type="button"
+                className={`btn btn--ghost${resetArmed ? ' btn--armed' : ''}`}
+                onClick={resetArmed ? doReset : armReset}
+                disabled={!source}
+              >
+                {resetArmed ? 'Confirm reset' : 'Reset'}
+              </button>
+            </div>
             <button
               type="button"
-              className={`btn btn--ghost${resetArmed ? ' btn--armed' : ''}`}
-              onClick={resetArmed ? doReset : armReset}
-              disabled={!source}
+              className="btn btn--primary"
+              onClick={openExport}
+              disabled={!source || busy}
             >
-              {resetArmed ? 'Confirm reset' : 'Reset'}
+              Export print
             </button>
           </div>
-          <button
-            type="button"
-            className="btn btn--primary"
-            onClick={openExport}
-            disabled={!source || busy}
-          >
-            Export print
-          </button>
-        </div>
+        ) : null}
         <input
           ref={fileInput}
           type="file"
@@ -566,6 +573,8 @@ export function App() {
           caption={caption}
           busy={busy}
           onPictureResize={resizePicture}
+          peeking={peek}
+          onPeek={source ? setPeek : undefined}
           focus={
             depth
               ? {

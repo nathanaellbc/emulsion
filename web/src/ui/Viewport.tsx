@@ -38,7 +38,23 @@ export interface ViewportProps {
    * picture focuses there.
    */
   focus?: { x: number; y: number; onPick: (x: number, y: number) => void } | null;
+  /**
+   * Hold-to-peek: a finger (or the mouse) held still on the picture, or the
+   * backslash key held down, shows the untouched original for as long as it
+   * is held — the before/after gesture every photo editor has.
+   */
+  peeking?: boolean;
+  onPeek?: (on: boolean) => void;
 }
+
+/**
+ * How long a still press waits before it becomes a peek. Long enough that a
+ * tap, a double-tap or the start of a scroll never flashes the original;
+ * short enough that holding feels like it answers at once.
+ */
+const PEEK_DELAY_MS = 220;
+/** Movement past this is a scroll, a pan or a pinch — never a peek. */
+const PEEK_SLOP_PX = 8;
 
 const MODES: { value: ViewMode; label: string; title: string }[] = [
   { value: 'print', label: 'Print', title: 'The finished print' },
@@ -138,6 +154,8 @@ export function Viewport({
   busy,
   onPictureResize,
   focus,
+  peeking = false,
+  onPeek,
 }: ViewportProps) {
   // Where the photograph actually sits inside the picture layer. The canvas is
   // letterboxed (object-fit: contain), so a portrait print on a wide frame, or
@@ -202,6 +220,24 @@ export function Viewport({
   const pan = useRef<{ id: number; down: Point; origin: Zoom } | null>(null);
   const lastTap = useRef<{ t: number; x: number; y: number } | null>(null);
 
+  // --- hold to peek at the original ----------------------------------------
+  const onPeekRef = useRef(onPeek);
+  onPeekRef.current = onPeek;
+  const peekTimer = useRef<number | null>(null);
+  /** The gesture became a peek: its release must not also count as a tap. */
+  const peekActive = useRef(false);
+  const cancelPeekTimer = () => {
+    if (peekTimer.current !== null) window.clearTimeout(peekTimer.current);
+    peekTimer.current = null;
+  };
+  const endPeek = () => {
+    cancelPeekTimer();
+    if (peekActive.current) {
+      peekActive.current = false;
+      onPeekRef.current?.(false);
+    }
+  };
+
   const commit = useCallback((z: Zoom, animated = false) => {
     zoomRef.current = z;
     setZoom(z);
@@ -238,6 +274,15 @@ export function Viewport({
         y0: e.clientY,
         t0: performance.now(),
       });
+      // One still finger may become a peek; a second finger makes it a pinch.
+      cancelPeekTimer();
+      if (pointers.current.size === 1 && onPeekRef.current) {
+        peekTimer.current = window.setTimeout(() => {
+          peekTimer.current = null;
+          peekActive.current = true;
+          onPeekRef.current?.(true);
+        }, PEEK_DELAY_MS);
+      }
       // An interrupting gesture starts from the *presentation* value: a
       // running settle animation's live on-screen transform, not the target
       // it was heading for — grabbing mid-flight must never jump.
@@ -284,6 +329,11 @@ export function Viewport({
       if (!p) return;
       p.x = e.clientX;
       p.y = e.clientY;
+      // Moving before the hold lands makes it a scroll, pan or pinch, not a
+      // peek. Once the original is showing it stays until the finger lifts.
+      if (peekTimer.current !== null && (pointers.current.size > 1 || Math.hypot(p.x - p.x0, p.y - p.y0) > PEEK_SLOP_PX)) {
+        cancelPeekTimer();
+      }
       const { w, h } = frameGeometry();
       if (pinch.current && pointers.current.size >= 2) {
         const pts = [...pointers.current.values()];
@@ -312,6 +362,16 @@ export function Viewport({
     const end = (e: PointerEvent) => {
       const p = pointers.current.get(e.pointerId);
       pointers.current.delete(e.pointerId);
+      // Letting go ends a peek, and a peek is the whole gesture: no tap, no
+      // focus point, no half of a double-tap.
+      if (p && pointers.current.size === 0) {
+        const wasPeek = peekActive.current;
+        endPeek();
+        if (wasPeek) {
+          lastTap.current = null;
+          return;
+        }
+      }
       if (pinch.current && pointers.current.size < 2) pinch.current = null;
       if (pan.current && pan.current.id === e.pointerId) pan.current = null;
       // The gesture's end settles the rubber band: wherever the finger
@@ -361,6 +421,34 @@ export function Viewport({
       window.removeEventListener('pointercancel', end);
     };
   }, [commit, frameGeometry, canvasRef]);
+
+  // The keyboard's peek: hold backslash (Lightroom's before/after key). Not
+  // while typing into a field, and a key repeat is one hold, not many.
+  useEffect(() => {
+    const typing = (t: EventTarget | null) =>
+      t instanceof HTMLElement && (t.isContentEditable || /^(INPUT|SELECT|TEXTAREA)$/.test(t.tagName) && (t as HTMLInputElement).type !== 'range');
+    const down = (e: KeyboardEvent) => {
+      if (e.key !== '\\' || e.repeat || typing(e.target) || !onPeekRef.current) return;
+      e.preventDefault();
+      peekActive.current = true;
+      onPeekRef.current(true);
+    };
+    const up = (e: KeyboardEvent) => {
+      if (e.key !== '\\') return;
+      endPeek();
+    };
+    const blur = () => endPeek();
+    window.addEventListener('keydown', down);
+    window.addEventListener('keyup', up);
+    window.addEventListener('blur', blur);
+    return () => {
+      window.removeEventListener('keydown', down);
+      window.removeEventListener('keyup', up);
+      window.removeEventListener('blur', blur);
+    };
+    // endPeek only touches refs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // The wheel zooms with the trackpad's pinch (ctrl+wheel) and pans the
   // zoomed picture otherwise; at scale 1 it is left for the page.
@@ -459,7 +547,7 @@ export function Viewport({
               style={{ left: box.left + focus.x * box.width, top: box.top + focus.y * box.height }}
             />
           ) : null}
-          {comparing && box ? (
+          {comparing && box && !peeking ? (
             <button
               type="button"
               className="viewport__handle"
@@ -485,7 +573,16 @@ export function Viewport({
               <span aria-hidden="true" />
             </button>
           ) : null}
-          {comparing && box ? (
+          {peeking && box ? (
+            <span
+              className="viewport__tag viewport__peek-tag"
+              role="status"
+              style={{ left: box.left + box.width / 2, top: box.top + 8 }}
+            >
+              Original
+            </span>
+          ) : null}
+          {comparing && box && !peeking ? (
             <>
               <span className="viewport__tag" style={{ left: box.left + 8, top: box.top + 8 }}>
                 Original
@@ -494,7 +591,7 @@ export function Viewport({
                 className="viewport__tag"
                 style={{ right: `calc(100% - ${box.left + box.width - 8}px)`, top: box.top + 8 }}
               >
-                Print
+                Edited
               </span>
             </>
           ) : null}
