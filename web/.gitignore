@@ -3,3 +3,4 @@ dist
 verify-shots
 *.local
 .impeccable
+defocus-out/

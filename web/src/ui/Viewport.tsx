@@ -31,6 +31,13 @@ export interface ViewportProps {
    * sliver and the print's natural full-size height.
    */
   onPictureResize?: (h: number) => void;
+  /**
+   * Present once the photograph has a depth map: the focus point in display
+   * coordinates ((0, 0) top-left) and what to do when a new one is picked.
+   * The Focus inspect mode appears with it, and in that mode a tap on the
+   * picture focuses there.
+   */
+  focus?: { x: number; y: number; onPick: (x: number, y: number) => void } | null;
 }
 
 const MODES: { value: ViewMode; label: string; title: string }[] = [
@@ -51,6 +58,12 @@ const MODES: { value: ViewMode; label: string; title: string }[] = [
     title: 'The source term: which parts of the scene are bright enough to scatter',
   },
 ];
+
+const FOCUS_MODE: { value: ViewMode; label: string; title: string } = {
+  value: 'focus',
+  label: 'Focus',
+  title: 'The zone of acceptable sharpness — tap the picture to focus there',
+};
 
 interface Zoom {
   scale: number;
@@ -124,7 +137,13 @@ export function Viewport({
   caption,
   busy,
   onPictureResize,
+  focus,
 }: ViewportProps) {
+  // The tap handler lives in a long-lived effect; it reads these through refs.
+  const focusRef = useRef(focus);
+  focusRef.current = focus;
+  const modeRef = useRef(mode);
+  modeRef.current = mode;
   const rootRef = useRef<HTMLDivElement>(null);
   const frameRef = useRef<HTMLDivElement>(null);
   const layerRef = useRef<HTMLDivElement>(null);
@@ -302,6 +321,16 @@ export function Viewport({
       // double-tap: in to 2.5x around the tap, or back out to the full print.
       const quick = performance.now() - p.t0 < 300 && Math.hypot(p.x - p.x0, p.y - p.y0) < 8;
       if (!quick) return;
+      // In the focus view a tap is a focus point, wherever the picture has
+      // been zoomed to: the canvas's box already carries the transform.
+      const f = focusRef.current;
+      const canvas = canvasRef.current;
+      if (f && modeRef.current === 'focus' && canvas) {
+        const r = canvas.getBoundingClientRect();
+        const x = (p.x - r.left) / r.width;
+        const y = (p.y - r.top) / r.height;
+        if (x >= 0 && x <= 1 && y >= 0 && y <= 1) f.onPick(x, y);
+      }
       const now = performance.now();
       const last = lastTap.current;
       lastTap.current = { t: now, x: p.x, y: p.y };
@@ -324,7 +353,7 @@ export function Viewport({
       window.removeEventListener('pointerup', end);
       window.removeEventListener('pointercancel', end);
     };
-  }, [commit, frameGeometry]);
+  }, [commit, frameGeometry, canvasRef]);
 
   // The wheel zooms with the trackpad's pinch (ctrl+wheel) and pans the
   // zoomed picture otherwise; at scale 1 it is left for the page.
@@ -380,7 +409,12 @@ export function Viewport({
   return (
     <div className="viewport" ref={rootRef}>
       <div className="viewport__bar">
-        <SegmentedControl label="Inspect stage" value={mode} options={MODES} onChange={onModeChange} />
+        <SegmentedControl
+          label="Inspect stage"
+          value={mode}
+          options={focus ? [...MODES, FOCUS_MODE] : MODES}
+          onChange={onModeChange}
+        />
         <div className="viewport__bar-right">
           <button
             type="button"
@@ -411,6 +445,7 @@ export function Viewport({
           onPointerDown={onPointerDown}
         >
           <canvas ref={canvasRef} className="viewport__canvas" />
+          {focus && mode === 'focus' ? <FocusMark canvasRef={canvasRef} x={focus.x} y={focus.y} /> : null}
           {comparing ? (
             <button
               type="button"
@@ -489,5 +524,45 @@ export function Viewport({
         />
       ) : null}
     </div>
+  );
+}
+
+/**
+ * The focus point, drawn over the picture in the focus view. Positioned in
+ * the canvas's untransformed layout box, inside the zoom layer, so it rides
+ * the zoom with the picture like the seam does.
+ */
+function FocusMark({
+  canvasRef,
+  x,
+  y,
+}: {
+  canvasRef: React.RefObject<HTMLCanvasElement>;
+  x: number;
+  y: number;
+}) {
+  const [box, setBox] = useState<{ left: number; top: number; width: number; height: number } | null>(null);
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const measure = () =>
+      setBox({
+        left: canvas.offsetLeft,
+        top: canvas.offsetTop,
+        width: canvas.offsetWidth,
+        height: canvas.offsetHeight,
+      });
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(canvas);
+    return () => ro.disconnect();
+  }, [canvasRef]);
+  if (!box) return null;
+  return (
+    <span
+      className="viewport__focus"
+      aria-hidden="true"
+      style={{ left: box.left + x * box.width, top: box.top + y * box.height }}
+    />
   );
 }

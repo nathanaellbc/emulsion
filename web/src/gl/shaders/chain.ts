@@ -1,3 +1,4 @@
+import { GLSL_DOF_FOR_COMPOSITE } from './defocus';
 import { GLSL_COMMON } from './common';
 
 /**
@@ -220,15 +221,28 @@ ${GLSL_COMMON}
 in vec2 vUv;
 out vec4 fragColor;
 
+${GLSL_DOF_FOR_COMPOSITE}
 uniform sampler2D uProcessed;
 uniform sampler2D uScene;
 uniform mat3 uOutMatrix;
 uniform float uSplit;
 uniform float uAspectPx;
+// The focus view: the zone of acceptable sharpness, from the lens's own CoC.
+uniform bool uFocusView;
+uniform float uAcceptCoc;   // permissible CoC diameter, render px
 
 void main() {
   if (vUv.x > uSplit) {
-    fragColor = vec4(texture(uProcessed, vUv).rgb, 1.0);
+    vec3 print = texture(uProcessed, vUv).rgb;
+    if (uFocusView) {
+      // Inside the depth of field the print shows as it is; outside it the
+      // print drops to a dim grey, so the sharp zone reads at a glance.
+      float c = abs(signedCoc(disparityAt(vUv)));
+      float sharp = 1.0 - smoothstep(uAcceptCoc, uAcceptCoc * 1.5 + 0.5, c);
+      float l = dot(print, vec3(0.2126, 0.7152, 0.0722));
+      print = mix(vec3(l * 0.3), print, sharp);
+    }
+    fragColor = vec4(print, 1.0);
   } else {
     // The unprocessed side: working space straight to display, no film at all.
     vec3 lin = uOutMatrix * texture(uScene, vUv).rgb;

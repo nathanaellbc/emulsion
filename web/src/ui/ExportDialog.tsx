@@ -297,7 +297,17 @@ export function ExportDialog({
           'The graphics context was lost — the phone ran out of GPU memory. Reload the page and export at a smaller size.',
         );
       }
-      const exportParams = resolve(recipe, { renderWidthPx: w, renderHeightPx: h, sourceSpace });
+      // The focus point's disparity is a property of the photograph, not of
+      // the resolution; the preview's resolve already read it off the map.
+      const exportParams = resolve(recipe, {
+        renderWidthPx: w,
+        renderHeightPx: h,
+        sourceSpace,
+        sceneMiddleGrey: resolvedRef.current.sceneMiddleGrey,
+        focusDisparity: resolvedRef.current.defocus.enabled
+          ? resolvedRef.current.defocus.focusDisparity
+          : null,
+      });
       // The measured engine's LUT must be on its texture unit before the
       // render that will read it — the same sequencing the live loop uses,
       // keyed by the illuminant actually rendered.

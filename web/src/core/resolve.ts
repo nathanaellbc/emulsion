@@ -10,6 +10,14 @@
  */
 
 import { densityWithMask, type CurveParameters } from './curve';
+import {
+  MAX_COC_FRACTION,
+  MIN_FOCUS_DISPARITY,
+  NORMAL_FOCAL_MM,
+  acceptableCocMm,
+  cocAtInfinityMm,
+  depthOfField,
+} from './defocus';
 import { activity, modulate } from './development';
 import type { CameraDevelopParams } from './develop';
 import { card, speedPoint, type SensitometricCard } from './sensitometry';
@@ -85,6 +93,33 @@ export interface GlowResolved {
   enabled: boolean;
 }
 
+export interface DefocusResolved {
+  /** The recipe asks for it *and* a depth map exists to drive it. */
+  enabled: boolean;
+  focalLengthMm: number;
+  fNumber: number;
+  focusDistanceM: number;
+  /**
+   * Signed CoC diameter in render pixels is cocScalePx · (1 − d / d_f): the
+   * CoC of a subject at infinity, in pixels of this render.
+   */
+  cocScalePx: number;
+  /** Normalised disparity at the focus point, floored at MIN_FOCUS_DISPARITY. */
+  focusDisparity: number;
+  /** The gather's reach: the largest CoC diameter drawn, render pixels. */
+  maxCocPx: number;
+  /** Permissible CoC for this frame, on the film and in render pixels. */
+  acceptableCocMm: number;
+  acceptableCocPx: number;
+  /** Depth of field for that CoC, metres; far is Infinity past the hyperfocal. */
+  nearLimitM: number;
+  farLimitM: number;
+  hyperfocalM: number;
+  blades: number;
+  bladeCurvature: number;
+  catEye: number;
+}
+
 export interface GrainResolved {
   /** Field standard deviation in density at the reference point p = peak. */
   sigmaRef: number;
@@ -136,6 +171,8 @@ export interface ResolvedParameters {
    * the log — see `core/develop.ts`.
    */
   readonly camera: CameraDevelopParams;
+  /** The picture's measured middle grey the develop was resolved against, echoed for re-resolves. */
+  readonly sceneMiddleGrey: number | null;
 
   readonly curve: CurveParameters;
   readonly printCurve: PrintCurve;
@@ -199,6 +236,7 @@ export interface ResolvedParameters {
   readonly interlayer: InterlayerResolved;
   readonly grain: GrainResolved;
   readonly glow: GlowResolved;
+  readonly defocus: DefocusResolved;
 
   readonly developmentActivity: number;
   readonly sensitometry: SensitometricCard;
@@ -219,6 +257,18 @@ export interface ResolveContext {
    */
   renderHeightPx?: number;
   sourceSpace: SourceSpace;
+  /**
+   * Log-average luminance of the decoded picture (decode.ts,
+   * measureMiddleGrey): where its middle grey sits before the exposure gain.
+   * The camera develop pivots on it; omitted, it pivots on scene grey.
+   */
+  sceneMiddleGrey?: number | null;
+  /**
+   * Normalised disparity at the recipe's focus point, read from the depth
+   * map; omitted or null while no depth map exists, which leaves defocus off
+   * whatever the recipe says.
+   */
+  focusDisparity?: number | null;
 }
 
 /** The source encoding's primaries into the working space. */
@@ -311,6 +361,44 @@ function buildPrintCurve(p: PrintProfile, recipe: Recipe): PrintCurve {
     gamma: triFill(p.gamma),
     kappaT: triFill(Math.max(p.kappaT * highlightRolloff, 1e-3)),
     kappaS: triFill(Math.max(p.kappaS, 1e-3)),
+  };
+}
+
+/**
+ * The taking lens (§XIII, synthetic defocus). Everything physical is decided
+ * here — focal length, the thin-lens CoC scale, the depth of field — so the
+ * shader only multiplies a disparity by a number.
+ */
+function resolveDefocus(
+  recipe: Recipe,
+  ctx: ResolveContext,
+  pitchUm: number,
+  longEdgePx: number,
+): DefocusResolved {
+  const d = recipe.defocus;
+  const f = d.focalLengthMm ?? NORMAL_FOCAL_MM[recipe.format];
+  const zfMm = Math.max(d.focusDistanceM * 1000, f * 1.25);
+  const shortEdgePx = Math.max(Math.min(ctx.renderWidthPx, ctx.renderHeightPx ?? ctx.renderWidthPx), 1);
+  const cAccMm = acceptableCocMm(recipe.format, longEdgePx / shortEdgePx);
+  const dof = depthOfField(f, d.fNumber, zfMm, cAccMm);
+  const mmToPx = 1000 / pitchUm;
+  const hasDepth = ctx.focusDisparity !== null && ctx.focusDisparity !== undefined;
+  return {
+    enabled: d.enabled && hasDepth,
+    focalLengthMm: f,
+    fNumber: d.fNumber,
+    focusDistanceM: zfMm / 1000,
+    cocScalePx: cocAtInfinityMm(f, d.fNumber, zfMm) * mmToPx,
+    focusDisparity: Math.max(ctx.focusDisparity ?? 1, MIN_FOCUS_DISPARITY),
+    maxCocPx: MAX_COC_FRACTION * longEdgePx,
+    acceptableCocMm: cAccMm,
+    acceptableCocPx: cAccMm * mmToPx,
+    nearLimitM: dof.nearMm / 1000,
+    farLimitM: dof.farMm / 1000,
+    hyperfocalM: dof.hyperfocalMm / 1000,
+    blades: d.blades,
+    bladeCurvature: d.bladeCurvature,
+    catEye: d.catEye,
   };
 }
 
@@ -487,7 +575,16 @@ export function resolve(recipe: Recipe, ctx: ResolveContext): ResolvedParameters
     balanceShift,
     monochrome: negative.family === 'monochrome',
     panWeights: negative.panWeights ?? [0.3, 0.59, 0.11],
+    sceneMiddleGrey: ctx.sceneMiddleGrey ?? null,
     camera: {
+      // The picture's middle after the exposure gain: contrast rotates about
+      // it and the masks are placed from it, so the tone controls shape the
+      // picture without also moving its brightness (finding 21). An
+      // unmeasured picture pivots on scene grey, as the film's anchor does.
+      pivot:
+        ctx.sceneMiddleGrey && ctx.sceneMiddleGrey > 1e-6
+          ? ctx.sceneMiddleGrey * Math.pow(2, recipe.capture.exposureCompensation)
+          : 0.18,
       // The recipe stores contrast as a log2-slope *setting* in [−0.75, 0.75];
       // the math wants the multiplier, so resolve it once, here.
       contrast: Math.pow(2, recipe.camera.contrast),
@@ -594,6 +691,7 @@ export function resolve(recipe: Recipe, ctx: ResolveContext): ResolvedParameters
         enabled: recipe.glow.strength > 1e-3 && s2 > 0.25,
       };
     })(),
+    defocus: resolveDefocus(recipe, ctx, pitchUm, longEdgePx),
     developmentActivity: A,
     sensitometry: card(curve),
     recipeHash: contentHash(recipe),

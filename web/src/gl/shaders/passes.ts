@@ -33,8 +33,8 @@ uniform float uShadows;      // stops at the shadow mask centre
 uniform float uWhites;       // stops at the white end
 uniform float uBlacks;       // stops at the black end
 uniform float uSaturation;   // factor about luminance, 1 untouched
+uniform float uPivot;        // the picture's middle grey: the tone scale's pivot
 
-const float SCENE_GREY = 0.18;
 const float LUMA_FLOOR = 1e-7;
 const vec3  DEVELOP_Y = vec3(0.2722, 0.6741, 0.0537);
 
@@ -47,13 +47,13 @@ float developMask(float t, float centre, float width) {
 
 /// One luminance through the tone controls — core/develop.ts, developLuma.
 float developLuma(float y) {
-  float l = log2(max(y, LUMA_FLOOR) / SCENE_GREY);
+  float l = log2(max(y, LUMA_FLOOR) / uPivot);
   float t = l * uContrast;
   t += uHighlights * developMask(t,  1.5, 1.0);
   t += uShadows    * developMask(-t,  1.5, 1.0);  // mirrored: σ((c−t)/w)
-  t += uWhites     * developMask(t,  4.0, 2.0);
-  t += uBlacks     * developMask(-t,  4.0, 2.0);  // mirrored: σ((c−t)/w)
-  return SCENE_GREY * exp2(t);
+  t += uWhites     * developMask(t,  4.0, 1.0);
+  t += uBlacks     * developMask(-t,  4.0, 1.0);  // mirrored: σ((c−t)/w)
+  return uPivot * exp2(t);
 }
 
 /// The full develop on RGB — core/develop.ts, develop().

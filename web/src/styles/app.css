@@ -435,6 +435,78 @@ body,
   right: calc(var(--s5) + 8px);
 }
 
+/* The focus point in the Focus view: a hairline ring with a dot, the way a
+   rangefinder marks its patch — white with a dark halo, so it reads on a
+   bright sky and in a shadow alike. It is chrome, so it never catches the
+   tap that moves it. */
+.viewport__focus {
+  position: absolute;
+  width: 30px;
+  height: 30px;
+  margin: -15px 0 0 -15px;
+  border-radius: 50%;
+  border: 1.5px solid #fff;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.55), inset 0 0 0 1px rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+  transition: left 180ms var(--ease-out, ease-out), top 180ms var(--ease-out, ease-out);
+}
+
+.viewport__focus::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 4px;
+  height: 4px;
+  margin: -2px 0 0 -2px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.55);
+}
+
+/* Depth estimation progress: a label and a hairline bar. */
+.depth-status {
+  display: grid;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--ink-muted);
+}
+
+.depth-status__bar {
+  position: relative;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--rule);
+  overflow: hidden;
+}
+
+.depth-status__bar i {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: var(--accent);
+  transition: width 120ms linear;
+}
+
+.depth-status__bar i.is-indeterminate {
+  width: 30%;
+  animation: depth-sweep 1.2s ease-in-out infinite;
+}
+
+@keyframes depth-sweep {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(340%); }
+}
+
+.depth-status__meta {
+  font-size: 10px;
+  color: var(--ink-faint, var(--ink-muted));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .viewport__focus { transition: none; }
+  .depth-status__bar i.is-indeterminate { animation: none; width: 100%; opacity: 0.4; }
+}
+
 .viewport__foot {
   display: flex;
   align-items: center;
