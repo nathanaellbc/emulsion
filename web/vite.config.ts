@@ -4,6 +4,17 @@ import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 
 /**
+ * Build outputs the service worker must leave alone: the ONNX runtime's
+ * WebAssembly binary (~25 MB). It is only needed once someone asks for
+ * synthetic defocus, and the depth module keeps it — with the model weights —
+ * in a cache of its own that survives app updates (src/depth/model.ts).
+ * Precaching it would put 25 MB on every install for a feature most sessions
+ * never open, and re-download it on every release. Mirrored in
+ * service-worker.js, which lets requests for it pass straight through.
+ */
+const NOT_PRECACHED = /ort-wasm[^/]*\.wasm$/;
+
+/**
  * Emits `dist/sw.js` — the offline service worker — after every build.
  *
  * The worker is generated rather than hand-maintained because the heart of it
@@ -36,11 +47,13 @@ function emulsionServiceWorker(): Plugin {
       walk(outDir);
 
       const urls = files
-        .filter((f) => !f.endsWith('sw.js'))
+        .filter((f) => !f.endsWith('sw.js') && !NOT_PRECACHED.test(f))
         // Relative to the worker's scope, which the worker resolves them
         // against — the build works at a domain root or under a sub-path.
         .map((f) => relative(outDir, f).split(sep).join('/'));
-      const bytes = files.reduce((n, f) => n + statSync(f).size, 0);
+      const bytes = files
+        .filter((f) => !NOT_PRECACHED.test(f))
+        .reduce((n, f) => n + statSync(f).size, 0);
 
       const template = readFileSync(join(root, 'service-worker.js'), 'utf8');
       const version = new Date()
@@ -64,7 +77,9 @@ export default defineConfig({
   plugins: [react(), emulsionServiceWorker()],
   // libraw-wasm ships a large .wasm binary; keep it out of the eager bundle so
   // the app is interactive before a RAW file is ever chosen.
-  optimizeDeps: { exclude: ['libraw-wasm'] },
+  // onnxruntime-web likewise: it resolves its binary against its own module
+  // URL, which pre-bundling would move.
+  optimizeDeps: { exclude: ['libraw-wasm', 'onnxruntime-web'] },
   build: {
     target: 'es2022',
     rollupOptions: {

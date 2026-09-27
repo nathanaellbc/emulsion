@@ -106,16 +106,50 @@ export function cctToXy(tempK: number): { x: number; y: number } {
   return { x, y };
 }
 
+/** CIE 1960 UCS chromaticity of the Planckian (for T ≥ 4000 K, daylight-like) white at `tempK`. */
+function planckianUv(tempK: number): [number, number] {
+  const { x, y } = cctToXy(tempK);
+  const d = -2 * x + 12 * y + 3;
+  return [(4 * x) / d, (6 * y) / d];
+}
+
 /**
- * Tint moves perpendicular to the Planckian locus in CIE 1960 UCS, which is
- * what "green–magenta" means physically. Positive is green.
+ * Duv at tint ±1. Duv — distance from the Planckian locus in CIE 1960 UCS —
+ * is the physical measure of a light's green–magenta error: a fluorescent
+ * tube sits around +0.005 to +0.01. ±0.02 reaches past any real lamp; on a
+ * grey card its correction is about a CC20 filter.
+ */
+export const TINT_DUV = 0.02;
+
+/**
+ * An illuminant's white, as XYZ with Y = 1. Tint moves it off the Planckian
+ * locus *perpendicular* to it in CIE 1960 UCS — which is what Duv, and what
+ * "green–magenta" physically, mean. Positive is a green light (above the
+ * locus). The normal is taken from the locus itself, five mireds either side.
+ *
+ * This used to add tint·0.05 to v alone: 2.5× the scale above, and along v
+ * rather than across the locus, so the correction swung blue–yellow far more
+ * than green–magenta — tint +1 turned a grey card seven times bluer.
+ * DEVIATIONS.md, finding 21.
  */
 export function illuminantXYZ(tempK: number, tint: number): Triple {
-  const { x, y } = cctToXy(tempK);
-  const denom = -2 * x + 12 * y + 3;
-  let u = (4 * x) / denom;
-  let v = (6 * y) / denom;
-  v += tint * 0.05;
+  let [u, v] = planckianUv(tempK);
+  if (tint !== 0) {
+    const mired = 1e6 / tempK;
+    const [u1, v1] = planckianUv(1e6 / (mired + 5));
+    const [u0, v0] = planckianUv(1e6 / (mired - 5));
+    let nu = -(v1 - v0);
+    let nv = u1 - u0;
+    const len = Math.hypot(nu, nv) || 1;
+    nu /= len;
+    nv /= len;
+    if (nv < 0) {
+      nu = -nu;
+      nv = -nv;
+    }
+    u += tint * TINT_DUV * nu;
+    v += tint * TINT_DUV * nv;
+  }
   const d = 2 * u - 8 * v + 4;
   const xp = (3 * u) / d;
   const yp = (2 * v) / d;

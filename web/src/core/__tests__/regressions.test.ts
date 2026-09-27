@@ -1,5 +1,5 @@
 /**
- * Regressions for the defects recorded in DEVIATIONS.md findings 16–18: each
+ * Regressions for the defects recorded in DEVIATIONS.md findings 16–18 and 21: each
  * test here failed before its fix.
  */
 
@@ -10,7 +10,8 @@ import { evaluateSceneLinear } from '../chain';
 import { evaluateSceneLinearWithEngine } from '../engine';
 import { recombineHalation } from '../halation';
 import { floatToHalf, halfToFloat } from '../half';
-import { AP1_LUMINANCE, M_P3_TO_AP1, M_SRGB_TO_AP1 } from '../colorspace';
+import { AP1_LUMINANCE, M_AP1_TO_SRGB, M_P3_TO_AP1, M_SRGB_TO_AP1, whiteBalanceMatrix } from '../colorspace';
+import { developLuma } from '../develop';
 import type { Triple } from '../triple';
 
 const ctx = { renderWidthPx: 2048, sourceSpace: 'linearAP1' } as const;
@@ -198,5 +199,51 @@ describe('the export file name', () => {
     const name = exportFileName('Café — été.jpg', 'Portra 400', 'Vision 2383 · D65', 'png');
     expect(name).toMatch(/^[\x20-\x7e]+$/);
     expect(name).toBe('Cafe - ete - Portra 400 on Vision 2383 - D65.png');
+  });
+});
+
+describe('the camera develop and white balance (DEVIATIONS.md, finding 21)', () => {
+  const card = (tempK: number, tint: number) => {
+    const m = whiteBalanceMatrix(tempK, tint);
+    const ap1 = m.map((r) => r[0] * 0.18 + r[1] * 0.18 + r[2] * 0.18);
+    const s = M_AP1_TO_SRGB.map((r) => r[0] * ap1[0]! + r[1] * ap1[1]! + r[2] * ap1[2]!);
+    return s;
+  };
+
+  it('tint moves a grey card along green–magenta, not blue–yellow', () => {
+    for (const t of [1, -1, 0.3]) {
+      const [r, g, b] = card(5500, t);
+      // Red and blue move together; green is what moves.
+      expect(Math.abs(Math.log(r! / b!))).toBeLessThan(0.1);
+      const greenShift = Math.log(g! / Math.sqrt(r! * b!));
+      expect(Math.sign(greenShift)).toBe(-Math.sign(t)); // a green light is corrected with magenta
+    }
+    // ±1 is a CC20-sized correction, not the old ×7 swing.
+    const [r, g, b] = card(5500, 1);
+    expect(g! / Math.sqrt(r! * b!)).toBeGreaterThan(0.6);
+    expect(g! / Math.sqrt(r! * b!)).toBeLessThan(0.8);
+  });
+
+  it('contrast rotates about the picture’s own middle and leaves its brightness alone', () => {
+    const measured = 0.07; // a dark picture, not anchored
+    for (const contrast of [-0.75, 0.75]) {
+      const p = resolve(recipe((r) => (r.camera.contrast = contrast)), { ...ctx, sceneMiddleGrey: measured });
+      expect(p.camera.pivot).toBeCloseTo(measured, 12);
+      expect(developLuma(measured, p.camera)).toBeCloseTo(measured, 12);
+    }
+    const bright = resolve(recipe((r) => (r.capture.exposureCompensation = 1)), { ...ctx, sceneMiddleGrey: measured });
+    expect(bright.camera.pivot).toBeCloseTo(2 * measured, 12);
+    // Unmeasured, it pivots on scene grey, where the film's anchor is.
+    expect(resolve(recipe(), ctx).camera.pivot).toBe(0.18);
+  });
+
+  it('whites and blacks stay at the extremes', () => {
+    const p = resolve(recipe(), ctx).camera;
+    for (const k of ['whites', 'blacks'] as const) {
+      for (const v of [-2, 2]) {
+        const shift = Math.log2(developLuma(p.pivot, { ...p, [k]: v }) / p.pivot);
+        expect(Math.abs(shift)).toBeLessThan(0.05);
+      }
+    }
   });
 });

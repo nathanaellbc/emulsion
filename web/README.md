@@ -58,6 +58,8 @@ src/
     renderer.ts    the render graph
     halationFit.ts solves the pyramid weights against the stock's PSF
     shaders/       the same nine stages, on the GPU
+  depth/           depth estimation for defocus: the model, its worker,
+                   and the joint bilateral refinement
   io/decode.ts     RAW via LibRaw; ordinary images via the browser
   io/export.ts     the export bench's formats, encoders and save paths
   ui/              the control rail, the D–log E plot, the viewport
@@ -79,6 +81,19 @@ recorded in DEVIATIONS.md finding 14, and the develop sits before the log —
 before the film, before halation's threshold, outside the LUT-bake domain —
 which is why a recovered highlight genuinely scatters less.
 
+The Camera bench ends with the **Lens**: synthetic defocus (§XIII). The
+photograph's depth is estimated on the device by Depth Anything V2 Small, and
+the blur is a thin lens's circle of confusion — focal length in millimetres,
+aperture f/1.2–f/22 in third stops, focus distance in metres, with the near
+and far limits of the depth of field read out beside them. The **Focus**
+inspection stage dims everything outside the depth of field; a tap on the
+picture there sets the focus point. Blade count and curvature shape the
+out-of-focus highlights, and the cat's eye narrows them toward the frame's
+edge. The blur acts on the scene's light before the film, so a defocused
+highlight is exposed onto the negative as a bright disc. The model (≈ 50 MB,
+plus a 26 MB runtime) downloads once, only when asked for, and is kept for
+offline use; DEVIATIONS.md finding 20 has the details and the limits.
+
 **Film** is the bench proper: stock, rating (EI), development, print and the
 spatial phenomena, as before.
 
@@ -99,9 +114,10 @@ blue development beside a green edge — is not something a sharpness control or
 saturation control can reach, because it acts on the local difference between
 records rather than on either one alone.
 
-The four **inspection stages** show the chain mid-flight: the print, the negative
+The **inspection stages** show the chain mid-flight: the print, the negative
 density that is actually on the film, the print density before the display
-transform, and the halation source term.
+transform, the halation source term, and — once a depth map exists — the
+lens's zone of acceptable sharpness.
 
 The first entry in the stock list, **None — ideal negative**, is the fifth
 instrument. It is a straight line of gamma 1 with no toe, no shoulder, no fog
@@ -190,6 +206,13 @@ any console error, page error or failed request. TypeScript cannot check GLSL,
 so a shader that fails to compile builds perfectly and throws at runtime; this
 is what catches that. It needs a preview server on port 4173 and writes
 screenshots to `verify-shots/`.
+
+`node scripts/verify-defocus.mjs [url] [photo] [outDir]` runs the lens end to
+end: it downloads the depth model into a fresh browser (headless Chromium has
+no WebGPU, so this is the WebAssembly path), focuses on a region by tapping it
+in the Focus view, and fails unless that region stays sharp while a background
+region softens, with no GL or console error. It writes each render to
+`outDir`.
 
 `node scripts/make-test-chart.mjs` regenerates `public/test-chart.png` — a step
 wedge, memory colours, saturated primaries and speculars several stops past

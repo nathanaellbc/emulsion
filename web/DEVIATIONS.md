@@ -450,13 +450,14 @@ recorded here so none of it reads as a measurement.
   rating changes where the ISO anchor sits, and push development is the
   recovery. Two exposure sliders would have been precisely the kind of lie the
   interface refuses to tell.
-- **Contrast** is a slope `k` on stops-over-grey in log₂, pivoting about scene
-  grey (0.18). The recipe stores the setting as a log2-slope in [−0.75,
+- **Contrast** is a slope `k` on stops-over-grey in log₂, pivoting about the
+  picture's own middle grey (finding 21; it pivoted on scene grey, 0.18, at
+  first). The recipe stores the setting as a log2-slope in [−0.75,
   +0.75] so the slider's readout can show the multiplier the math uses
   (0.59×–1.68×).
 - **Highlights / Shadows / Whites / Blacks** are additive stops at logistic
-  masks centred +1.5 / −1.5 / +4 / −4 EV over grey, widths 1.0 / 1.0 / 2.0 /
-  2.0 stops. The logistic is the house's own knee — the softplus derivative
+  masks centred +1.5 / −1.5 / +4 / −4 EV over that middle grey, widths 1.0 /
+  1.0 / 1.0 / 1.0 stops (whites and blacks were 2.0; finding 21). The logistic is the house's own knee — the softplus derivative
   that builds every toe and shoulder elsewhere — so a mask "begins" as softly
   as a film curve does. The shadow-side masks are the mirrored form σ((c−t)/w);
   writing them the same way as the highlight side is the classic parametric
@@ -683,3 +684,129 @@ kink lands where the sRGB-style encode is steepest. The .cube export's
 measured error (the ACCURACY line of its header) rose accordingly — 14 code values
 at 33³, 4.5 at 129³ for a colour negative — and the header now names the gamut
 clip alongside a steep curve as the reason.
+
+
+## 20. Synthetic defocus without a captured depth map
+
+§XIII marks synthetic defocus, cat-eye bokeh and aperture blade shape as
+SHOULD (FR-10), and makes all three conditional on *capture* depth — LiDAR or
+dual-camera disparity — which an imported file does not carry. **Implemented**
+with the depth estimated on the device instead (`src/depth/`,
+`gl/shaders/defocus.ts`, `core/defocus.ts`). Three things the paper does not
+say had to be decided.
+
+**Where the depth comes from.** Depth Anything V2 Small (Apache-2.0), run in
+a Web Worker through ONNX Runtime Web: fp16 on WebGPU where the adapter has
+`shader-f16`, int8 on WebAssembly everywhere else, with a WebGPU failure
+falling back to the CPU. It is the network the `Depth-Anything-V2` Space
+defines; the ONNX export was checked against that PyTorch code and the
+official Small weights on the Space's demo images (fp16: correlation 1.00000,
+mean error 0.04–0.12 % of the disparity range; int8: 0.3–1.4 %). The Space
+itself runs Large, which is CC-BY-NC-4.0 and some 335 M parameters; Small is
+the one that is both licensable and a sane phone download. The preprocessing
+is `image2tensor`'s — short side to 518, both sides to a multiple of 14,
+ImageNet normalisation — resampled with an antialiased Keys cubic rather than
+cv2's aliasing one. The weights (50 MB fp16 or 27 MB int8) and the runtime
+binary (26 MB) are fetched on first use, only after the user agrees to the
+download, from a revision-pinned URL, into a Cache Storage bucket the service
+worker never deletes; the app's own precache is unchanged at ~9.6 MB.
+
+**How a relative map becomes a lens.** The network predicts affine-invariant
+disparity — 1/z up to an unknown scale and shift — and the paper's CoC needs
+metres. The CoC is linear in 1/z, so two anchors suffice: the far end of the
+map (its 0.5th percentile) is taken as infinity, and the user supplies the
+distance to the focus point, which is what a focus scale reads. The CoC is then
+c = f²/(N(z_f − f)) · (1 − d/d_f), signed, and the rest of the lens is real:
+the focal length (the format's normal lens by default, or the RAW file's),
+f/1.2–f/22 in thirds, and the frame's pixel pitch, so a larger format at the
+same f-number is shallower, as it is. The depth of field readout uses the same
+formula with a permissible CoC of the frame diagonal over 1442 (0.030 mm on
+35 mm); `defocus.test.ts` holds the two to each other exactly. **What the
+infinity anchor costs:** a picture with no far background (a wall behind the
+subject) has its farthest surface treated as infinitely far, which exaggerates
+the blur there. The focus distance is the control that compensates.
+
+**Where in the chain, and how.** Pre-exposure, on the scene-linear light, ahead
+of the glow and halation — the paper's own placement argument for every
+taking-lens effect. A defocused highlight therefore reaches the negative as a
+bright disc, and the film's shoulder and the halation act on the disc, not on
+a point that is blurred afterwards. The blur is a scatter-as-gather at half
+resolution (capped at 1536 px on the long side, so an 8192 export gathers on
+the same grid as the preview and the look does not change with export size),
+with the far and near fields separated as in Jimenez's post-process depth of
+field: behind the focal plane a neighbour spreads over a pixel only within the
+smaller of the two blurs, so a sharp subject is never painted over by the soft
+background; in front of it, a blurred foreground spreads over everything
+within a reach dilated from 16-pixel tiles and is laid over by coverage.
+Discs are weighted by the inverse of their area, so a point keeps its energy
+however wide it spreads. CoCs up to about a grid pixel are blurred at full
+resolution in the combine, and anything under half a pixel is the scene as it
+was — the depth of field's interior keeps every pixel of detail. The aperture
+is the paper's: an n-gon (5–9 blades) blended toward the circle by blade
+curvature, intersected with two circles offset along the radial direction for
+the cat's eye. The depth map is refined to the picture's own edges by a joint
+bilateral upsample before any of this, because a 518-pixel network puts its
+edges within a 518-pixel grid.
+
+**Limits, as §XIII predicted.** Hair, glass and reflections are where the
+estimated depth is least trustworthy, and they are where the blur will be
+wrong. Longitudinal chromatic aberration (§XIII's per-channel defocus offset)
+is not implemented.
+
+
+## 21. The Camera bench: a tint that was not green–magenta, a contrast that moved the brightness, and whites that reached the middle
+
+An audit of the Camera bench against what each control says it does found
+three defects. Each is held by a test in `regressions.test.ts` that failed
+before its fix.
+
+**Tint.** The white balance's tint added tint·0.05 to the illuminant's v in
+CIE 1960 UCS. That is the wrong direction and the wrong size. Near daylight
+the Planckian locus is not horizontal in (u, v), so a pure-v step is not
+perpendicular to it, and 0.05 is a Duv beyond any lamp — the source white
+landed at xy ≈ (0.46, 0.55), a saturated yellow-green, and its correction
+turned a grey card 7.4× bluer at tint +1 and cut blue to 0.31 at −1. The
+control labelled green–magenta was a blue–yellow control. **Fixed**
+(`core/colorspace.ts`): the offset is now along the locus's own normal, taken
+from the locus five mireds either side, and ±1 is a Duv of ±0.02
+(`TINT_DUV`). On a grey card that is a CC20-sized green–magenta correction
+with red and blue moving together. The sign is the temperature slider's:
+the control says what the *light* was, so a green light (+) is corrected
+toward magenta. The hint now says so. A recipe saved with a tint renders a
+different, and now correct, colour.
+
+**Contrast.** The slope pivoted on scene grey, 0.18, after the exposure gain.
+That is the film's anchor, but it is only the picture's middle when the
+picture happens to be anchored there, which a display-referred file almost
+never is (the test chart's log-average is 0.12; after +1.08 EV it is 0.26).
+Off the pivot, contrast was also an exposure control: the print's mean
+code value ran 115 → 131 → 153 across 0.59× → 1.00× → 1.68×. **Fixed**
+(`core/develop.ts`, `resolve.ts`, the prepare shader): the develop now
+pivots on the picture's measured log-average after the exposure gain
+(`camera.pivot`), and every mask is placed from it too, so "1.5 stops over
+grey" means over *this picture's* grey. Pixels at the middle are untouched by
+contrast, exactly. What remains of the mean's drift (122 → 128 → 140) is the
+film's toe and shoulder and the display encoding acting asymmetrically on a
+symmetric scene-side change, which is the film's business. An unmeasured
+picture still pivots on 0.18. The exposure anchor, the histogram and the LUT
+bake read the same resolved pivot, so none of them can drift from the screen.
+
+**Whites and blacks.** Their logistic masks had a width of 2 stops at ±4
+stops, so at the middle grey they still carried σ(−2) = 0.12 of their
+setting: whites +2 lifted the middle by 0.24 stops and the −1 stop shadows by
+0.15. That contradicts the hint ("the extreme top end"). **Fixed**: width
+1.0, which leaves 0.018 of the setting at the middle (under 0.04 stops at
+±2). Highlights and shadows are unchanged — at ±1.5 stops with width 1 they
+are mid-scale controls by design and say so.
+
+**Checked and correct:** the temperature direction and magnitude (3200 K
+corrects a grey card to R:G:B ≈ 0.46 : 1 : 2.07 in sRGB, against 0.58 : 1 :
+2.22 for a plain diagonal between the two Planckian whites — CAT02 differs
+from a diagonal by that much), identity at 5500 K, the saturation operator
+(luminance exact, host and GPU identical), exposure, the 18 %-grey anchor
+suggestion, monotonicity of every control, and GPU/host parity of the whole
+stage (`scripts/verify.mjs`, develop means). One simplification remains: the
+histogram's samples are weighted with the source primaries' luminance before
+the white balance, while the shader's tone gain reads AP1 luminance after it.
+For anything but an extreme white balance the two differ by a small fraction
+of a stop.

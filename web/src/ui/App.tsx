@@ -21,6 +21,26 @@ import { ExportDialog } from './ExportDialog';
 import { Panel, type RailTab } from './Panel';
 import { Viewport } from './Viewport';
 import { loadPrintLut, loadedPrintLut } from '../core/printLuts';
+import {
+  DepthCancelledError,
+  DepthEstimator,
+  DepthNotCachedError,
+  disparityAt,
+  type DepthMap,
+  type DepthProgress,
+} from '../depth/estimate';
+import { preferredBackend, VARIANTS, type DepthBackend } from '../depth/model';
+
+/** Where the depth map for the open photograph stands. */
+export type DepthStatus =
+  | { kind: 'idle' }
+  /** The weights are not on this device; estimating means downloading them. */
+  | { kind: 'needs-download'; megabytes: number }
+  | { kind: 'working'; progress: DepthProgress | null }
+  | { kind: 'error'; message: string };
+
+/** The runtime binary rides along with the first download (depth/depth.worker.ts). */
+const RUNTIME_MB = 25.5;
 
 const STORAGE_KEY = 'emulsion.recipe.v1';
 
@@ -156,16 +176,41 @@ export function App() {
   const [renderHeight, setRenderHeight] = useState(0);
   /** Bumped when a print LUT finishes loading; resolve reads the cache. */
   const [lutVersion, setLutVersion] = useState(0);
+  /** The open photograph's depth map, once estimated; null before and without one. */
+  const [depth, setDepth] = useState<DepthMap | null>(null);
+  const [depthStatus, setDepthStatus] = useState<DepthStatus>({ kind: 'idle' });
+  const estimatorRef = useRef<DepthEstimator | null>(null);
+  /** The source a depth request was made for: a late answer for a previous photograph is dropped. */
+  const sourceRef = useRef<DecodedSource | null>(null);
+  const [depthBackend, setDepthBackend] = useState<DepthBackend>('wasm');
+  useEffect(() => {
+    void preferredBackend().then(setDepthBackend);
+    return () => estimatorRef.current?.dispose();
+  }, []);
   /** Reset is staged: the first click arms it, the second, within a beat, confirms. */
   const [resetArmed, setResetArmed] = useState(false);
   const resetTimer = useRef<number | null>(null);
 
   const sourceSpace: SourceSpace = source?.space ?? 'srgb';
 
+  // The disparity under the focus point: the one number from the depth map
+  // the resolve needs. Read on the host, once per tap, not per pixel.
+  const { focusX, focusY } = recipe.defocus;
+  const focusDisparity = useMemo(
+    () => (depth ? disparityAt(depth, focusX, focusY) : null),
+    [depth, focusX, focusY],
+  );
+
   const resolved: ResolvedParameters = useMemo(
     () =>
-      resolve(recipe, { renderWidthPx: renderWidth, renderHeightPx: renderHeight, sourceSpace }),
-    [recipe, renderWidth, renderHeight, sourceSpace, lutVersion],
+      resolve(recipe, {
+        renderWidthPx: renderWidth,
+        renderHeightPx: renderHeight,
+        sourceSpace,
+        focusDisparity,
+        sceneMiddleGrey: measuredGrey,
+      }),
+    [recipe, renderWidth, renderHeight, sourceSpace, lutVersion, focusDisparity, measuredGrey],
   );
 
   const update = useCallback((mutate: (draft: Recipe) => void) => {
@@ -272,6 +317,52 @@ export function App() {
     };
   }, [resolved, mode, split, clipWarning, source]);
 
+  /**
+   * Estimates the open photograph's depth. Without `allowDownload` it only
+   * runs when the weights are already on the device; otherwise it reports
+   * what the download would cost and waits for the photographer to agree.
+   */
+  const estimateDepth = useCallback(
+    async (src: DecodedSource, allowDownload: boolean) => {
+      estimatorRef.current ??= new DepthEstimator();
+      setDepthStatus({ kind: 'working', progress: null });
+      try {
+        const map = await estimatorRef.current.estimate(src, {
+          allowDownload,
+          onProgress: (progress) => {
+            if (sourceRef.current === src) setDepthStatus({ kind: 'working', progress });
+          },
+        });
+        if (sourceRef.current !== src) return;
+        rendererRef.current?.setDepth(map);
+        setDepth(map);
+        setDepthStatus({ kind: 'idle' });
+      } catch (err) {
+        if (err instanceof DepthCancelledError || sourceRef.current !== src) return;
+        if (err instanceof DepthNotCachedError) {
+          const mb = VARIANTS[depthBackend].bytes / 1e6 + RUNTIME_MB;
+          setDepthStatus({ kind: 'needs-download', megabytes: Math.round(mb) });
+          return;
+        }
+        setDepthStatus({ kind: 'error', message: err instanceof Error ? err.message : String(err) });
+      }
+    },
+    [depthBackend],
+  );
+
+  // The focus view has nothing to show without a depth map.
+  useEffect(() => {
+    if (!depth && mode === 'focus') setMode('print');
+  }, [depth, mode]);
+
+  // Defocus switched on (or a photograph opened with it on) and no map yet:
+  // estimate from the cache, or say what the download would be.
+  const defocusOn = recipe.defocus.enabled;
+  useEffect(() => {
+    if (!defocusOn || !source || depth || depthStatus.kind !== 'idle') return;
+    void estimateDepth(source, false);
+  }, [defocusOn, source, depth, depthStatus.kind, estimateDepth]);
+
   const openFile = useCallback(
     async (file: File) => {
       setBusy(true);
@@ -280,12 +371,25 @@ export function App() {
         const decoded = await decodeFile(file);
         const renderer = rendererRef.current;
         if (!renderer) throw new Error('the renderer is not ready yet');
+        // The previous photograph's depth is meaningless for this one; the
+        // renderer drops its texture in setSource, and the state follows. An
+        // estimate still in flight for it is dropped when it lands.
+        sourceRef.current = decoded;
+        setDepth(null);
+        setDepthStatus({ kind: 'idle' });
+        // Focus belongs to the picture too: a new one starts focused at its centre.
+        update((d) => {
+          d.defocus.focusX = 0.5;
+          d.defocus.focusY = 0.5;
+        });
         // The upload may widen the declared encoding (an 8-bit file unpacked
         // into Display P3); the chain's input matrix must follow the texture.
         const uploaded = renderer.setSource(decoded.image, previewBudget());
         setRenderWidth(renderer.renderWidth);
         setRenderHeight(renderer.renderHeight);
-        setSource(uploaded ? { ...decoded, space: uploaded } : decoded);
+        const opened = uploaded ? { ...decoded, space: uploaded } : decoded;
+        sourceRef.current = opened;
+        setSource(opened);
         setSamples(sceneSamples(decoded));
         // A new photograph arrives at the aspect's own size; the grip's last
         // choice belonged to the previous picture.
@@ -458,6 +562,19 @@ export function App() {
           caption={caption}
           busy={busy}
           onPictureResize={resizePicture}
+          focus={
+            depth
+              ? {
+                  x: recipe.defocus.focusX,
+                  y: recipe.defocus.focusY,
+                  onPick: (x, y) =>
+                    update((d) => {
+                      d.defocus.focusX = x;
+                      d.defocus.focusY = y;
+                    }),
+                }
+              : null
+          }
         />
 
         {source ? (
@@ -524,7 +641,21 @@ export function App() {
                 {source.caveat ? <p className="notice">{source.caveat}</p> : null}
               </div>
             ) : null}
-            <Panel recipe={recipe} resolved={resolved} update={update} measuredGrey={measuredGrey} tab={railTab} />
+            <Panel
+              recipe={recipe}
+              resolved={resolved}
+              update={update}
+              measuredGrey={measuredGrey}
+              tab={railTab}
+              lens={{
+                depth,
+                status: depthStatus,
+                fileFocalLength: source.kind === 'raw' ? (source.focalLength ?? null) : null,
+                onEstimate: () => void estimateDepth(source, true),
+                focusView: mode === 'focus',
+                onFocusView: (on) => setMode(on ? 'focus' : 'print'),
+              }}
+            />
           </aside>
         ) : null}
 

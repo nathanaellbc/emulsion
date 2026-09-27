@@ -48,6 +48,12 @@ const SHELL = new URL('index.html', SCOPE).href;
  * them, and the mismatch must not be allowed to hide them.
  */
 const MATCH_OPTS = { ignoreVary: true };
+/**
+ * The depth runtime's binary is not this cache's business: the depth module
+ * keeps it in its own bucket, which survives updates (vite.config.ts,
+ * NOT_PRECACHED). Caching it here as well would store 25 MB twice.
+ */
+const PASS_THROUGH = /ort-wasm[^/]*\.wasm$/;
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -92,6 +98,7 @@ self.addEventListener('fetch', (event) => {
   if (request.method !== 'GET') return;
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
+  if (PASS_THROUGH.test(url.pathname)) return;
 
   if (request.mode === 'navigate') {
     event.respondWith(

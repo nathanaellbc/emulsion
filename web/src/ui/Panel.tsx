@@ -18,6 +18,10 @@ import { FORMAT_LABEL, FRAME_WIDTH_MM, type FilmFormat, type Recipe } from '../c
 import { GRAIN_PRESETS, grainPresetById } from '../core/grainPresets';
 import { HALATION_PRESETS, halationPresetById } from '../core/halationPresets';
 import type { ResolvedParameters } from '../core/resolve';
+import { F_STOPS, NORMAL_FOCAL_MM, nearestStop } from '../core/defocus';
+import type { DepthMap } from '../depth/estimate';
+import { DEPTH_MODEL } from '../depth/model';
+import type { DepthStatus } from './App';
 import { Choice, PointStepper, Section, SegmentedControl, Slider } from './controls';
 
 /* The dot at the head of the stock dropdown. It is not decoration: each family
@@ -41,6 +45,19 @@ export interface PanelProps {
   measuredGrey: number | null;
   /** Which page the rail shows; the camera develop comes first. */
   tab: RailTab;
+  lens: LensProps;
+}
+
+/** What the Lens section needs from the app beyond the recipe. */
+export interface LensProps {
+  depth: DepthMap | null;
+  status: DepthStatus;
+  /** The RAW file's own focal length, when it records one. */
+  fileFocalLength: number | null;
+  /** Estimate the depth, downloading the model if it has to. */
+  onEstimate: () => void;
+  focusView: boolean;
+  onFocusView: (on: boolean) => void;
 }
 
 const FORMATS = Object.keys(FRAME_WIDTH_MM) as FilmFormat[];
@@ -48,7 +65,7 @@ const FORMATS = Object.keys(FRAME_WIDTH_MM) as FilmFormat[];
 /** Rating a film at a speed other than its nominal one, in third stops. */
 const EI_CHOICES = [0.25, 0.5, 1, 2, 4, 8];
 
-export function Panel({ recipe, resolved, update, measuredGrey, tab }: PanelProps) {
+export function Panel({ recipe, resolved, update, measuredGrey, tab, lens }: PanelProps) {
   const { negative, sensitometry } = resolved;
   const marginTight = sensitometry.margin < 0.25;
 
@@ -65,7 +82,13 @@ export function Panel({ recipe, resolved, update, measuredGrey, tab }: PanelProp
   return (
     <div className="panel" id="bench-page">
       {tab === 'camera' ? (
-        <CameraPage recipe={recipe} resolved={resolved} update={update} measuredGrey={measuredGrey} />
+        <CameraPage
+          recipe={recipe}
+          resolved={resolved}
+          update={update}
+          measuredGrey={measuredGrey}
+          lens={lens}
+        />
       ) : (
         <FilmPage
           recipe={recipe}
@@ -92,11 +115,13 @@ function CameraPage({
   resolved,
   update,
   measuredGrey,
+  lens,
 }: {
   recipe: Recipe;
   resolved: ResolvedParameters;
   update: (mutate: (draft: Recipe) => void) => void;
   measuredGrey: number | null;
+  lens: LensProps;
 }) {
   const { negative } = resolved;
 
@@ -149,7 +174,7 @@ function CameraPage({
           step={0.01}
           format={(v) => `${Math.pow(2, v).toFixed(2)}×`}
           detents={[0]}
-          hint="Slope of the tone curve in log space about scene grey. 1.00× leaves it untouched; 1.68× is steep, 0.59× is flat."
+          hint="Slope of the tone curve in log space, rotated about this picture's own middle grey — so it changes contrast without changing the picture's brightness. 1.00× leaves it untouched; 1.68× is steep, 0.59× is flat."
           onChange={(v) => update((d) => (d.camera.contrast = v))}
         />
         <Slider
@@ -161,7 +186,7 @@ function CameraPage({
           unit=" stops"
           format={(v) => (v > 0 ? `+${v.toFixed(2)}` : v.toFixed(2))}
           detents={[0]}
-          hint="Recovers or pushes the bright mid-scale, a stop and a half over grey, with a soft knee. Chromaticity is preserved: a saturated highlight keeps its hue."
+          hint="Recovers or pushes the bright mid-scale, a stop and a half over the picture’s middle grey, with a soft knee. Chromaticity is preserved: a saturated highlight keeps its hue."
           onChange={(v) => update((d) => (d.camera.highlights = v))}
         />
         <Slider
@@ -173,7 +198,7 @@ function CameraPage({
           unit=" stops"
           format={(v) => (v > 0 ? `+${v.toFixed(2)}` : v.toFixed(2))}
           detents={[0]}
-          hint="Lifts or holds the dark mid-scale, a stop and a half under grey. Acts in log space, so a lifted shadow stays positive where a multiplicative lift cannot."
+          hint="Lifts or holds the dark mid-scale, a stop and a half under the picture’s middle grey. Acts in log space, so a lifted shadow stays positive where a multiplicative lift cannot."
           onChange={(v) => update((d) => (d.camera.shadows = v))}
         />
         <Slider
@@ -185,7 +210,7 @@ function CameraPage({
           unit=" stops"
           format={(v) => (v > 0 ? `+${v.toFixed(2)}` : v.toFixed(2))}
           detents={[0]}
-          hint="The extreme top end, four stops over grey: sets where speculars land. The film's shoulder takes it from here."
+          hint="The extreme top end, four stops over the picture's middle: sets where speculars land, and leaves the mid-scale alone. The film's shoulder takes it from here."
           onChange={(v) => update((d) => (d.camera.whites = v))}
         />
         <Slider
@@ -197,7 +222,7 @@ function CameraPage({
           unit=" stops"
           format={(v) => (v > 0 ? `+${v.toFixed(2)}` : v.toFixed(2))}
           detents={[0]}
-          hint="The extreme bottom end, four stops under grey: how far down the shadows reach before the toe. True black stays black."
+          hint="The extreme bottom end, four stops under the picture’s middle: how far down the shadows reach before the toe. True black stays black."
           onChange={(v) => update((d) => (d.camera.blacks = v))}
         />
       </Section>
@@ -227,6 +252,7 @@ function CameraPage({
           step={0.01}
           detents={[0]}
           format={(v) => (v > 0 ? `+${v.toFixed(2)} G` : v < 0 ? `${v.toFixed(2)} M` : '0.00')}
+          hint="The light's green–magenta error, like the temperature above: what the light was, not what to add. A green light (fluorescent, +) is corrected by adding magenta, a magenta one (−) by adding green. ±1 is a Duv of ±0.02, past any real lamp."
           onChange={(v) => update((d) => (d.capture.whiteBalanceTint = v))}
         />
         <Slider
@@ -241,7 +267,248 @@ function CameraPage({
           onChange={(v) => update((d) => (d.camera.saturation = v))}
         />
       </Section>
+
+      <LensSection recipe={recipe} resolved={resolved} update={update} lens={lens} />
     </>
+  );
+}
+
+const PHASE_LABEL: Record<string, string> = {
+  runtime: 'Downloading the runtime',
+  model: 'Downloading the depth model',
+  compile: 'Preparing the model',
+  infer: 'Estimating depth',
+  refine: 'Refining the edges',
+};
+
+/** Full stops get a detent; the thirds between them are the steps. */
+const FULL_STOPS = [1.4, 2, 2.8, 4, 5.6, 8, 11, 16, 22];
+
+function fmtMetres(m: number): string {
+  if (!Number.isFinite(m)) return '∞';
+  if (m < 1) return `${m.toFixed(2)} m`;
+  if (m < 10) return `${m.toFixed(1)} m`;
+  return `${Math.round(m)} m`;
+}
+
+/**
+ * The taking lens: synthetic defocus (§XIII). Scene-side, so it lives on the
+ * Camera page — a lens forms the image before any film sees it. The depth
+ * comes from Depth Anything V2 run on this device, and every control is a
+ * lens quantity: millimetres, an f-number, metres.
+ */
+function LensSection({
+  recipe,
+  resolved,
+  update,
+  lens,
+}: {
+  recipe: Recipe;
+  resolved: ResolvedParameters;
+  update: (mutate: (draft: Recipe) => void) => void;
+  lens: LensProps;
+}) {
+  const d = recipe.defocus;
+  const r = resolved.defocus;
+  const { status, depth } = lens;
+  const normal = NORMAL_FOCAL_MM[recipe.format];
+  const stopIndex = F_STOPS.indexOf(nearestStop(d.fNumber) as (typeof F_STOPS)[number]);
+  const progress = status.kind === 'working' ? status.progress : null;
+  const measured = progress !== null && progress.total > 1;
+
+  return (
+    <Section
+      title="Lens"
+      meta={d.enabled ? <>{Math.round(r.focalLengthMm)} mm · f/{r.fNumber}</> : <>defocus off</>}
+    >
+      <div className="control">
+        <div className="control__row">
+          <span className="control__label">Synthetic defocus</span>
+        </div>
+        <SegmentedControl
+          label="Synthetic defocus"
+          value={d.enabled ? 'on' : 'off'}
+          options={[
+            { value: 'off', label: 'Off', title: 'Everything as sharp as the file is' },
+            {
+              value: 'on',
+              label: 'On',
+              title: 'Blur by depth, through a lens with a real focal length and aperture',
+            },
+          ]}
+          onChange={(v) => update((draft) => (draft.defocus.enabled = v === 'on'))}
+        />
+        <p className="control__hint">
+          The picture’s depth is estimated on this device by {DEPTH_MODEL.name} ({DEPTH_MODEL.license});
+          the photograph never leaves it. The blur is a thin lens’s circle of confusion, applied to the
+          scene’s light before the film — so defocused highlights reach the negative as bright discs,
+          and the halation and the film’s shoulder act on them.
+        </p>
+      </div>
+
+      {d.enabled ? (
+        <>
+          {status.kind === 'working' ? (
+            <div className="depth-status" role="status">
+              <span className="depth-status__label">
+                {progress ? PHASE_LABEL[progress.phase] : 'Starting'}
+                {measured ? (
+                  <span className="num">
+                    {' '}
+                    {(progress.loaded / 1e6).toFixed(1)} / {(progress.total / 1e6).toFixed(1)} MB
+                  </span>
+                ) : null}
+              </span>
+              <span className="depth-status__bar" aria-hidden="true">
+                <i
+                  className={measured ? undefined : 'is-indeterminate'}
+                  style={
+                    measured
+                      ? { width: `${Math.min(100, (100 * progress.loaded) / progress.total)}%` }
+                      : undefined
+                  }
+                />
+              </span>
+            </div>
+          ) : null}
+
+          {status.kind === 'needs-download' ? (
+            <p className="control__hint control__hint--action">
+              The depth model is not on this device yet. It downloads once — about{' '}
+              <span className="num">{status.megabytes} MB</span> — and stays for every photograph
+              after, offline included.{' '}
+              <button type="button" className="link" onClick={lens.onEstimate}>
+                Download and estimate depth
+              </button>
+            </p>
+          ) : null}
+
+          {status.kind === 'error' ? (
+            <p className="notice notice--warn">
+              Depth estimation failed: {status.message}{' '}
+              <button type="button" className="link" onClick={lens.onEstimate}>
+                Try again
+              </button>
+            </p>
+          ) : null}
+
+          {depth ? (
+            <p className="control__hint control__hint--action">
+              {lens.focusView
+                ? 'Tap the picture to focus there. The dimmed parts fall outside the depth of field.'
+                : 'The focus point is picked by tapping the picture in the Focus view.'}{' '}
+              <button type="button" className="link" onClick={() => lens.onFocusView(!lens.focusView)}>
+                {lens.focusView ? 'Back to the print' : 'Pick the focus point'}
+              </button>
+              <br />
+              <span className="depth-status__meta num">
+                {depth.variant} · {depth.backend === 'webgpu' ? 'GPU' : 'CPU'} · {depth.inferMs} ms ·{' '}
+                {depth.width}×{depth.height}
+              </span>
+            </p>
+          ) : null}
+
+          <Slider
+            label="Focus distance"
+            value={Math.log10(d.focusDistanceM)}
+            min={Math.log10(0.3)}
+            max={2}
+            step={0.005}
+            format={(v) => fmtMetres(Math.pow(10, v))}
+            detents={[0, Math.log10(3), 1]}
+            hint="How far away the focus point is — what the lens’s focus scale would read. The depth map is relative; this is the one distance that makes it metric, with the farthest part of the picture taken as infinity."
+            onChange={(v) => update((draft) => (draft.defocus.focusDistanceM = Math.pow(10, v)))}
+          />
+          <Slider
+            label="Focal length"
+            value={Math.log2(r.focalLengthMm)}
+            min={Math.log2(8)}
+            max={Math.log2(600)}
+            step={0.01}
+            format={(v) => {
+              const f = Math.pow(2, v);
+              return `${f < 20 ? f.toFixed(1) : Math.round(f)} mm${d.focalLengthMm === null ? ' — normal' : ''}`;
+            }}
+            detents={[Math.log2(normal)]}
+            hint={`A normal lens for this format is ${normal} mm. The blur grows with the square of the focal length, so a longer lens at the same f-number and distance throws the background much further out.`}
+            onChange={(v) =>
+              update((draft) => {
+                const f = Math.pow(2, v);
+                draft.defocus.focalLengthMm = Math.abs(f - normal) / normal < 0.015 ? null : f;
+              })
+            }
+          />
+          {lens.fileFocalLength && Math.abs(lens.fileFocalLength - r.focalLengthMm) > 0.5 ? (
+            <button
+              type="button"
+              className="link"
+              onClick={() => update((draft) => (draft.defocus.focalLengthMm = lens.fileFocalLength))}
+            >
+              Use the file’s lens ({Math.round(lens.fileFocalLength)} mm)
+            </button>
+          ) : null}
+          <Slider
+            label="Aperture"
+            value={Math.max(0, stopIndex)}
+            min={0}
+            max={F_STOPS.length - 1}
+            step={1}
+            format={(v) => `f/${F_STOPS[Math.round(v)]}`}
+            detents={FULL_STOPS.map((f) => F_STOPS.indexOf(f as (typeof F_STOPS)[number]))}
+            hint="In third stops. Each full stop takes the blur’s diameter down by a factor of √2."
+            onChange={(v) => update((draft) => (draft.defocus.fNumber = F_STOPS[Math.round(v)]!))}
+          />
+
+          <div className="readout">
+            <Stat label="Near" value={fmtMetres(r.nearLimitM)} title="The nearest distance that is acceptably sharp" />
+            <Stat label="Far" value={fmtMetres(r.farLimitM)} title="The farthest distance that is acceptably sharp" />
+            <Stat
+              label="Hyperfocal"
+              value={fmtMetres(r.hyperfocalM)}
+              title="Focused here, everything from half this distance to infinity is acceptably sharp"
+            />
+            <Stat
+              label="CoC"
+              value={`${r.acceptableCocMm.toFixed(3)} mm`}
+              title="The permissible circle of confusion for this frame: its diagonal over 1442"
+            />
+          </div>
+
+          <Choice
+            label="Aperture blades"
+            value={String(d.blades)}
+            options={[
+              { value: '0', label: 'Round' },
+              ...[5, 6, 7, 8, 9].map((n) => ({ value: String(n), label: `${n} blades` })),
+            ]}
+            hint="The iris’s shape is the shape of every out-of-focus highlight."
+            onChange={(v) => update((draft) => (draft.defocus.blades = Number(v)))}
+          />
+          <Slider
+            label="Blade curvature"
+            value={d.bladeCurvature}
+            min={0}
+            max={1}
+            step={0.01}
+            format={(v) => (v < 0.005 ? 'Straight' : v > 0.995 ? 'Round' : `${Math.round(v * 100)}%`)}
+            disabled={d.blades === 0}
+            hint="Straight blades draw a crisp polygon; curved ones round it off toward a circle."
+            onChange={(v) => update((draft) => (draft.defocus.bladeCurvature = v))}
+          />
+          <Slider
+            label="Cat’s eye"
+            value={d.catEye}
+            min={0}
+            max={1}
+            step={0.01}
+            format={(v) => (v < 0.005 ? 'None' : `${Math.round(v * 100)}%`)}
+            detents={[0]}
+            hint="Optical vignetting: toward the frame’s edge the lens barrel cuts into the aperture, and the discs narrow into lemons. At the centre they stay round whatever this says."
+            onChange={(v) => update((draft) => (draft.defocus.catEye = v))}
+          />
+        </>
+      ) : null}
+    </Section>
   );
 }
 

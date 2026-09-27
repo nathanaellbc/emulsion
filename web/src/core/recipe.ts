@@ -182,6 +182,30 @@ export interface GlowStage {
   broad: number;
 }
 
+/**
+ * Synthetic defocus (§XIII, depth-dependent effects): a taking lens with a
+ * real focal length, aperture and focus distance, driven by an estimated
+ * depth map. Pre-exposure, like every lens effect — the blurred highlights
+ * reach the film as bright discs and the shoulder and halation act on them.
+ */
+export interface DefocusStage {
+  enabled: boolean;
+  /** The point focused on, in display coordinates: (0, 0) top-left, (1, 1) bottom-right. */
+  focusX: number;
+  focusY: number;
+  /** Distance to that point, metres — what the lens's focus scale reads. */
+  focusDistanceM: number;
+  /** null means the format's normal lens. */
+  focalLengthMm: number | null;
+  fNumber: number;
+  /** Aperture blades; 0 is a circular iris. */
+  blades: number;
+  /** 0 straight blades (a crisp polygon), 1 fully rounded (a circle). */
+  bladeCurvature: number;
+  /** Optical vignetting: 0 none, 1 the barrel clips the pupil hard at the corners. */
+  catEye: number;
+}
+
 export interface Recipe {
   negativeId: string;
   printId: string;
@@ -205,7 +229,22 @@ export interface Recipe {
   grain: GrainStage;
   halation: HalationStage;
   glow: GlowStage;
+  defocus: DefocusStage;
   output: OutputStage;
+}
+
+export function defaultDefocusStage(): DefocusStage {
+  return {
+    enabled: false,
+    focusX: 0.5,
+    focusY: 0.5,
+    focusDistanceM: 2.5,
+    focalLengthMm: null,
+    fNumber: 2,
+    blades: 0,
+    bladeCurvature: 0.5,
+    catEye: 0.35,
+  };
 }
 
 export function defaultRecipe(): Recipe {
@@ -264,6 +303,7 @@ export function defaultRecipe(): Recipe {
       preset: 'hal.stock',
     },
     glow: { strength: 0, sigma1Um: 24, sigmaRatio: 8, broad: 0.6 },
+    defocus: defaultDefocusStage(),
     output: { surroundExponent: 1 },
   };
 }
@@ -370,6 +410,24 @@ export function clampRecipe(r: Recipe): Recipe {
       sigmaRatio: cl(r.glow?.sigmaRatio ?? 8, 2, 32),
       broad: cl(r.glow?.broad ?? 0.6, 0, 1),
     },
+    defocus: (() => {
+      // A persisted recipe from before the stage existed carries no block.
+      const d = { ...defaultDefocusStage(), ...(r.defocus ?? {}) };
+      const blades = Math.round(d.blades);
+      return {
+        enabled: d.enabled === true,
+        focusX: cl(d.focusX, 0, 1),
+        focusY: cl(d.focusY, 0, 1),
+        focusDistanceM: cl(d.focusDistanceM, 0.2, 1000),
+        focalLengthMm: clampOptional(d.focalLengthMm, 4, 800),
+        fNumber: cl(d.fNumber, 1, 32),
+        // A two-bladed iris is a slit and a three-bladed one a triangle no
+        // lens ships; 5–9 is the range that exists, 0 is round.
+        blades: blades < 5 ? 0 : Math.min(blades, 9),
+        bladeCurvature: cl(d.bladeCurvature, 0, 1),
+        catEye: cl(d.catEye, 0, 1),
+      };
+    })(),
     output: { surroundExponent: cl(r.output.surroundExponent, 0.8, 1.2) },
   };
 }

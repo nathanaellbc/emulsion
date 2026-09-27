@@ -34,7 +34,15 @@ export const SCENE_GREY = 0.18;
 export const LUMA_FLOOR = 1e-7;
 
 export interface CameraDevelopParams {
-  /** Log slope multiplier on stops-over-grey. 1 is untouched. */
+  /**
+   * The luminance every tone control is measured from: the picture's own
+   * middle grey (its log-average, after the exposure gain), or scene grey
+   * where the picture has not been measured. Contrast rotates the tone scale
+   * about it and the masks sit at fixed stops above and below it, so no tone
+   * control moves the picture's middle — see DEVIATIONS.md, finding 21.
+   */
+  pivot: number;
+  /** Log slope multiplier on stops-over-the-pivot. 1 is untouched. */
   contrast: number;
   /** Stops added at the highlight mask centre; 0 is untouched. */
   highlights: number;
@@ -49,6 +57,7 @@ export interface CameraDevelopParams {
 }
 
 export const DEFAULT_CAMERA_DEVELOP: CameraDevelopParams = {
+  pivot: SCENE_GREY,
   contrast: 1,
   highlights: 0,
   shadows: 0,
@@ -80,8 +89,11 @@ export const CAMERA_LIMITS = {
  */
 export const MASK_HIGHLIGHT = { centre: 1.5, width: 1.0 };
 export const MASK_SHADOW = { centre: -1.5, width: 1.0 };
-export const MASK_WHITE = { centre: 4.0, width: 2.0 };
-export const MASK_BLACK = { centre: -4.0, width: 2.0 };
+// Whites and blacks are the extremes: a width of 1 keeps them there. At 2
+// they reached a quarter-stop into the middle grey and a sixth of a stop
+// into the far side of the scale (finding 21).
+export const MASK_WHITE = { centre: 4.0, width: 1.0 };
+export const MASK_BLACK = { centre: -4.0, width: 1.0 };
 
 /**
  * One luminance through the tone controls. Pure and total: any finite input
@@ -95,13 +107,13 @@ export const MASK_BLACK = { centre: -4.0, width: 2.0 };
  * the mirror is the *wrong* end.
  */
 export function developLuma(y: number, p: CameraDevelopParams): number {
-  const l = Math.log2(Math.max(y, LUMA_FLOOR) / SCENE_GREY);
+  const l = Math.log2(Math.max(y, LUMA_FLOOR) / p.pivot);
   let t = l * p.contrast;
   t += p.highlights * logistic((t - MASK_HIGHLIGHT.centre) / MASK_HIGHLIGHT.width);
   t += p.shadows * logistic((MASK_SHADOW.centre - t) / MASK_SHADOW.width);
   t += p.whites * logistic((t - MASK_WHITE.centre) / MASK_WHITE.width);
   t += p.blacks * logistic((MASK_BLACK.centre - t) / MASK_BLACK.width);
-  return SCENE_GREY * Math.pow(2, t);
+  return p.pivot * Math.pow(2, t);
 }
 
 /** The per-pixel tone gain: chromaticity is preserved by construction. */

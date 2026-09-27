@@ -1,11 +1,11 @@
 /**
  * The render graph (§XVI).
  *
- *   source -> prepare -> [halation] -> negative -> [interlayer] -> chain -> canvas
- *                            |                          |
- *                    source term -> pyramid      D, and two blurs of it
- *                            |                          |
- *                        recombine                   combine
+ *   source -> prepare -> [defocus] -> [glow] -> [halation] -> negative -> [interlayer] -> chain -> canvas
+ *                            |                         |                          |
+ *                  depth -> CoC -> gather      source term -> pyramid      D, and two blurs of it
+ *                            |                         |                          |
+ *                         combine                  recombine                   combine
  *
  * Every intermediate is float: the chain works in density, and density is not
  * an 8-bit quantity. The 8-bit surfaces are the unit-variance noise fields
@@ -33,6 +33,16 @@ import {
 import { PYRAMID_LEVELS, LEVEL_SIGMA, RING_RADIUS_UM, pyramidWeightArray } from './halationFit';
 import { FRAG_CHAIN, FRAG_COMPOSITE } from './shaders/chain';
 import {
+  DOF_MAX_EDGE,
+  DOF_TILE,
+  FRAG_DOF_COMBINE,
+  FRAG_DOF_DILATE,
+  FRAG_DOF_FAR,
+  FRAG_DOF_NEAR,
+  FRAG_DOF_PREP,
+  FRAG_DOF_TILE,
+} from './shaders/defocus';
+import {
   FRAG_BLUR,
   FRAG_COPY,
   FRAG_DOWNSAMPLE,
@@ -46,7 +56,7 @@ import {
   FRAG_PREPARE,
 } from './shaders/passes';
 
-export type ViewMode = 'print' | 'negative' | 'printDensity' | 'halationSource';
+export type ViewMode = 'print' | 'negative' | 'printDensity' | 'halationSource' | 'focus';
 
 export interface ViewOptions {
   mode: ViewMode;
@@ -70,7 +80,20 @@ const VIEW_MODE_CODE: Record<ViewMode, number> = {
   negative: 1,
   printDensity: 2,
   halationSource: 3,
+  // The focus view is the print, with the zone of acceptable sharpness laid
+  // over it in the composite.
+  focus: 0,
 };
+
+/**
+ * A depth map for the defocus stage: normalised disparity, in the same row
+ * order as the source it was estimated from.
+ */
+export interface DepthTexture {
+  width: number;
+  height: number;
+  data: Float32Array;
+}
 
 /** Working resolution cap. Above this the passes cost more than they show. */
 export const PREVIEW_MAX_WIDTH = 2048;
@@ -126,6 +149,21 @@ export class Renderer {
 
   private grainKey: string | null = null;
 
+  /** The depth map, and the source it belongs to (see setDepth). */
+  private depthTex: WebGLTexture | null = null;
+  /**
+   * The defocus stage's surfaces, allocated on first use: the gather grid
+   * (with mips, for the prefiltered taps), its far and near fields, the
+   * foreground reach per tile before and after dilation, and the lens's
+   * full-resolution output.
+   */
+  private dofHalf: Target | null = null;
+  private dofFar: Target | null = null;
+  private dofNear: Target | null = null;
+  private dofTiles: Target | null = null;
+  private dofReach: Target | null = null;
+  private lensOut: Target | null = null;
+
   /** The measured print stock's table, and the stock it was uploaded for. */
   private printLutTex: WebGLTexture | null = null;
   private printLutId: string | null = null;
@@ -172,6 +210,12 @@ export class Renderer {
       noiseCombine: new Program(gl, FRAG_NOISE_COMBINE, 'grain kernel'),
       chain: new Program(gl, FRAG_CHAIN, 'pointwise chain'),
       composite: new Program(gl, FRAG_COMPOSITE, 'composite'),
+      dofPrep: new Program(gl, FRAG_DOF_PREP, 'defocus grid'),
+      dofTile: new Program(gl, FRAG_DOF_TILE, 'defocus tiles'),
+      dofDilate: new Program(gl, FRAG_DOF_DILATE, 'defocus reach'),
+      dofFar: new Program(gl, FRAG_DOF_FAR, 'defocus far field'),
+      dofNear: new Program(gl, FRAG_DOF_NEAR, 'defocus near field'),
+      dofCombine: new Program(gl, FRAG_DOF_COMBINE, 'defocus combine'),
     };
     gl.disable(gl.DEPTH_TEST);
     gl.disable(gl.BLEND);
@@ -340,6 +384,7 @@ export class Renderer {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 
     this.sourceTex = tex;
+    this.setDepth(null);
     this.sourceW = image.width;
     this.sourceH = image.height;
     this.sourceEncoded = image.encoded;
@@ -350,6 +395,39 @@ export class Renderer {
     const scale = Math.min(1, maxWidth / image.width);
     this.allocate(Math.max(1, Math.round(image.width * scale)), Math.max(1, Math.round(image.height * scale)));
     return uploadedSpace;
+  }
+
+  /**
+   * Uploads (or, with null, drops) the depth map that drives defocus. The map
+   * must be in the current source's row order — `depth/estimate.ts` builds it
+   * so — and it is sampled through the same flip the prepare pass applies to
+   * the source, so the two cannot disagree about which way is up. A new
+   * source drops the map: it described a different photograph.
+   */
+  setDepth(depth: DepthTexture | null) {
+    const gl = this.gl;
+    if (this.depthTex) {
+      gl.deleteTexture(this.depthTex);
+      this.depthTex = null;
+    }
+    if (!depth) return;
+    const tex = gl.createTexture();
+    if (!tex) throw new Error('could not allocate the depth texture');
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+    // Half floats: 11 bits across a 0–1.5 disparity range is a thousandth of
+    // the scene's depth, finer than the network resolves.
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R16F, depth.width, depth.height, 0, gl.RED, gl.FLOAT, depth.data);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    this.depthTex = tex;
+  }
+
+  get hasDepth() {
+    return this.depthTex !== null;
   }
 
   /** Reallocates every intermediate for a new working resolution. */
@@ -404,6 +482,7 @@ export class Renderer {
       this.scene, this.halScene, this.negative, this.processed,
       this.glowTight, this.glowBroad, this.glowBroadTemp, this.glowTemp, this.glowOut,
       this.ilBlur1, this.ilBlur2, this.ilScratch,
+      this.dofHalf, this.dofFar, this.dofNear, this.dofTiles, this.dofReach, this.lensOut,
       this.noiseA, this.noiseB, this.noiseNarrow, this.noiseWide, this.grainField,
       ...this.halSrc, ...this.halTemps, ...this.halLevels,
     ];
@@ -411,6 +490,7 @@ export class Renderer {
     this.scene = this.halScene = this.negative = this.processed = null;
     this.glowTight = this.glowBroad = this.glowBroadTemp = this.glowTemp = this.glowOut = null;
     this.ilBlur1 = this.ilBlur2 = this.ilScratch = null;
+    this.dofHalf = this.dofFar = this.dofNear = this.dofTiles = this.dofReach = this.lensOut = null;
     this.noiseA = this.noiseB = this.noiseNarrow = this.noiseWide = this.grainField = null;
     this.halSrc = [];
     this.halTemps = [];
@@ -430,17 +510,133 @@ export class Renderer {
     drawFullscreen(gl);
   }
 
+  /** The CoC uniforms every defocus pass and the focus view share. */
+  private setCocUniforms(p: Program, params: ResolvedParameters, unit: number) {
+    const d = params.defocus;
+    p.texture('uDepth', unit, this.depthTex!)
+      .int('uDepthFlip', this.sourceFlipY ? 1 : 0)
+      .float('uFocusDisparity', d.focusDisparity)
+      .float('uCocScale', d.cocScalePx)
+      .float('uMaxCoc', d.maxCocPx);
+  }
+
+  private setApertureUniforms(p: Program, params: ResolvedParameters) {
+    const d = params.defocus;
+    const diag = Math.hypot(this.width, this.height);
+    p.int('uBlades', d.blades)
+      .float('uCurvature', d.bladeCurvature)
+      .float('uCatEye', d.catEye)
+      .vec2('uAspect', this.width / diag, this.height / diag);
+  }
+
+  /** A render target with a full mip chain, for prefiltered sparse sampling. */
+  private createMipTarget(width: number, height: number): Target {
+    const gl = this.gl;
+    const texture = gl.createTexture();
+    if (!texture) throw new Error('could not allocate the defocus grid');
+    const levels = Math.floor(Math.log2(Math.max(width, height, 1))) + 1;
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.texStorage2D(gl.TEXTURE_2D, levels, gl.RGBA16F, width, height);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    const fbo = gl.createFramebuffer();
+    if (!fbo) throw new Error('could not allocate the defocus framebuffer');
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    return { fbo, texture, width, height, internalFormat: gl.RGBA16F };
+  }
+
   /**
-   * Taking-lens diffusion (§XIII). Convolves the linear scene into a tight halo
+   * Synthetic defocus (§XIII; shaders/defocus.ts). Returns the target the
+   * rest of the graph should read as the lens's image — the scene itself
+   * where the stage is off or there is no depth map to drive it.
+   */
+  private runDefocus(params: ResolvedParameters): Target {
+    const gl = this.gl;
+    if (!params.defocus.enabled || !this.depthTex) return this.scene!;
+
+    const gridScale = Math.min(0.5, DOF_MAX_EDGE / Math.max(this.width, this.height));
+    const gw = Math.max(1, Math.round(this.width * gridScale));
+    const gh = Math.max(1, Math.round(this.height * gridScale));
+    const tw = Math.ceil(gw / DOF_TILE);
+    const th = Math.ceil(gh / DOF_TILE);
+    if (!this.dofHalf || this.dofHalf.width !== gw || this.dofHalf.height !== gh) {
+      for (const t of [this.dofHalf, this.dofFar, this.dofNear, this.dofTiles, this.dofReach, this.lensOut]) {
+        if (t) disposeTarget(gl, t);
+      }
+      this.dofHalf = this.createMipTarget(gw, gh);
+      this.dofFar = createTarget(gl, gw, gh, gl.RGBA16F);
+      this.dofNear = createTarget(gl, gw, gh, gl.RGBA16F);
+      this.dofTiles = createTarget(gl, tw, th, gl.RGBA16F, gl.NEAREST);
+      this.dofReach = createTarget(gl, tw, th, gl.RGBA16F, gl.NEAREST);
+      this.lensOut = createTarget(gl, this.width, this.height, gl.RGBA16F);
+    }
+    // The actual grid-per-render ratio after rounding, which the CoC radius
+    // in grid pixels must use.
+    const scale = gw / this.width;
+
+    const prep = this.programs.dofPrep!.use();
+    bindTarget(gl, this.dofHalf);
+    prep
+      .texture('uScene', 0, this.scene!.texture)
+      .float('uGridScale', scale)
+      .int('uTaps', Math.min(8, Math.max(1, Math.round(0.5 / scale))));
+    this.setCocUniforms(prep, params, 1);
+    drawFullscreen(gl);
+    gl.bindTexture(gl.TEXTURE_2D, this.dofHalf.texture);
+    gl.generateMipmap(gl.TEXTURE_2D);
+
+    const tile = this.programs.dofTile!.use();
+    bindTarget(gl, this.dofTiles);
+    tile.texture('uHalf', 0, this.dofHalf.texture);
+    drawFullscreen(gl);
+
+    // How many tiles the widest possible foreground disc can cross.
+    const maxRadiusGrid = params.defocus.maxCocPx * 0.5 * scale;
+    const dil = this.programs.dofDilate!.use();
+    bindTarget(gl, this.dofReach);
+    dil
+      .texture('uTiles', 0, this.dofTiles!.texture)
+      .int('uReach', Math.min(8, Math.ceil(maxRadiusGrid / DOF_TILE)));
+    drawFullscreen(gl);
+
+    const far = this.programs.dofFar!.use();
+    bindTarget(gl, this.dofFar);
+    far.texture('uHalf', 0, this.dofHalf.texture);
+    this.setApertureUniforms(far, params);
+    drawFullscreen(gl);
+
+    const near = this.programs.dofNear!.use();
+    bindTarget(gl, this.dofNear);
+    near.texture('uHalf', 0, this.dofHalf.texture).texture('uTiles', 1, this.dofReach!.texture);
+    this.setApertureUniforms(near, params);
+    drawFullscreen(gl);
+
+    const comb = this.programs.dofCombine!.use();
+    bindTarget(gl, this.lensOut);
+    comb
+      .texture('uScene', 0, this.scene!.texture)
+      .texture('uFar', 1, this.dofFar!.texture)
+      .texture('uNear', 2, this.dofNear!.texture)
+      .float('uGridScale', scale);
+    this.setCocUniforms(comb, params, 3);
+    drawFullscreen(gl);
+    return this.lensOut!;
+  }
+
+  /**
+   * Taking-lens diffusion (§XIII). Convolves the lens's image into a tight halo
    * and a broad veil, then recombines them energy-conserving before the film is
    * exposed. Runs on `scene` and leaves the result in `glowOut`, which the rest
    * of the graph reads in place of the raw scene; disabled, it is a straight
    * copy so the graph keeps its shape.
    */
-  private runGlow(params: ResolvedParameters) {
+  private runGlow(params: ResolvedParameters, scene: Target) {
     const gl = this.gl;
     const g = params.glow;
-    const scene = this.scene!;
     const out = this.glowOut!;
 
     if (!g.enabled) {
@@ -674,6 +870,7 @@ export class Renderer {
     const cam = params.camera;
     prep
       .int('uDevelopOn', developIsIdentity(cam) ? 0 : 1)
+      .float('uPivot', cam.pivot)
       .float('uContrast', cam.contrast)
       .float('uHighlights', cam.highlights)
       .float('uShadows', cam.shadows)
@@ -682,9 +879,11 @@ export class Renderer {
       .float('uSaturation', cam.saturation);
     drawFullscreen(gl);
 
-    // Pre-exposure optics: taking-lens diffusion acts on the linear scene
-    // before any of it is committed to the negative.
-    this.runGlow(params);
+    // Pre-exposure optics: the lens forms the image (defocus), a diffusion
+    // filter on it scatters that image (glow), and only then is any of it
+    // committed to the negative.
+    const lens = this.runDefocus(params);
+    this.runGlow(params, lens);
     this.runHalation(params);
     this.runNegative(params);
     const density = this.runInterlayer(params);
@@ -777,6 +976,9 @@ export class Renderer {
       .mat3('uOutMatrix', matToGL(this.outputMatrix(params)))
       .float('uSplit', view.split)
       .float('uAspectPx', view.split > 0 ? 1 / this.width : -1);
+    const focusView = view.mode === 'focus' && this.depthTex !== null;
+    comp.int('uFocusView', focusView ? 1 : 0).float('uAcceptCoc', params.defocus.acceptableCocPx);
+    if (focusView) this.setCocUniforms(comp, params, 2);
     drawFullscreen(gl);
   }
 
@@ -824,6 +1026,7 @@ export class Renderer {
     const gl = this.gl;
     this.releaseTargets();
     if (this.sourceTex) gl.deleteTexture(this.sourceTex);
+    if (this.depthTex) gl.deleteTexture(this.depthTex);
     if (this.printLutTex) gl.deleteTexture(this.printLutTex);
     if (this.printLutDummy) gl.deleteTexture(this.printLutDummy);
     for (const p of Object.values(this.programs)) p.dispose();
