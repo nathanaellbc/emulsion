@@ -130,6 +130,12 @@ export class Program {
     return this;
   }
 
+  vec4(name: string, x: number, y: number, z: number, w: number) {
+    const l = this.loc(name);
+    if (l) this.gl.uniform4f(l, x, y, z, w);
+    return this;
+  }
+
   vec3(name: string, v: ArrayLike<number>) {
     const l = this.loc(name);
     if (l) this.gl.uniform3fv(l, v as Float32List);

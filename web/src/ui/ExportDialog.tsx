@@ -9,7 +9,10 @@
  * is not a quantity and a byte count is.
  *
  * Resolution is long-edge detents that genuinely downscale, never upscale,
- * and are bounded by the GL context's own maximum texture size. Grain,
+ * and "Source" — the photograph's own size, pixel for pixel. The print is
+ * rendered in tiles (renderer.ts, renderTiled), so the size is bounded by
+ * nothing but the largest canvas the browser can encode, not by how much
+ * GPU memory the whole graph would want at once. Grain,
  * halation and interlayer are physical sizes, so a finer export is not "the
  * same image, bigger": it carries finer physical stages than the preview
  * could (DEVIATIONS.md, finding 7), and the dialog says so where the choice
@@ -38,7 +41,8 @@ import {
   type ExportFormat,
   type ExportFormatId,
 } from '../io/export';
-import type { Renderer, ViewOptions } from '../gl/renderer';
+import { ExportCancelledError, type Renderer, type ViewOptions } from '../gl/renderer';
+import { isAppleMobile } from '../depth/model';
 import { Choice, Slider } from './controls';
 
 const STORAGE_KEY = 'emulsion.export.v1';
@@ -46,7 +50,17 @@ const STORAGE_KEY = 'emulsion.export.v1';
 /** Long-edge detents, in render width for a landscape frame. */
 const WIDTH_DETENTS = [2048, 4096, 8192] as const;
 
-const DEFAULT_QUALITY = 90;
+/** Lossy formats default to their best: the export is the deliverable. */
+const DEFAULT_QUALITY = 100;
+
+/**
+ * The largest image this browser can hold in one canvas and encode. iOS
+ * Safari refuses canvases over 16.7 MP; desktop engines allow far more, up
+ * to 32 767 px on a side.
+ */
+function canvasLimits(): { area: number; side: number } {
+  return isAppleMobile() ? { area: 16_777_216, side: 16_384 } : { area: 268_435_456, side: 32_767 };
+}
 
 interface ExportPrefs {
   formatId: ExportFormatId;
@@ -74,13 +88,14 @@ function loadPrefs(): ExportPrefs {
       return {
         formatId: (p.formatId ?? 'png') as ExportFormatId,
         quality: typeof p.quality === 'number' ? p.quality : DEFAULT_QUALITY,
-        longEdge: typeof p.longEdge === 'number' ? p.longEdge : 4096,
+        longEdge: typeof p.longEdge === 'number' ? p.longEdge : null,
       };
     }
   } catch {
     // A corrupt stored preference is not worth a broken export.
   }
-  return { formatId: 'png', quality: DEFAULT_QUALITY, longEdge: 4096 };
+  // The photograph's own size is the default: nothing is thrown away unless asked.
+  return { formatId: 'png', quality: DEFAULT_QUALITY, longEdge: null };
 }
 
 export function ExportDialog({
@@ -106,6 +121,8 @@ export function ExportDialog({
   const [prefs, setPrefs] = useState<ExportPrefs>(loadPrefs);
   const [blob, setBlob] = useState<Blob | null>(null);
   const [rendering, setRendering] = useState(true);
+  /** Tiles done / total while a render is in flight. */
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [encoding, setEncoding] = useState(true);
   /** A failure the user must see *here*, not behind the backdrop. */
   const [failure, setFailure] = useState<string | null>(null);
@@ -151,21 +168,19 @@ export function ExportDialog({
   const sourceW = source.image.width;
   const sourceH = source.image.height;
 
-  // --- the resolution detents this image and this GPU can actually offer ----
+  // --- the resolution detents this image can be exported at ------------------
   //
   // A detent is offered only when it genuinely downscales: on a 1200 px source
   // every detent would collapse onto "Source", which is four buttons for one
-  // result. Sizes above the context's own maximum texture dimension cannot be
-  // allocated at all, so they are absent rather than present and failing.
-  // The memory budget matters more than the dimension on a phone: rendering
-  // the full 12 MP source means dozens of float surfaces at once, and a GPU
-  // that will not give that up loses the context — the black-screen failure
-  // this guard exists to prevent. A source above the budget is offered at the
-  // budget, and the note says so rather than letting "Source" mean a size
-  // that cannot be rendered.
+  // result. The render is tiled, so GPU memory no longer bounds the size —
+  // only the largest canvas this browser can encode does, and a source beyond
+  // that (a 48 MP file on an iPhone) is offered at the canvas's limit, with
+  // the note saying so.
   const detents = useMemo(() => {
-    const cap = Math.min(renderer.maxTextureSize, renderer.maxExportLongEdge);
+    const limits = canvasLimits();
     const sourceLong = Math.max(sourceW, sourceH);
+    const byArea = Math.sqrt(limits.area / (sourceW * sourceH)) * sourceLong;
+    const cap = Math.floor(Math.min(sourceLong, limits.side, byArea));
     const out: {
       longEdge: number | null;
       label: string;
@@ -174,43 +189,32 @@ export function ExportDialog({
       note?: string;
     }[] = [];
     for (const d of WIDTH_DETENTS) {
-      if (d >= sourceLong || d > cap) continue;
+      if (d >= cap) continue;
       const width = Math.round((sourceW * d) / sourceLong);
       const height = Math.round((sourceH * d) / sourceLong);
       out.push({ longEdge: d, label: String(d), width, height });
     }
-    // The source's own size, capped by what this GPU can actually render.
-    const s = Math.min(sourceLong, cap);
-    const width = Math.round((sourceW * s) / sourceLong);
-    const height = Math.round((sourceH * s) / sourceLong);
-    const capped = s < sourceLong;
+    const width = Math.round((sourceW * cap) / sourceLong);
+    const height = Math.round((sourceH * cap) / sourceLong);
+    const capped = cap < sourceLong;
     out.push({
       longEdge: null,
-      label: capped ? `Max · ${s}` : 'Source',
+      label: capped ? `Max · ${cap}` : `Source · ${sourceLong}`,
       width,
       height,
       note: capped
-        ? `the largest long edge this GPU renders — the file's own ${sourceLong} px is beyond it`
+        ? `the largest image this browser can encode — the file's own ${sourceLong} px is beyond it`
         : undefined,
     });
     return out;
-  }, [renderer, sourceW, sourceH]);
+  }, [sourceW, sourceH]);
 
   // A stored detent may not be on offer for this image; fall back to Source
   // rather than rendering at a width nothing selected.
   const selected =
     detents.find((d) => d.longEdge === prefs.longEdge) ?? detents[detents.length - 1]!;
 
-  // The export renders at the selected detent's own width — that number
-  // already carries the GPU memory cap (the "Max · N" detent is the largest
-  // long edge this device survives), and renderAtResolution derives height
-  // from the source's aspect, so it reproduces exactly the advertised
-  // dimensions. Reconstructing the width from `longEdge` instead is the bug
-  // that force-closed the app on iPhones: for the capped detent `longEdge`
-  // is null, `?? sourceW` read that as the source's own width, and opening
-  // the bench allocated the FULL-resolution float graph — ~700 MB on a 12 MP
-  // photograph — behind a label that said "Max · 1414". iOS kills the page
-  // for that; the label must never promise less than the render asks for.
+  // The export renders at exactly the selected detent's advertised size.
   const widthCap = selected.width;
   const heightCap = selected.height;
 
@@ -291,14 +295,14 @@ export function ExportDialog({
   // withdrawn until the new one exists.
 
   const renderExport = useCallback(
-    (w: number, h: number) => {
+    async (w: number, h: number, isCancelled: () => boolean) => {
       if (renderer.contextLost) {
-        throw new Error(
-          'The graphics context was lost — the phone ran out of GPU memory. Reload the page and export at a smaller size.',
-        );
+        throw new Error('The graphics context was lost. Reload the page to continue.');
       }
-      // The focus point's disparity is a property of the photograph, not of
-      // the resolution; the preview's resolve already read it off the map.
+      // Resolved at the export's own size: grain, halation, glow and the lens
+      // are physical sizes, so this is a real render at this pixel pitch, not
+      // the preview scaled up. The focus point's disparity is a property of
+      // the photograph, not of the size; the preview's resolve already read it.
       const exportParams = resolve(recipe, {
         renderWidthPx: w,
         renderHeightPx: h,
@@ -315,46 +319,62 @@ export function ExportDialog({
       const illuminant = exportParams.printLut?.illuminant;
       const lut = illuminant ? loadedPrintLut(printId, illuminant) : null;
       renderer.setPrintLut(lut, illuminant && lut ? `${printId}:${illuminant}` : '');
-      const data = renderer.renderAtResolution(
-        exportParams,
-        { mode: 'print', split: 0, clipWarning: false },
-        w,
-      );
-      if (renderer.contextLost) {
-        throw new Error(
-          'The graphics context was lost while rendering — the phone ran out of GPU memory. Reload the page and export at a smaller size.',
-        );
-      }
+
       const canvas = canvasRef.current;
       if (!canvas) throw new Error('the export canvas disappeared');
-      canvas.width = data.width;
-      canvas.height = data.height;
-      // The export canvas takes the read-back's own encoding, so a P3 print is
+      canvas.width = w;
+      canvas.height = h;
+      // The export canvas takes the render's own encoding, so a P3 print is
       // encoded with a P3 profile instead of being clipped to sRGB.
       const ctx2d =
-        canvas.getContext('2d', { colorSpace: data.colorSpace ?? 'srgb' }) ?? canvas.getContext('2d')!;
-      ctx2d.putImageData(data, 0, 0);
-      // renderAtResolution restored the preview allocation but left it blank.
-      renderer.render(resolvedRef.current, viewRef.current);
+        (canvas.getContext('2d', { colorSpace: renderer.outputColorSpace }) as CanvasRenderingContext2D | null) ??
+        canvas.getContext('2d');
+      if (!ctx2d) throw new Error('this browser gave no 2D canvas to assemble the export on');
+      try {
+        await renderer.renderTiled(
+          exportParams,
+          w,
+          h,
+          (tile, x, y) => ctx2d.putImageData(tile, x, y),
+          (done, total) => setProgress({ done, total }),
+          isCancelled,
+        );
+      } finally {
+        // The tiles took the graph; give the preview its frame back.
+        renderer.render(resolvedRef.current, viewRef.current);
+      }
     },
     [recipe, sourceSpace, renderer],
   );
 
   // Render on open and whenever the detent changes, debounced so the graph
-  // is not reallocated while the user is still choosing.
+  // is not reallocated while the user is still choosing. A render still
+  // running for a previous detent is abandoned between tiles.
   useEffect(() => {
     setRendering(true);
+    setProgress(null);
+    setBlob(null);
+    let cancelled = false;
     const t = window.setTimeout(() => {
-      try {
-        renderExport(widthCap, heightCap);
-        setRendering(false);
-        setFailure(null);
-      } catch (err) {
-        setRendering(false);
-        setFailure(err instanceof Error ? err.message : String(err));
-      }
+      renderExport(widthCap, heightCap, () => cancelled).then(
+        () => {
+          if (cancelled) return;
+          setRendering(false);
+          setProgress(null);
+          setFailure(null);
+        },
+        (err: unknown) => {
+          if (cancelled || err instanceof ExportCancelledError) return;
+          setRendering(false);
+          setProgress(null);
+          setFailure(err instanceof Error ? err.message : String(err));
+        },
+      );
     }, 250);
-    return () => window.clearTimeout(t);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(t);
+    };
   }, [renderExport, widthCap, heightCap]);
 
   // Encode from the canvas when a render has landed or format/quality moved.
@@ -451,7 +471,15 @@ export function ExportDialog({
   };
 
   const saveDisabled = !blob || rendering;
-  const sizeLabel = rendering ? 'rendering…' : encoding ? 'measuring…' : blob ? formatBytes(blob.size) : '';
+  const sizeLabel = !rendering && !encoding && blob ? formatBytes(blob.size) : '';
+  // What the primary action says while the file does not exist yet: which
+  // tile of how many, then the encode — a native-size export on a phone takes
+  // long enough that "Preparing…" would read as stuck.
+  const busyLabel = rendering
+    ? progress && progress.total > 1
+      ? `Rendering ${Math.min(progress.done + 1, progress.total)} of ${progress.total}…`
+      : 'Rendering…'
+    : 'Encoding…';
 
   return (
     <div
@@ -563,7 +591,7 @@ export function ExportDialog({
                 onClick={doShare}
                 disabled={saveDisabled}
               >
-                {saveDisabled ? 'Preparing…' : 'Save to Photos'}
+                {saveDisabled ? busyLabel : 'Save to Photos'}
               </button>
             </>
           ) : (
@@ -575,8 +603,8 @@ export function ExportDialog({
             >
               {saved
                 ? 'Saved'
-                : saveDisabled
-                  ? 'Preparing…'
+                : saveDisabled || encoding
+                  ? busyLabel
                   : sizeLabel
                     ? `Download · ${sizeLabel}`
                     : 'Download'}

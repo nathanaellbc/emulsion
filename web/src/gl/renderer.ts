@@ -30,7 +30,7 @@ import {
   drawFullscreen,
   type Target,
 } from './context';
-import { PYRAMID_LEVELS, LEVEL_SIGMA, RING_RADIUS_UM, pyramidWeightArray } from './halationFit';
+import { PYRAMID_LEVELS, LEVEL_SIGMA, RING_RADIUS_UM, levelSigmas, pyramidWeightArray } from './halationFit';
 import { FRAG_CHAIN, FRAG_COMPOSITE } from './shaders/chain';
 import {
   DOF_MAX_EDGE,
@@ -101,6 +101,8 @@ export const EXPORT_MAX_WIDTH = 4096;
 
 interface GrainCacheKey {
   seed: number;
+  offsetX: number;
+  offsetY: number;
   sigma1: number;
   sigma2: number;
   chi: number;
@@ -109,13 +111,19 @@ interface GrainCacheKey {
   height: number;
 }
 
+/** A tiled export abandoned between tiles: the settings it was for have changed. */
+export class ExportCancelledError extends Error {
+  constructor() {
+    super('export superseded');
+    this.name = 'ExportCancelledError';
+  }
+}
+
 export class Renderer {
   private readonly gl: WebGL2RenderingContext;
   private readonly programs: Record<string, Program>;
 
   private sourceTex: WebGLTexture | null = null;
-  private sourceW = 0;
-  private sourceH = 0;
   private sourceEncoded = true;
   private sourceFlipY = false;
 
@@ -151,6 +159,15 @@ export class Renderer {
 
   /** The depth map, and the source it belongs to (see setDepth). */
   private depthTex: WebGLTexture | null = null;
+  /** The depth map's disparity range: bounds the widest disc the photograph can throw. */
+  private depthRange: [number, number] = [0, 1];
+
+  /**
+   * Where the current render sits in the whole picture, during a tiled export:
+   * the tile's lower-left pixel (bottom-up, as GL counts) and the picture's
+   * full size. Null for an ordinary render, which is the whole picture.
+   */
+  private tile: { x: number; y: number; fullW: number; fullH: number } | null = null;
   /**
    * The defocus stage's surfaces, allocated on first use: the gather grid
    * (with mips, for the prefiltered taps), its far and near fields, the
@@ -254,30 +271,34 @@ export class Renderer {
     return this.gl.isContextLost();
   }
 
+
+
+  /** The whole picture's size in render pixels: the tile's picture while tiling. */
+  private fullSize(): [number, number] {
+    return this.tile ? [this.tile.fullW, this.tile.fullH] : [this.width, this.height];
+  }
+
   /**
-   * The largest long edge an export should ask this GPU to render, in pixels.
-   *
-   * A full-resolution render allocates the whole render graph — about a dozen
-   * full-frame intermediates, every one a float surface — which is roughly
-   * 96 bytes per pixel. A 4032x3024 phone photograph therefore wants on the
-   * order of 700 MB at the cap, which desktop GPUs hand over and phone GPUs
-   * frequently refuse: the allocation fails or the context is lost outright,
-   * and the failure mode is a black screen.
-   *
-   * The budget is deliberately conservative and describes the render graph's
-   * working set, not the single largest texture: MAX_TEXTURE_SIZE says a
-   * dimension is addressable, not that a dozen of them fit. Touch devices get
-   * a smaller budget than desktops, because that is where the constraint
-   * actually binds. Exceeding this is a smaller print, not a dead context —
-   * and the context-loss check in the export path catches anything this
-   * estimate gets wrong.
+   * This render's rectangle in the picture as the shaders take it: display x,
+   * display y from the top, width and height, all as fractions of the picture.
    */
-  get maxExportLongEdge() {
-    const coarse = window.matchMedia?.('(pointer: coarse)').matches === true;
-    const BUDGET_BYTES = coarse ? 192 * 1024 * 1024 : 640 * 1024 * 1024;
-    const BYTES_PER_PIXEL = 108; // ~13.5 full-frame RGBA16F surfaces
-    const byMemory = Math.floor(Math.sqrt(BUDGET_BYTES / BYTES_PER_PIXEL));
-    return Math.min(this.maxTextureSize, byMemory);
+  private tileRect(): [number, number, number, number] {
+    if (!this.tile) return [0, 0, 1, 1];
+    const { x, y, fullW, fullH } = this.tile;
+    const top = fullH - (y + this.height);
+    return [x / fullW, top / fullH, this.width / fullW, this.height / fullH];
+  }
+
+  /**
+   * The defocus gather grid's scale: a power of two, so every tile of a tiled
+   * export lays its grid on the same lattice the whole-frame render would,
+   * and never finer than half resolution or coarser than DOF_MAX_EDGE on the
+   * long side of the picture.
+   */
+  private dofGridScale(): number {
+    const [fw, fh] = this.fullSize();
+    const k = Math.max(1, Math.ceil(Math.log2(Math.max(fw, fh) / DOF_MAX_EDGE)));
+    return Math.pow(2, -k);
   }
 
   /**
@@ -378,15 +399,20 @@ export class Renderer {
     } else {
       throw new Error('source image carries neither pixels nor a bitmap');
     }
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    // A mip chain, so any render smaller than the source — the preview, an
+    // export below the file's own size — is a filtered downscale rather than
+    // a bilinear point sample that skips most of the pixels between its taps
+    // and aliases every fine texture in the photograph. At the source's own
+    // size the level of detail is zero and the full-resolution pixels are
+    // read exactly.
+    gl.generateMipmap(gl.TEXTURE_2D);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 
     this.sourceTex = tex;
     this.setDepth(null);
-    this.sourceW = image.width;
-    this.sourceH = image.height;
     this.sourceEncoded = image.encoded;
     // A DOM image or bitmap arrives with its origin top-left; float data we
     // decoded ourselves is already in texture order.
@@ -419,6 +445,14 @@ export class Renderer {
     // Half floats: 11 bits across a 0–1.5 disparity range is a thousandth of
     // the scene's depth, finer than the network resolves.
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.R16F, depth.width, depth.height, 0, gl.RED, gl.FLOAT, depth.data);
+    let lo = Infinity;
+    let hi = -Infinity;
+    for (let i = 0; i < depth.data.length; i++) {
+      const d = depth.data[i]!;
+      if (d < lo) lo = d;
+      if (d > hi) hi = d;
+    }
+    this.depthRange = [Math.min(lo, hi), Math.max(lo, hi)];
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
@@ -518,15 +552,20 @@ export class Renderer {
       .float('uFocusDisparity', d.focusDisparity)
       .float('uCocScale', d.cocScalePx)
       .float('uMaxCoc', d.maxCocPx);
+    const [tx, ty, tw, th] = this.tileRect();
+    p.vec4('uTile', tx, ty, tw, th);
   }
 
   private setApertureUniforms(p: Program, params: ResolvedParameters) {
     const d = params.defocus;
-    const diag = Math.hypot(this.width, this.height);
+    const [fw, fh] = this.fullSize();
+    const diag = Math.hypot(fw, fh);
+    const [tx, ty, tw, th] = this.tileRect();
     p.int('uBlades', d.blades)
       .float('uCurvature', d.bladeCurvature)
       .float('uCatEye', d.catEye)
-      .vec2('uAspect', this.width / diag, this.height / diag);
+      .vec2('uAspect', fw / diag, fh / diag)
+      .vec4('uTile', tx, ty, tw, th);
   }
 
   /** A render target with a full mip chain, for prefiltered sparse sampling. */
@@ -558,7 +597,7 @@ export class Renderer {
     const gl = this.gl;
     if (!params.defocus.enabled || !this.depthTex) return this.scene!;
 
-    const gridScale = Math.min(0.5, DOF_MAX_EDGE / Math.max(this.width, this.height));
+    const gridScale = this.dofGridScale();
     const gw = Math.max(1, Math.round(this.width * gridScale));
     const gh = Math.max(1, Math.round(this.height * gridScale));
     const tw = Math.ceil(gw / DOF_TILE);
@@ -806,6 +845,8 @@ export class Renderer {
     const g = params.grain;
     const key: GrainCacheKey = {
       seed: g.seed,
+      offsetX: this.tile?.x ?? 0,
+      offsetY: this.tile?.y ?? 0,
       sigma1: g.sigma1Px,
       sigma2: g.sigma2Px,
       chi: g.chi,
@@ -822,7 +863,10 @@ export class Renderer {
     // and the grain does not crawl while a slider moves.
     const white = this.programs.noiseWhite!.use();
     bindTarget(gl, this.noiseA!);
-    white.vec2('uSize', this.width, this.height).uint('uSeed', g.seed);
+    white
+      .vec2('uSize', this.width, this.height)
+      .vec2('uPixelOffset', this.tile?.x ?? 0, this.tile?.y ?? 0)
+      .uint('uSeed', g.seed);
     drawFullscreen(gl);
 
     // The kernel is a mixture, so the same white field is blurred at both scales.
@@ -853,8 +897,16 @@ export class Renderer {
   }
 
   render(params: ResolvedParameters, view: ViewOptions) {
+    if (!this.sourceTex || !this.scene) return;
+    this.renderGraph(params, view);
+    this.present(params, view);
+  }
+
+  /** The whole graph, source to the processed print, into `processed`. */
+  private renderGraph(params: ResolvedParameters, view: ViewOptions) {
     const gl = this.gl;
     if (!this.sourceTex || !this.scene) return;
+    const [tx, ty, tw, th] = this.tileRect();
 
     // --- prepare -----------------------------------------------------------
     const prep = this.programs.prepare!.use();
@@ -864,7 +916,8 @@ export class Renderer {
       .mat3('uInputMatrix', matToGL(params.inputMatrix))
       .float('uExposureGain', params.exposureGain)
       .int('uSourceIsEncoded', this.sourceEncoded ? 1 : 0)
-      .int('uFlipY', this.sourceFlipY ? 1 : 0);
+      .int('uFlipY', this.sourceFlipY ? 1 : 0)
+      .vec4('uTile', tx, ty, tw, th);
     // The camera develop, uniform for uniform with chain.ts's host mirror.
     // Identity parameters skip the stage entirely, same as the host path.
     const cam = params.camera;
@@ -955,7 +1008,12 @@ export class Renderer {
       .int('uViewMode', VIEW_MODE_CODE[view.mode])
       .int('uClipWarn', view.clipWarning ? 1 : 0);
     drawFullscreen(gl);
+  }
 
+  /** The processed print (and the comparison, the focus view) onto the canvas. */
+  private present(params: ResolvedParameters, view: ViewOptions) {
+    const gl = this.gl;
+    if (!this.scene) return;
     // --- to the canvas -----------------------------------------------------
     // Resizing a canvas clears it and detaches the compositor's texture, and
     // the spec clears it *even when the size has not changed*. Assigning both
@@ -1009,17 +1067,170 @@ export class Renderer {
     }
   }
 
-  /** Re-renders at a higher working resolution for export, then restores. */
-  renderAtResolution(params: ResolvedParameters, view: ViewOptions, maxWidth: number) {
+  /**
+   * How far a pixel's value can depend on its neighbours, in render pixels,
+   * for these parameters: the margin a tile must render beyond the pixels it
+   * keeps so that every kept pixel sees everything it would in a whole-frame
+   * render. The spatial stages are chained — the lens feeds the diffusion,
+   * the diffusion the halation, the halation the negative and the interlayer
+   * — so their reaches add; grain is its own branch.
+   */
+  exportApron(params: ResolvedParameters): number {
+    let reach = 0;
+    const d = params.defocus;
+    if (d.enabled && this.depthTex) {
+      // The widest disc this photograph actually throws, from its depth range,
+      // not the cap: most pictures never reach it.
+      const df = Math.max(d.focusDisparity, 0.02);
+      const widest = Math.max(
+        Math.abs(1 - this.depthRange[0] / df),
+        Math.abs(1 - this.depthRange[1] / df),
+      );
+      const radius = Math.min(d.cocScalePx * widest, d.maxCocPx) * 0.5;
+      // Plus the foreground's tile dilation (two 16-texel grid tiles) and the
+      // combine's tent.
+      reach += radius + (2 * 16 + 2) / this.dofGridScale();
+    }
+    const g = params.glow;
+    if (g.enabled) reach += 3 * (g.sigma1Px + g.sigma2Px) + 2;
+    const h = params.halation;
+    if (h.enabled) {
+      const pitchUm =
+        (params.negative.halation.lengthRedUm * params.recipe.halation.radius) /
+        Math.max(h.lengthPx[0], 1e-6);
+      const weights = pyramidWeightArray(h.lengthPx, h.omega, RING_RADIUS_UM / Math.max(pitchUm, 1e-6));
+      const sigmas = levelSigmas();
+      let total = 0;
+      for (let i = 0; i < weights.length; i++) total += Math.abs(weights[i]!);
+      let widest = 0;
+      for (let j = 0; j < PYRAMID_LEVELS; j++) {
+        const w = Math.max(
+          Math.abs(weights[j * 3]!),
+          Math.abs(weights[j * 3 + 1]!),
+          Math.abs(weights[j * 3 + 2]!),
+        );
+        // A level carrying under a thousandth of the halo cannot show.
+        if (w > 1e-3 * total) widest = Math.max(widest, 3 * sigmas[j]! + Math.pow(2, j));
+      }
+      reach += widest;
+    }
+    const il = params.interlayer;
+    if (il.enabled) reach += 3 * Math.max(il.sigma1Px, il.sigma2Px) + 2;
+    const grain = params.grain.enabled ? 3 * Math.max(params.grain.sigma1Px, params.grain.sigma2Px) + 2 : 0;
+    return Math.ceil(Math.max(reach, grain)) + 8;
+  }
+
+  /**
+   * Renders the print at the picture's own `fullW` x `fullH` — its native
+   * size, or any size below it — in tiles, handing each finished tile to
+   * `draw` with its top-left position in the picture.
+   *
+   * The whole graph at full resolution is a dozen float surfaces per pixel,
+   * over a gigabyte for a 12 MP photograph, which no phone gives a web page.
+   * A tile is the same graph over a small rectangle plus an apron wide enough
+   * for every spatial stage (exportApron); only the tile's core is kept, so
+   * each kept pixel is computed from exactly the neighbourhood it would have
+   * had in one pass over the whole frame. Tiles start on a 128-pixel lattice,
+   * so the halation pyramid's coarsest level, the glow's half-resolution
+   * veil and the defocus grid sit in the same phase in every tile, and grain
+   * is hashed from the pixel's place in the picture: the seams are not
+   * softened, there are none. Past the picture's edges the apron carries on
+   * over the source's own edge pixels, extended — the same border in every
+   * tiling, so a single tile and many agree to the rounding of a half float.
+   *
+   * Yields to the event loop between tiles, so the page stays alive and the
+   * progress can be drawn.
+   */
+  async renderTiled(
+    params: ResolvedParameters,
+    fullW: number,
+    fullH: number,
+    draw: (tile: ImageData, x: number, y: number) => void,
+    onProgress?: (done: number, total: number) => void,
+    isCancelled?: () => boolean,
+  ): Promise<void> {
     const previous: [number, number] = [this.width, this.height];
-    const scale = Math.min(1, maxWidth / this.sourceW);
-    const w = Math.max(1, Math.round(this.sourceW * scale));
-    const h = Math.max(1, Math.round(this.sourceH * scale));
-    this.allocate(w, h);
-    this.render(params, { ...view, split: 0 });
-    const data = this.readPixels();
-    this.allocate(previous[0], previous[1]);
-    return data;
+    const LATTICE = 128;
+    const coarse = window.matchMedia?.('(pointer: coarse)').matches === true;
+    const budget = coarse ? 192 * 1024 * 1024 : 640 * 1024 * 1024;
+    const bytesPerPixel = 108 + (params.defocus.enabled ? 15 : 0);
+    // A test hook (scripts/verify-tiles.mjs): force small tiles on any device,
+    // so a many-tile render can be compared against a whole-frame one.
+    const forced = (globalThis as { __emulsionTileSide?: number }).__emulsionTileSide;
+    const side = Math.min(
+      this.maxTextureSize,
+      forced ?? Math.floor(Math.sqrt(budget / bytesPerPixel)),
+    );
+    const apron = this.exportApron(params);
+    // The kept core: what the budget leaves after the apron, on the lattice,
+    // never so small that the apron is all the work.
+    let core = Math.floor((side - 2 * apron) / LATTICE) * LATTICE;
+    core = Math.max(core, 2 * LATTICE);
+    // One tile when the whole picture, apron and all, fits.
+    const padded = (n: number) => Math.ceil((n + 2 * apron) / LATTICE) * LATTICE + LATTICE;
+    if (padded(fullW) <= side && padded(fullH) <= side) core = Math.max(fullW, fullH);
+
+    const cols = Math.ceil(fullW / core);
+    const rows = Math.ceil(fullH / core);
+    const total = cols * rows;
+    // Read back by the verification scripts: how the last export was cut.
+    (globalThis as { __emulsionLastTiling?: object }).__emulsionLastTiling = { cols, rows, core, apron, side };
+    const view: ViewOptions = { mode: 'print', split: 0, clipWarning: false };
+    let done = 0;
+    try {
+      for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+          // The core, bottom-up as GL counts rows.
+          const cx0 = c * core;
+          const cy0 = r * core;
+          const cx1 = Math.min(fullW, cx0 + core);
+          const cy1 = Math.min(fullH, cy0 + core);
+          // The rendered rectangle: the core plus its apron, snapped outward
+          // to the lattice — including past the picture's edges, where the
+          // source is extended by its own edge pixels. Every tile is then a
+          // whole number of lattice cells, so every pyramid level, mip level
+          // and grid cell maps onto the picture exactly, in every tile alike,
+          // and one tile or a hundred give the same print.
+          const rx0 = Math.floor((cx0 - apron) / LATTICE) * LATTICE;
+          const ry0 = Math.floor((cy0 - apron) / LATTICE) * LATTICE;
+          const rx1 = Math.ceil((cx1 + apron) / LATTICE) * LATTICE;
+          const ry1 = Math.ceil((cy1 + apron) / LATTICE) * LATTICE;
+
+          this.tile = { x: rx0, y: ry0, fullW, fullH };
+          this.allocate(rx1 - rx0, ry1 - ry0);
+          this.renderGraph(params, view);
+          if (this.contextLost) throw new Error('the graphics context was lost while rendering the export');
+
+          const cw = cx1 - cx0;
+          const ch = cy1 - cy0;
+          const data = new Uint8ClampedArray(cw * ch * 4);
+          const gl = this.gl;
+          gl.bindFramebuffer(gl.FRAMEBUFFER, this.processed!.fbo);
+          gl.readPixels(cx0 - rx0, cy0 - ry0, cw, ch, gl.RGBA, gl.UNSIGNED_BYTE, data);
+          gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+          // GL rows run bottom-up; an image's run top-down.
+          const flipped = new Uint8ClampedArray(data.length);
+          const stride = cw * 4;
+          for (let y = 0; y < ch; y++) {
+            flipped.set(data.subarray((ch - 1 - y) * stride, (ch - y) * stride), y * stride);
+          }
+          let image: ImageData;
+          try {
+            image = new ImageData(flipped, cw, ch, { colorSpace: this.outputColorSpace });
+          } catch {
+            image = new ImageData(flipped, cw, ch);
+          }
+          draw(image, cx0, fullH - cy1);
+          onProgress?.(++done, total);
+          await new Promise<void>((resolve) => setTimeout(resolve, 0));
+          if (isCancelled?.()) throw new ExportCancelledError();
+        }
+      }
+    } finally {
+      this.tile = null;
+      this.grainKey = null;
+      this.allocate(previous[0], previous[1]);
+    }
   }
 
   dispose() {

@@ -59,10 +59,17 @@ uniform bool  uDepthFlip;
 uniform float uFocusDisparity;
 uniform float uCocScale;   // CoC diameter of a subject at infinity, render px
 uniform float uMaxCoc;     // largest diameter drawn, render px
+uniform vec4  uTile;       // this render's place in the picture (passes.ts, FRAG_PREPARE)
+
+/// A render uv to the whole picture's uv — the identity outside a tiled export.
+vec2 fullUv(vec2 uv) {
+  return vec2(uTile.x + uv.x * uTile.z, 1.0 - (uTile.y + (1.0 - uv.y) * uTile.w));
+}
 
 /// The depth map is in the source texture's row order; the scene is not.
 float disparityAt(vec2 uv) {
-  return texture(uDepth, uDepthFlip ? vec2(uv.x, 1.0 - uv.y) : uv).r;
+  vec2 f = fullUv(uv);
+  return texture(uDepth, uDepthFlip ? vec2(f.x, 1.0 - f.y) : f).r;
 }
 
 /// Signed CoC diameter in render pixels: + behind the focal plane, - in front
@@ -113,7 +120,7 @@ float apertureEdge(vec2 v, float r, vec2 radialDir, float catOffset) {
 /// Where this pixel sits in the frame: the radial direction and how hard the
 /// barrel cuts the pupil here (0 at the centre, uCatEye at the corners).
 void catEyeAt(vec2 uv, out vec2 dir, out float offset) {
-  vec2 p = (uv - 0.5) * 2.0 * uAspect;
+  vec2 p = (fullUv(uv) - 0.5) * 2.0 * uAspect;
   float rr = length(p);
   dir = rr > 1e-5 ? p / rr : vec2(1.0, 0.0);
   offset = uCatEye * 1.2 * rr * rr;

@@ -24,6 +24,10 @@ uniform mat3 uInputMatrix;
 uniform float uExposureGain;
 uniform bool uSourceIsEncoded;
 uniform bool uFlipY;
+// Where this render sits in the whole picture, as fractions of it: display
+// x, display y from the top, width, height. (0, 0, 1, 1) for an ordinary
+// render; a tile of a tiled export for anything else (renderer.ts, renderTiled).
+uniform vec4 uTile;
 
 // --- the camera develop (core/develop.ts; DEVIATIONS.md finding 14) ---
 uniform bool  uDevelopOn;
@@ -67,7 +71,9 @@ vec3 sceneDevelop(vec3 c) {
 }
 
 void main() {
-  vec2 uv = uFlipY ? vec2(vUv.x, 1.0 - vUv.y) : vUv;
+  // This fragment's place in the whole picture, then the source's own row order.
+  vec2 full = vec2(uTile.x + vUv.x * uTile.z, 1.0 - (uTile.y + (1.0 - vUv.y) * uTile.w));
+  vec2 uv = uFlipY ? vec2(full.x, 1.0 - full.y) : full;
   vec3 c = texture(uSource, uv).rgb;
   if (uSourceIsEncoded) c = eotf3(c);
   vec3 scene = uInputMatrix * c * uExposureGain;
@@ -322,10 +328,15 @@ in vec2 vUv;
 out vec4 fragColor;
 
 uniform vec2 uSize;
+// The render's lower-left pixel in the whole picture: a tile hashes the same
+// pixel to the same grain as the whole-frame render does.
+uniform vec2 uPixelOffset;
 uniform uint uSeed;
 
 void main() {
-  uvec2 p = uvec2(vUv * uSize);
+  // Signed first: a tile's apron can start left of or below the picture.
+  ivec2 q = ivec2(floor(vUv * uSize + uPixelOffset));
+  uvec2 p = uvec2(q + 65536);
   uint base = pcg(p.x + 1973u * p.y + uSeed * 9277u);
   vec2 ab = gauss2(base);
   vec2 cd = gauss2(base ^ 0x85ebca6bu);

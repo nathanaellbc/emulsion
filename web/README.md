@@ -140,11 +140,23 @@ file that already exists.
 - **Quality** (lossy formats) reports a **measured** file size: the print is
   re-encoded as the slider settles, so the number shown is the file the button
   produces, not an estimate of it.
-- **Long edge** is detents — 2048, 4096, 8192, source — that genuinely
-  downscale, never upscale, and are bounded by the GPU's own maximum texture
-  size. The export is *rendered again* at its own pixel pitch, not scaled:
+- **Long edge** is detents — 2048, 4096, 8192 — that genuinely downscale,
+  and **Source**, the photograph's own size pixel for pixel, which is the
+  default. The export is *rendered again* at its own pixel pitch, not scaled:
   grain, halation and interlayer are physical sizes, so a finer export carries
   finer stages than the preview showed (DEVIATIONS.md, finding 7).
+- The print is rendered in **tiles**. The whole graph at full resolution is a
+  dozen float surfaces per pixel — over a gigabyte for a 12 MP photograph —
+  so each tile renders a small rectangle plus an apron as wide as the reach
+  of every spatial stage the recipe has switched on, and keeps only its core.
+  Tiles sit on a 128-pixel lattice, so the halation pyramid, the diffusion
+  veil and the defocus grid are in phase in every tile, and grain is hashed
+  from the pixel's place in the picture: one tile and forty give the same
+  print to the last bit of a half float. The only size limit left is the
+  largest canvas the browser encodes (16.7 MP on iOS Safari).
+- The source is sampled through a **mip chain**, so an export below the
+  file's own size — and the preview — is a filtered downscale, not a bilinear
+  point sample that aliases fine texture.
 - On a phone, the primary action is **Save to Photos** via the system share
   sheet (`navigator.share` with the file already encoded, because iOS requires
   the call inside the tap); **Download** remains alongside it for saving to
@@ -213,6 +225,19 @@ no WebGPU, so this is the WebAssembly path), focuses on a region by tapping it
 in the Focus view, and fails unless that region stays sharp while a background
 region softens, with no GL or console error. It writes each render to
 `outDir`.
+
+`node scripts/audit-iphone.mjs [url] [photo] [outDir]` walks every screen in
+WebKit — Safari's engine — as an iPhone 15: the empty state, both benches
+section by section, the lens with a real depth map, the focus view and the
+export sheet. It screenshots each and fails on anything that overlaps on
+screen, runs off it, or offers a touch target under Apple's 44 pt minimum.
+
+`node scripts/verify-tiles.mjs [url] [photo]` renders the same export as one
+tile and as dozens of forced small ones, every spatial stage on, and fails on
+any difference beyond float rounding. `node scripts/verify-native-export.mjs
+[url] [photo]` exports at Source in WebKit as an iPhone 15 (DEVICE=desktop
+for Chromium) and fails unless the file comes out at the photograph's own
+size.
 
 `node scripts/make-test-chart.mjs` regenerates `public/test-chart.png` — a step
 wedge, memory colours, saturated primaries and speculars several stops past
