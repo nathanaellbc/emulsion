@@ -45,7 +45,7 @@ export const GRAIN_PRESETS: readonly GrainPreset[] = [
     format: 'format45',
     size: 1,
     amount: 1,
-    note: 'A 102 mm frame enlarged little, so the datasheet grain is barely visible — the smooth tonality large format is prized for.',
+    note: 'A 121 mm frame enlarged little, so the datasheet grain is barely visible — the smooth tonality large format is prized for.',
   },
   {
     id: 'grain.645',
@@ -85,7 +85,7 @@ export const GRAIN_PRESETS: readonly GrainPreset[] = [
     format: 'standard8',
     size: 1,
     amount: 1,
-    note: 'A 10.3 mm frame. The coarsest look here: home-movie grain, huge on screen.',
+    note: 'A 4.9 mm frame. The coarsest look here: home-movie grain, huge on screen.',
   },
 ];
 

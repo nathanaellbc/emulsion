@@ -212,6 +212,7 @@ export function ExportDialog({
   // photograph — behind a label that said "Max · 1414". iOS kills the page
   // for that; the label must never promise less than the render asks for.
   const widthCap = selected.width;
+  const heightCap = selected.height;
 
   const format = useMemo(() => {
     if (!formats) return null;
@@ -290,18 +291,20 @@ export function ExportDialog({
   // withdrawn until the new one exists.
 
   const renderExport = useCallback(
-    (w: number) => {
+    (w: number, h: number) => {
       if (renderer.contextLost) {
         throw new Error(
           'The graphics context was lost — the phone ran out of GPU memory. Reload the page and export at a smaller size.',
         );
       }
-      const exportParams = resolve(recipe, { renderWidthPx: w, sourceSpace });
+      const exportParams = resolve(recipe, { renderWidthPx: w, renderHeightPx: h, sourceSpace });
       // The measured engine's LUT must be on its texture unit before the
-      // render that will read it — the same sequencing the live loop uses.
-      const { printId, printIlluminant } = exportParams.recipe;
-      const lut = exportParams.printLut ? loadedPrintLut(printId, printIlluminant) : null;
-      renderer.setPrintLut(lut, exportParams.printLut && lut ? `${printId}:${printIlluminant}` : '');
+      // render that will read it — the same sequencing the live loop uses,
+      // keyed by the illuminant actually rendered.
+      const { printId } = exportParams.recipe;
+      const illuminant = exportParams.printLut?.illuminant;
+      const lut = illuminant ? loadedPrintLut(printId, illuminant) : null;
+      renderer.setPrintLut(lut, illuminant && lut ? `${printId}:${illuminant}` : '');
       const data = renderer.renderAtResolution(
         exportParams,
         { mode: 'print', split: 0, clipWarning: false },
@@ -316,7 +319,11 @@ export function ExportDialog({
       if (!canvas) throw new Error('the export canvas disappeared');
       canvas.width = data.width;
       canvas.height = data.height;
-      canvas.getContext('2d')!.putImageData(data, 0, 0);
+      // The export canvas takes the read-back's own encoding, so a P3 print is
+      // encoded with a P3 profile instead of being clipped to sRGB.
+      const ctx2d =
+        canvas.getContext('2d', { colorSpace: data.colorSpace ?? 'srgb' }) ?? canvas.getContext('2d')!;
+      ctx2d.putImageData(data, 0, 0);
       // renderAtResolution restored the preview allocation but left it blank.
       renderer.render(resolvedRef.current, viewRef.current);
     },
@@ -329,7 +336,7 @@ export function ExportDialog({
     setRendering(true);
     const t = window.setTimeout(() => {
       try {
-        renderExport(widthCap);
+        renderExport(widthCap, heightCap);
         setRendering(false);
         setFailure(null);
       } catch (err) {
@@ -338,7 +345,7 @@ export function ExportDialog({
       }
     }, 250);
     return () => window.clearTimeout(t);
-  }, [renderExport, widthCap]);
+  }, [renderExport, widthCap, heightCap]);
 
   // Encode from the canvas when a render has landed or format/quality moved.
   // Debounced: the quality slider fires continuously and only the settled

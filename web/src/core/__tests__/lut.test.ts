@@ -168,11 +168,13 @@ describe('the baked LUT against the chain it came from', () => {
     // A handful of probe points is not a test of a LUT: the error concentrates
     // in the steep part of the curve, and a sparse sweep walks straight past
     // it. This is the dense sweep `measureCubeError` runs, over the live range.
-    // The default grid is 33³; measured worst deviation there is 2.2 code values
-    // — 33³ does not meet one, which is exactly why `bakeCube` refines the grid
-    // instead of shipping this size. The assertion locks the measurement, so a
-    // change to the chain or the grid arithmetic has to move a number it names.
-    expect(measureCubeError(params, size) * 255).toBeLessThan(3);
+    // The default grid is 33³; measured worst deviation there is 14.0 code
+    // values. Most of it is the P3 gamut clip: with a real AP1 → P3 output
+    // matrix (DEVIATIONS.md finding 19) a saturated deep shadow crosses zero in
+    // one channel, and the clamp's kink lands where the sRGB-style encode is
+    // steepest. The assertion locks the measurement, so a change to the chain
+    // or the grid arithmetic has to move a number it names.
+    expect(measureCubeError(params, size) * 255).toBeLessThan(15);
   });
 
   it('puts a scene neutral where the aim balance puts it', () => {
@@ -236,9 +238,15 @@ describe('the baked LUT against the chain it came from', () => {
 describe('measured accuracy', () => {
   it('finds the error a sparse probe set misses', () => {
     // 17³ is a real grid size people ship. On a colour negative it is wrong by
-    // several code values, which is visible as banding in a gradient.
-    expect(measureCubeError(params, 17) * 255).toBeGreaterThan(4);
-    expect(measureCubeError(params, 65) * 255).toBeLessThan(1);
+    // many code values, which is visible as banding in a gradient; the error
+    // falls as the grid refines (measured 19.3, 14.0, 7.7 at 17, 33, 65).
+    const e17 = measureCubeError(params, 17) * 255;
+    const e33 = measureCubeError(params, 33) * 255;
+    const e65 = measureCubeError(params, 65) * 255;
+    expect(e17).toBeGreaterThan(4);
+    expect(e33).toBeLessThan(e17);
+    expect(e65).toBeLessThan(e33);
+    expect(e65).toBeLessThan(8);
   });
 
   it('is far worse for a reversal stock than for a negative at the same size', () => {
@@ -250,8 +258,16 @@ describe('measured accuracy', () => {
     const velvia = resolve({ ...defaultRecipe(), negativeId: 'rev.velvia50', printEngine: 'model' }, ctx);
     const gentle = bakeCube(params);
     const steep = bakeCube(velvia);
-    expect(steep.size).toBeGreaterThan(gentle.size);
-    expect(gentle.worstError * 255).toBeLessThan(1);
+    // The chosen grid is the first candidate that meets the tolerance, or the
+    // finest when none does — and the error it reports is the one measured at
+    // the size it chose, never a claim.
+    for (const baked of [gentle, steep]) {
+      expect([33, 65, 85, 129]).toContain(baked.size);
+      expect(baked.degraded).toBe(baked.worstError * 255 > 1);
+      if (baked.degraded) expect(baked.size).toBe(129);
+    }
+    expect(steep.size).toBeGreaterThanOrEqual(gentle.size);
+    expect(gentle.worstError).toBeLessThan(steep.worstError);
   });
 
   it('stamps the measured error into the file, in code values', () => {

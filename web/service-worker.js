@@ -20,17 +20,24 @@
  *
  * The cache name carries the build version, so a new build installs into a
  * fresh cache and activation deletes every older one — there is never a mixed
- * generation of assets in play. Install caches file-by-file rather than
- * atomically: one flaky response during install degrades one asset to its
- * network path instead of leaving the whole app offline-incapable.
+ * generation of assets in play. Install is therefore all-or-nothing: each
+ * file gets one retry, and if any still fails the install rejects, the old
+ * worker and its complete cache stay in charge, and the next visit tries the
+ * update again. Installing a partial cache would be worse than no update —
+ * activation deletes the previous generation, so an asset that failed to
+ * precache would simply be gone the next time the network is.
+ *
+ * Every URL is resolved against the worker's scope, so the app works deployed
+ * at a sub-path (a project page) as well as at a domain root.
  */
 
 /* eslint-disable no-restricted-globals */
 const VERSION = '__CACHE_VERSION__';
 const CACHE = `emulsion-${VERSION}`;
-const PRECACHE = /** @type {string[]} */ (__PRECACHE_URLS__);
+const SCOPE = self.registration.scope;
+const PRECACHE = /** @type {string[]} */ (__PRECACHE_URLS__).map((u) => new URL(u, SCOPE).href);
 /** The document served for any navigation the network cannot reach. */
-const SHELL = '/index.html';
+const SHELL = new URL('index.html', SCOPE).href;
 /**
  * Vary is ignored on every match. The dev-style static server stamps
  * `Vary: Origin` on the assets, and Chromium honours it in the Cache API:
@@ -49,7 +56,8 @@ self.addEventListener('install', (event) => {
       await Promise.all(
         PRECACHE.map((url) =>
           cache.add(url).catch((err) => {
-            console.warn(`[sw] precache failed for ${url}:`, err);
+            console.warn(`[sw] precache failed for ${url}, retrying once:`, err);
+            return cache.add(url);
           }),
         ),
       );
@@ -90,8 +98,12 @@ self.addEventListener('fetch', (event) => {
       (async () => {
         try {
           const res = await fetch(request);
-          const copy = res.clone();
-          await caches.open(CACHE).then((cache) => cache.put(SHELL, copy));
+          // Only a real document may become the offline shell: caching a 404
+          // or a 5xx here would serve that error page to every offline launch.
+          if (res.ok && res.type === 'basic') {
+            const copy = res.clone();
+            await caches.open(CACHE).then((cache) => cache.put(SHELL, copy));
+          }
           return res;
         } catch {
           return (

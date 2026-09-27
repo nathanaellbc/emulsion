@@ -335,6 +335,13 @@ await run('mobile-export', { width: 390, height: 844 }, async (page) => {
   await loadChart(page);
   await page.getByRole('button', { name: 'Export print' }).click();
   await page.waitForSelector('[role=dialog]', { timeout: 10000 });
+  // The sheet enters with a short slide-up; measuring mid-animation reads it
+  // 14 px low and reports a spill that is not there once it settles.
+  await page.evaluate(() =>
+    Promise.all(
+      (document.querySelector('[role=dialog]')?.getAnimations({ subtree: true }) ?? []).map((a) => a.finished),
+    ),
+  );
 
   const m = await page.evaluate(() => {
     const dlg = document.querySelector('[role=dialog]');

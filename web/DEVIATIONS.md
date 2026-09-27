@@ -272,8 +272,11 @@ Not errors in the paper — decisions this project made differently, and why.
   Table VIII, the ISO round trip and the forty-pair aim balance. A fragment
   shader cannot assert any of those about itself. Divergence between the two
   files is a defect in one of them, never a tolerance to widen.
-- **Optical simulation and aging are not implemented.** §XIII and §XIV. Their
-  parameters are not carried either, rather than carried unused.
+- **Most of the optical simulation, and aging, are not implemented.** §XIII
+  and §XIV. Taking-lens diffusion (§XIII, eq. diffusion) is — it is the Glow
+  stage, pre-exposure, in `gl/shaders/passes.ts` FRAG_GLOW. Vignetting,
+  chromatic aberration, distortion and aging are not, and their parameters are
+  not carried either, rather than carried unused.
 - **Interlayer inhibition is implemented on the GPU only.** §VIII. `core/` gets
   a host replica of the operator — a separable Gaussian, the two-scale residual,
   the coupling matrix and the activity weight over a small field — because the
@@ -548,3 +551,135 @@ Two smaller consequences of the same change:
   heading that detaches from its card and floats over the next one reads as a
   bug. The headings scroll with their sections; the bench tabs and the plot
   still pin, which is what the pinning was actually for.
+
+## 16. Two signs in the paper that do the opposite of what their prose says
+
+**§XII, eq. haladd — halation removes light from every pixel.** As printed:
+
+> E'_c = (1 − α_h β_c) E_c + α_h β_c (h_ℓc * S)
+
+The paper says this "preserves total energy exactly when S = E_c". But S is
+not E: it is the source term of eq. halsource, the soft-kneed part of the
+scene *above the halation threshold*. With S ≠ E the attenuation term takes a
+fraction α_h β_c of every pixel's light and the recombination returns only the
+thresholded part. On a typical colour stock (α = 0.15, β = [1, 0.42, 0.22]) a
+mid-grey far below any threshold loses 15 % of its red exposure; through the
+print that is a 28 % drop in the displayed red of a neutral — a cyan cast the
+aim balance cannot see, because the host chain it is computed on has no
+halation. The control became the colour-balance slider the paragraph after the
+equation warns about for exposure.
+
+**Implemented** (`core/halation.ts`, and FRAG_HAL_COMBINE, which mirrors it)
+as removing only what scatters:
+
+    E'_c = E_c (1 − α_h β_c f) + α_h β_c · halo_c,   f = clamp(S / Y, 0, 1)
+
+where Y is the pixel's luminance. f is the fraction of the pixel's own light
+that is above threshold and therefore scatters; it is applied to all three
+records so the pixel keeps its chromaticity. Below threshold f → 0 and the
+pixel is untouched; where S = Y (no threshold) this is the paper's form
+exactly, so the energy argument the paper makes still holds, now for the S it
+actually uses.
+
+**§X, eq. neutralaxis — "warm" cools the shadows.** As printed:
+
+> D'_R += δ_RG ψ(D'),   D'_B += δ_BG ψ(D')
+
+with ψ positive in the shadows, and the sentence beneath: "positive δ_RG warms
+shadows and cools highlights". D' is dye density; more density in the red
+record is more *cyan* dye and less red light. Positive δ_RG therefore adds cyan
+to the shadows and takes it out of the highlights — the opposite of the prose.
+The implementation also used to put the "tint" control on the blue record
+alone, so neither slider did what its label said.
+
+**Implemented** (`core/resolve.ts`, `neutralAxis`) as the tilt the prose
+describes: warm w gives δ = (−w, 0, +w) — red density out and blue density in
+where ψ > 0, so shadows warm and highlights cool together; tint t gives
+δ_G = −t, following the white balance's convention that positive is green.
+The operator is still an axis tilt, so it still cannot produce a non-monotone
+neutral. Recipes saved before this change render their warm/tint settings
+with the corrected sign.
+
+## 17. The format table's frame sizes, and which edge they belong to
+
+**§XI, eq. formatscale** lists W_mm as 102 mm for 4×5 and 10.3 mm for 8 mm,
+and divides by the render *width*.
+
+- 102 mm is the short, four-inch side of a 4×5 sheet; its image long edge is
+  about 121 mm. Every other entry in the table (36 mm for 135, 56 mm for 6×6,
+  24.9 mm for Super 35) is the long edge.
+- 10.3 mm is not an 8 mm frame. Standard 8 exposes about 4.9 × 3.7 mm; at
+  10.3 mm the grain was scaled against a frame twice the real width, i.e. half
+  as coarse as it should be. The Standard 8 preset now uses 4.9 mm.
+- Dividing by the width assumes a landscape image. A portrait photograph is the
+  same frame turned on its side, so dividing its short edge into 36 mm made its
+  pixel pitch 1.5× too coarse, and grain amplitude, halation reach, glow and
+  interlayer all changed with the camera's orientation.
+
+**Implemented** (`core/recipe.ts`, `core/resolve.ts`) as W_mm the frame's long
+edge, mapped onto the image's long edge: the pitch is
+W_mm / max(width, height).
+
+## 18. The GPU and host paths had drifted in three places
+
+The contract of finding 9 is that divergence between `core/` and the shaders
+is a defect. Three were found and fixed; none was a tolerance.
+
+- **The print LUT was sampled half a texel off.** Node k of an N-node 3D
+  texture sits at (k + 0.5)/N, and the shader sampled at the raw code value,
+  which `core/cube.ts` maps to k/(N − 1). For 2393's 13-node table that is up
+  to ~40 Cineon codes (~0.08 D). The shader now remaps the coordinate, and
+  honours the table's declared domain as the host does.
+- **The Gaussian was cut at eight taps.** Any kernel wider than σ ≈ 2.7 px was
+  truncated; the glow's broad veil (σ ≈ 11 px at a 2048 preview, ~22 px at a
+  4096 export) was cut at 1.5σ on screen and 0.7σ in the export, so the export
+  rendered a different veil. The blur now uses the host's 3σ support, spread
+  at a stride of at most σ/16 beyond 48 taps.
+- **A missing table rendered paper white.** Under the measured engine the aim
+  balance is deliberately left out of the print offset (finding 12); when the
+  table had not arrived — still loading, offline, or never measured under the
+  recipe's illuminant (2393 exists only at D65) — the render fell back to the
+  model *without* the balance, and a normally exposed grey printed as white.
+  The model's balanced offset is now always resolved and used for the
+  fallback, and the illuminant falls back to one the stock was measured under.
+
+
+## 19. The input matrix of eq. minval is not a P3-to-ACEScg matrix
+
+**§V, eq. minval** gives M_in, "decoded Display P3 linear to ACEScg", as
+
+    0.9525  0.0343  0.0132
+    0.0170  0.9754  0.0076
+   −0.0018  0.0107  0.9911
+
+— within a few percent of the identity. Display P3 and AP1 have primaries
+far enough apart that no such matrix relates them: built from the published
+primaries and white points with the Bradford adaptation D65 → D60, the first
+row is (0.7358, 0.2122, 0.0520). The printed matrix treated a P3 red as an AP1
+red. Because M_out is defined as its inverse, a display-referred source made
+the round trip and looked plausible — but it entered the film far more
+saturated than it was, so crosstalk, interlayer and the print dyes all worked
+on the wrong colours; and a RAW source, which enters through the correct
+AP0 → AP1 matrix, left through the near-identity M_out and was displayed
+markedly desaturated.
+
+**Implemented** (`core/colorspace.ts`) with the derived matrix, six places,
+and `M_SRGB_TO_P3` carried to six places as well so that both matrices map
+the D65 white onto the ACES white exactly. `regressions.test.ts` holds
+M_SRGB_TO_AP1 to the ACES reference value.
+
+The display end had the matching defect. The chain's output matrix produces
+Display P3, but the WebGL canvas was never tagged P3, so the browser showed P3
+numbers as sRGB ones. The renderer now sets `drawingBufferColorSpace` to
+`display-p3` where the browser supports it and falls back to an AP1 → sRGB
+output matrix where it does not; the export read-back and canvas carry the same
+tag, so a saved file gets a matching profile. Display-referred sources are
+likewise unpacked into Display P3 where the context can do so, so an iPhone
+photograph keeps its gamut instead of being clipped to sRGB on upload.
+
+One consequence is measured, not hidden: with a real AP1 → P3 matrix a
+saturated deep shadow can cross zero in one channel, and the display clamp's
+kink lands where the sRGB-style encode is steepest. The .cube export's
+measured error (the ACCURACY line of its header) rose accordingly — 14 code values
+at 33³, 4.5 at 129³ for a colour negative — and the header now names the gamut
+clip alongside a steep curve as the reason.

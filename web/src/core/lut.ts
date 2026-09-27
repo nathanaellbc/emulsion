@@ -172,11 +172,13 @@ export interface CubeOptions {
 const ERROR_TOLERANCE = 1 / 255;
 /**
  * Grids to try, in order, stopping at the first that reproduces the chain to
- * within one code value. Measured, not assumed: a gentle colour negative meets
- * it at 85³, while a reversal stock stays coarser than the tolerance at every
- * size a .cube can carry, which the header then says out loud. 129³ is 2.1M
- * nodes — past the largest grid most grading systems accept, so it is the last
- * one tried.
+ * within one code value. Measured, not assumed. With the output clipped to the
+ * Display P3 gamut, a saturated deep shadow crosses zero in one channel and
+ * the clamp's kink sits where the encode is steepest; a kink costs error in
+ * proportion to the node spacing, so a colour negative is measured at about
+ * 4.5 code values even at 129³ and a reversal stock worse — which the header
+ * then says out loud. 129³ is 2.1M nodes — past the largest grid most grading
+ * systems accept, so it is the last one tried.
  */
 const CANDIDATE_SIZES = [33, 65, 85, 129];
 
@@ -193,9 +195,9 @@ export interface BakedCube {
  * Bakes at the coarsest grid that still reproduces the chain to within a code
  * value, measuring rather than assuming.
  *
- * A gentle colour negative meets the tolerance at 85³. A reversal stock puts
- * |gamma| near 2 and a hard toe inside about four nodes, and stays coarser than
- * one code value at every grid a .cube can carry — which is a fact about lookup
+ * A reversal stock puts |gamma| near 2 and a hard toe inside about four nodes,
+ * and every stock's output carries the P3 gamut clip; neither is carried to one
+ * code value by any grid a .cube can hold — which is a fact about lookup
  * tables, not about this implementation, and the header says so instead of
  * shipping a quiet approximation.
  */
@@ -278,9 +280,10 @@ export function generateCubeLUT(p: ResolvedParameters, opts: CubeOptions = {}): 
     );
     if (opts.accuracy.degraded) {
       lines.push(
-        `#           This exceeds one code value: this stock's curve is too steep`,
-        `#           for any grid a .cube can carry. Reproduction is coarser than`,
-        `#           the tolerance — expect banding in smooth gradients.`,
+        `#           This exceeds one code value: this stock's curve, or the gamut`,
+        `#           clip at the edge of Display P3, is too sharp for any grid a`,
+        `#           .cube can carry. Reproduction is coarser than the tolerance —`,
+        `#           expect banding in smooth gradients.`,
       );
     }
   }

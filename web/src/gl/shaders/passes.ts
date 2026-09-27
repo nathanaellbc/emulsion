@@ -122,8 +122,17 @@ void main() {
 
 /**
  * Separable Gaussian. `uDirection` is the texel step, so the same program runs
- * both axes. Nine taps with linear-sampling pair tricks would be faster; nine
- * plain taps are clearer and this is not the bottleneck.
+ * both axes.
+ *
+ * The support is 3 sigma, the same radius `core/interlayer.ts`
+ * gaussianBlurField uses on the host, so the two agree tap for tap wherever
+ * that fits in MAX_BLUR_TAPS. A fixed eight-tap loop used to cut every kernel
+ * wider than sigma ~ 2.7 px short: the glow's broad veil (sigma ~ 11 px at a
+ * 2048 preview, twice that at a 4096 export) was truncated at 1.5 sigma in
+ * the preview and 0.7 sigma in the export, so the export rendered a different
+ * veil from the one on screen. Beyond MAX_BLUR_TAPS the taps are spread at a
+ * stride — still a 3-sigma support, sampled at sigma/16 or finer, with the
+ * bilinear filter averaging between taps.
  */
 export const FRAG_BLUR = /* glsl */ `#version 300 es
 ${GLSL_COMMON}
@@ -134,16 +143,20 @@ uniform sampler2D uSource;
 uniform vec2 uDirection;
 uniform float uSigma;
 
+const int MAX_BLUR_TAPS = 48;
+
 void main() {
   float sigma = max(uSigma, 1e-3);
   float inv2s2 = 1.0 / (2.0 * sigma * sigma);
+  float radius = max(1.0, ceil(3.0 * sigma));
+  float stride = max(1.0, radius / float(MAX_BLUR_TAPS));
+  int taps = int(ceil(radius / stride));
   vec3 sum = texture(uSource, vUv).rgb;
   float wsum = 1.0;
-  // Radius is fixed so the loop unrolls; taps beyond 3 sigma weigh nothing.
-  for (int i = 1; i <= 8; i++) {
-    float d = float(i);
+  for (int i = 1; i <= MAX_BLUR_TAPS; i++) {
+    if (i > taps) break;
+    float d = float(i) * stride;
     float w = exp(-d * d * inv2s2);
-    if (w < 1e-4) break;
     sum += texture(uSource, vUv + uDirection * d).rgb * w;
     sum += texture(uSource, vUv - uDirection * d).rgb * w;
     wsum += 2.0 * w;
@@ -166,6 +179,9 @@ in vec2 vUv;
 out vec4 fragColor;
 
 uniform sampler2D uScene;
+// The unblurred source term S at this pixel: the light that scatters.
+uniform sampler2D uSourceTerm;
+uniform vec3 uLuminance;
 uniform sampler2D uL0;
 uniform sampler2D uL1;
 uniform sampler2D uL2;
@@ -196,17 +212,24 @@ void main() {
   // Dye transmission: the halo's colour collapses toward the base's own
   // amber transmission — red and green carried, blue suppressed — instead of
   // the transport's per-channel split.
-  float lum = dot(scattered, vec3(0.2722, 0.6741, 0.0537));
+  float lum = dot(scattered, uLuminance);
   vec3 amber = lum * vec3(1.0, 0.58, 0.24);
   vec3 halo = mix(scattered, amber, uTint);
 
   // Boost: saturation of the halo about its own luminance.
-  float hl = dot(halo, vec3(0.2722, 0.6741, 0.0537));
+  float hl = dot(halo, uLuminance);
   halo = hl + (halo - hl) * (1.0 + uBoost);
 
   // Energy conserving: the scattered photons are removed from the direct path
-  // and added back where they landed.
-  vec3 outE = (1.0 - uWeight) * e + uWeight * halo;
+  // and added back where they landed. What scatters is S, the thresholded
+  // light — not the whole pixel — so each pixel gives up the fraction S / Y of
+  // its own light, chromaticity kept (core/halation.ts; DEVIATIONS.md,
+  // finding 16). Below threshold nothing is removed, and a mid-grey stays the
+  // grey the aim balance was computed for.
+  float s = texture(uSourceTerm, vUv).r;
+  float y = dot(uLuminance, e);
+  float f = clamp(s / max(y, 1e-7), 0.0, 1.0);
+  vec3 outE = e * (1.0 - uWeight * f) + uWeight * halo;
   fragColor = vec4(max(outE, 0.0), 1.0);
 }
 `;

@@ -14,15 +14,23 @@ export type FilmFormat =
   | 'super16'
   | 'standard8';
 
-/** Simulated frame width in millimetres. Drives every physical scaling. */
+/**
+ * Simulated frame long edge in millimetres — mapped onto the image's long edge,
+ * whatever its orientation. Drives every physical scaling.
+ *
+ * §XI lists 102 mm for 4×5 and 10.3 mm for 8 mm. 102 mm is the *short*
+ * (4-inch) side of the sheet, and 10.3 mm is no 8 mm frame at all (Standard 8
+ * exposes about 4.9 × 3.7 mm); both would scale the grain against the wrong
+ * frame. See DEVIATIONS.md, finding 17.
+ */
 export const FRAME_WIDTH_MM: Record<FilmFormat, number> = {
   format135: 36.0,
   format645: 56.0,
   format66: 56.0,
-  format45: 102.0,
+  format45: 121.0,
   super35: 24.9,
   super16: 12.5,
-  standard8: 10.3,
+  standard8: 4.9,
 };
 
 export const FORMAT_LABEL: Record<FilmFormat, string> = {
@@ -78,8 +86,9 @@ export interface PrintStage {
   highlightRolloff: number;
   /** Reduces the print's Dmax, lifting the black. */
   shadowLift: number;
-  /** Neutral-axis tilt: warms shadows and cools highlights together. */
+  /** Neutral-axis tilt: positive warms shadows and cools highlights together. */
   neutralAxisWarm: number;
+  /** Neutral-axis tilt: positive greens shadows and magentas highlights. */
   neutralAxisTint: number;
   /** Retention fraction. 0.45 is ENR, 1.0 is full bleach bypass. */
   silverRetention: number;
@@ -259,6 +268,27 @@ export function defaultRecipe(): Recipe {
   };
 }
 
+/**
+ * A persisted recipe laid over the defaults one block deep, so a recipe saved
+ * before a field existed inherits that field's default instead of reaching the
+ * clamps as undefined — which min/max turn into NaN, and NaN renders black.
+ */
+export function mergeRecipe(base: Recipe, stored: Partial<Recipe>): Recipe {
+  const out: Record<string, unknown> = { ...base };
+  for (const [k, v] of Object.entries(stored ?? {})) {
+    const b = (base as unknown as Record<string, unknown>)[k];
+    const isBlock = (x: unknown) => x !== null && typeof x === 'object' && !Array.isArray(x);
+    out[k] = isBlock(b) && isBlock(v) ? { ...(b as object), ...(v as object) } : v;
+  }
+  return out as unknown as Recipe;
+}
+
+/** Optional quantities: null stays null, anything not a finite number is null. */
+function clampOptional(v: number | null | undefined, lo: number, hi: number): number | null {
+  if (v === null || v === undefined || !Number.isFinite(v)) return null;
+  return Math.min(Math.max(v, lo), hi);
+}
+
 export function clampRecipe(r: Recipe): Recipe {
   const ip = (v: number, lim: number) => Math.round(Math.min(Math.max(v, -lim), lim));
   const cl = (v: number, lo: number, hi: number) => Math.min(Math.max(v, lo), hi);
@@ -272,6 +302,8 @@ export function clampRecipe(r: Recipe): Recipe {
     capture: {
       ...r.capture,
       exposureCompensation: cl(r.capture.exposureCompensation, -5, 5),
+      // log10(EI / ISO) sits in the anchor: zero or negative is not a rating.
+      filmSpeedOverride: clampOptional(r.capture.filmSpeedOverride, 1, 102400),
       whiteBalanceTempK: cl(r.capture.whiteBalanceTempK, 2000, 12000),
       whiteBalanceTint: cl(r.capture.whiteBalanceTint, -1, 1),
     },
@@ -287,6 +319,10 @@ export function clampRecipe(r: Recipe): Recipe {
     develop: {
       ...r.develop,
       pushPull: cl(r.develop.pushPull, -2, 3),
+      // Arrhenius divides by the temperature and activity scales with time:
+      // zero kelvin or zero seconds is not a process, it is Infinity or NaN.
+      timeSeconds: clampOptional(r.develop.timeSeconds, 10, 7200),
+      temperatureK: clampOptional(r.develop.temperatureK, 283.15, 323.15),
       agitation: cl(r.develop.agitation, 0.2, 2),
       developerConcentration: cl(r.develop.developerConcentration, 0.4, 1.6),
     },

@@ -494,11 +494,7 @@ function FilmPage({
             </div>
             <SegmentedControl
               label="Print illuminant"
-              value={
-                lutIlluminantLive
-                  ? recipe.printIlluminant
-                  : resolved.printLut.illuminants[0] ?? 'D65'
-              }
+              value={resolved.printLut.illuminant}
               options={resolved.printLut.illuminants.map((i) => ({
                 value: i,
                 label: i,
@@ -624,6 +620,7 @@ function FilmPage({
           format={(v) => (v > 0 ? `+${v.toFixed(3)}` : v.toFixed(3))}
           detents={[0]}
           disabled={print.bypass || resolved.printEngine === 'lut'}
+          hint="The same tilt on the green–magenta axis: positive greens the shadows and turns the highlights magenta, together."
           onChange={(v) => update((d) => (d.printing.neutralAxisTint = v))}
         />
         <Slider

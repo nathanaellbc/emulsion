@@ -10,23 +10,38 @@
 
 import { IDENTITY3, matMul, matInverse, type Matrix3, type Triple } from './triple';
 
-/** Decoded Display P3 linear to ACEScg (eq. minval). */
+/**
+ * Decoded Display P3 linear (D65) to ACEScg (D60), Bradford-adapted — derived
+ * from the two sets of primaries and white points, the way every ACES
+ * implementation builds it.
+ *
+ * The paper's eq. minval prints a near-identity matrix here (0.9525, 0.0343,
+ * 0.0132 on the first row). No pair of RGB spaces with primaries as far apart
+ * as P3's and AP1's is related by anything that close to identity: it treated
+ * a P3 red as an AP1 red, so every display-referred source entered the film
+ * far more saturated than it was, and — the display path being its inverse —
+ * every RAW (AP0) source left it far less saturated than it was, displayed
+ * with P3 values that were really AP1 values. See DEVIATIONS.md, finding 19.
+ */
 export const M_P3_TO_AP1: Matrix3 = [
-  [0.9525, 0.0343, 0.0132],
-  [0.017, 0.9754, 0.0076],
-  [-0.0018, 0.0107, 0.9911],
+  [0.735798, 0.212166, 0.052036],
+  [0.04718, 0.938046, 0.014774],
+  [0.003564, 0.041142, 0.955294],
 ];
 
 export const M_AP1_TO_P3: Matrix3 = matInverse(M_P3_TO_AP1);
 
 /** sRGB linear to Display P3 linear, both D65. */
 export const M_SRGB_TO_P3: Matrix3 = [
-  [0.8225, 0.1774, 0.0],
-  [0.0332, 0.9669, 0.0],
-  [0.0171, 0.0724, 0.9105],
+  [0.822462, 0.177538, 0.0],
+  [0.033194, 0.966806, 0.0],
+  [0.017083, 0.072397, 0.91052],
 ];
 
 export const M_SRGB_TO_AP1: Matrix3 = matMul(M_P3_TO_AP1, M_SRGB_TO_P3);
+
+/** ACEScg to sRGB linear: the display path when the canvas cannot hold P3. */
+export const M_AP1_TO_SRGB: Matrix3 = matInverse(M_SRGB_TO_AP1);
 
 /**
  * ACES2065-1 (AP0) to ACEScg (AP1). This is the RAW path: LibRaw is asked for

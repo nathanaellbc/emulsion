@@ -102,8 +102,12 @@ export function evaluateLogExposureWithEngine(
   }
   // The model's stages end before the surround, so the subtractive grade —
   // a print-dye operation — sits between the print and the viewing
-  // condition on both engines.
-  const Y = evaluateLogExposureStages(logExposure, p);
+  // condition on both engines. A measured engine whose table is missing
+  // falls back here, and must bring the model's aim balance with it: the
+  // measured-engine offset carries only the user's lights.
+  const model =
+    p.printEngine === 'lut' ? { ...p, printExposureOffset: p.modelPrintExposureOffset } : p;
+  const Y = evaluateLogExposureStages(logExposure, model);
   return applySurround(applySubtractive(Y, p), p);
 }
 
