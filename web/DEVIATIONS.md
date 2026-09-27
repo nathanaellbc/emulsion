@@ -748,6 +748,24 @@ the cat's eye. The depth map is refined to the picture's own edges by a joint
 bilateral upsample before any of this, because a 518-pixel network puts its
 edges within a 518-pixel grid.
 
+**On phones.** The first build crashed iOS Safari: a phone's tab is killed
+outright past its memory ceiling, with nothing to catch. Five sources of the
+peak were removed. First, the download no longer holds its chunks, the joined
+buffer and a copy for the cache at once (three times the model). It streams
+into the cache and is read back once. Second, a phone
+(`depthProfile`) feeds the network 392 px on the short side instead of 518.
+The attention matrices scale with the square of the token count, so that is
+about a third of the memory. It also refines to a 1024 px guide. Third, iOS
+runs the CPU path on ONNX Runtime's plain WebAssembly build (14 MB). The
+WebGPU build is twice that, WebKit compiles every byte of it into the tab's
+memory, and it would put a second GPU device beside the page's WebGL
+context. Fourth, the runtime's memory arenas are off on a phone. Fifth, the
+worker is torn down after every estimate, because WebAssembly memory never
+shrinks. The export's memory cap counts the stage's extra surfaces.
+`DEVICE=iphone node scripts/verify-defocus.mjs` runs the whole path in WebKit
+as an iPhone 15. That proves it runs in Safari's engine. It does not prove it
+fits a particular iPhone's memory, which only a device can.
+
 **Limits, as §XIII predicted.** Hair, glass and reflections are where the
 estimated depth is least trustworthy, and they are where the blur will be
 wrong. Longitudinal chromatic aberration (§XIII's per-channel defocus offset)

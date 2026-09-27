@@ -2,7 +2,12 @@
 /**
  * Depth estimation, off the main thread: the ONNX runtime, the network, and
  * the joint bilateral refinement all run here, so the bench stays responsive
- * while a phone spends ten seconds on the CPU path.
+ * while a phone spends seconds on the CPU path.
+ *
+ * Two thin entries share this body, one per ONNX Runtime build:
+ * `depth-gpu.worker.ts` (WebGPU, with the CPU kernels for its fallback) and
+ * `depth-cpu.worker.ts` (plain WebAssembly, half the binary). A device only
+ * ever downloads and compiles the one it runs.
  *
  * The runtime's WebAssembly binary is fetched through the same persistent
  * cache as the weights and handed over as bytes: left to fetch itself, it
@@ -10,9 +15,8 @@
  * after every app update.
  */
 
-import * as ort from 'onnxruntime-web/webgpu';
-import ortWasmUrl from 'onnxruntime-web/ort-wasm-simd-threaded.asyncify.wasm?url';
-import { DEPTH_CACHE, VARIANTS, fetchCached, preferredBackend, variantUrl, type DepthBackend } from './model';
+import type * as Ort from 'onnxruntime-web';
+import { DEPTH_CACHE, VARIANTS, fetchCached, variantUrl, type DepthBackend } from './model';
 import {
   jointBilateralUpsample,
   modelInputSize,
@@ -24,11 +28,17 @@ import type { DepthRequest, DepthResponse } from './protocol';
 
 declare const self: DedicatedWorkerGlobalScope;
 
-/** Approximate size of the runtime binary, for the progress bar before the header arrives. */
-const RUNTIME_BYTES = 25_500_000;
+class NotCachedError extends Error {
+  constructor() {
+    super('The depth model is not on this device yet.');
+    this.name = 'NotCachedError';
+  }
+}
 
+/** Installs the worker's message handler for one ONNX Runtime build. */
+export function serveDepth(ort: typeof Ort, ortWasmUrl: string, runtimeBytes: number) {
 let runtimeReady: Promise<void> | null = null;
-const sessions = new Map<DepthBackend, Promise<ort.InferenceSession>>();
+const sessions = new Map<DepthBackend, Promise<Ort.InferenceSession>>();
 
 function post(msg: DepthResponse, transfer: Transferable[] = []) {
   self.postMessage(msg, transfer);
@@ -36,7 +46,7 @@ function post(msg: DepthResponse, transfer: Transferable[] = []) {
 
 function loadRuntime(id: number): Promise<void> {
   runtimeReady ??= (async () => {
-    const wasm = await fetchCached(new URL(ortWasmUrl, self.location.href).href, RUNTIME_BYTES, (loaded, total) =>
+    const wasm = await fetchCached(new URL(ortWasmUrl, self.location.href).href, runtimeBytes, (loaded, total) =>
       post({ type: 'progress', id, phase: 'runtime', loaded, total }),
     );
     ort.env.wasm.wasmBinary = wasm;
@@ -53,7 +63,12 @@ function loadRuntime(id: number): Promise<void> {
   return runtimeReady;
 }
 
-function session(backend: DepthBackend, id: number, allowDownload: boolean): Promise<ort.InferenceSession> {
+function session(
+  backend: DepthBackend,
+  id: number,
+  allowDownload: boolean,
+  lowMemory: boolean,
+): Promise<Ort.InferenceSession> {
   let s = sessions.get(backend);
   if (!s) {
     s = (async () => {
@@ -63,14 +78,22 @@ function session(backend: DepthBackend, id: number, allowDownload: boolean): Pro
         const cache = await caches.open(DEPTH_CACHE).catch(() => null);
         if (!(await cache?.match(url))) throw new NotCachedError();
       }
-      const bytes = await fetchCached(url, variant.bytes, (loaded, total) =>
+      let bytes: ArrayBuffer | null = await fetchCached(url, variant.bytes, (loaded, total) =>
         post({ type: 'progress', id, phase: 'model', loaded, total }),
       );
       post({ type: 'progress', id, phase: 'compile', loaded: 0, total: 1 });
-      return ort.InferenceSession.create(new Uint8Array(bytes), {
+      const created = ort.InferenceSession.create(new Uint8Array(bytes), {
         executionProviders: [backend],
         graphOptimizationLevel: 'all',
+        // The arena keeps every buffer the runtime ever asked for, and the
+        // memory pattern pre-plans a peak; on a phone both are memory the
+        // tab is charged for and cannot get back.
+        enableCpuMemArena: !lowMemory,
+        enableMemPattern: !lowMemory,
       });
+      // The runtime has its own copy now; ours need not outlive the call.
+      bytes = null;
+      return created;
     })();
     sessions.set(backend, s);
     s.catch(() => sessions.delete(backend));
@@ -78,16 +101,9 @@ function session(backend: DepthBackend, id: number, allowDownload: boolean): Pro
   return s;
 }
 
-class NotCachedError extends Error {
-  constructor() {
-    super('The depth model is not on this device yet.');
-    this.name = 'NotCachedError';
-  }
-}
-
 async function infer(backend: DepthBackend, req: DepthRequest & { type: 'estimate' }) {
-  const s = await session(backend, req.id, req.allowDownload);
-  const [mw, mh] = modelInputSize(req.width, req.height);
+  const s = await session(backend, req.id, req.allowDownload, req.lowMemory);
+  const [mw, mh] = modelInputSize(req.width, req.height, req.inputSize);
   const rgb = resampleRGB(req.rgba, req.width, req.height, mw, mh);
   const input = new ort.Tensor('float32', toModelTensor(rgb, mw, mh), [1, 3, mh, mw]);
   post({ type: 'progress', id: req.id, phase: 'infer', loaded: 0, total: 1 });
@@ -107,12 +123,14 @@ self.onmessage = async (e: MessageEvent<DepthRequest>) => {
   if (req.type !== 'estimate') return;
   try {
     await loadRuntime(req.id);
-    let backend = await preferredBackend();
+    let backend: DepthBackend = req.backend;
     let result: Awaited<ReturnType<typeof infer>>;
     try {
       result = await infer(backend, req);
     } catch (err) {
       if (err instanceof NotCachedError || backend === 'wasm') throw err;
+      // Drop the failed GPU session before the CPU one is built beside it.
+      sessions.delete('webgpu');
       // The GPU path can fail late — a driver without a kernel the graph
       // wants, a lost device. The CPU path is slower but always there.
       console.warn('[depth] WebGPU failed, falling back to WebAssembly:', err);
@@ -151,6 +169,7 @@ self.onmessage = async (e: MessageEvent<DepthRequest>) => {
     });
   }
 };
+}
 
 function rgbaFrom(rgb: Float32Array, w: number, h: number): Uint8ClampedArray {
   const out = new Uint8ClampedArray(w * h * 4);

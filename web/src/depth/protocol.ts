@@ -11,6 +11,12 @@ export type DepthRequest = {
   height: number;
   /** False: fail with 'not-cached' rather than start a download. */
   allowDownload: boolean;
+  /** Which backend to run (model.ts, depthProfile). */
+  backend: DepthBackend;
+  /** The short side the network sees. */
+  inputSize: number;
+  /** Keep ONNX Runtime's memory arenas off: a phone cannot spare what they hold back. */
+  lowMemory: boolean;
 };
 
 export type DepthResponse =

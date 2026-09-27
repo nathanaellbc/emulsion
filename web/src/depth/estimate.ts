@@ -13,7 +13,7 @@ import { M_AP0_TO_AP1, M_AP1_TO_SRGB, M_P3_TO_AP1, M_SRGB_TO_AP1, srgbOetf } fro
 import type { SourceSpace } from '../core/resolve';
 import { matMul, type Matrix3 } from '../core/triple';
 import type { DecodedSource } from '../io/decode';
-import type { DepthBackend } from './model';
+import type { DepthBackend, DepthProfile } from './model';
 import type { DepthPhase, DepthRequest, DepthResponse } from './protocol';
 import { sampleDisparity } from './refine';
 
@@ -76,9 +76,12 @@ function toSrgbMatrix(space: SourceSpace): Matrix3 {
  * box-filtered, carried into sRGB, anchored so its log-average sits at scene
  * grey, and encoded — a plain "camera JPEG" of it, no film involved.
  */
-export function buildGuide(source: DecodedSource): { rgba: Uint8ClampedArray; width: number; height: number } {
+export function buildGuide(
+  source: DecodedSource,
+  maxEdge: number = GUIDE_MAX_EDGE,
+): { rgba: Uint8ClampedArray; width: number; height: number } {
   const { image } = source;
-  const scale = Math.min(1, GUIDE_MAX_EDGE / Math.max(image.width, image.height));
+  const scale = Math.min(1, maxEdge / Math.max(image.width, image.height));
   const width = Math.max(1, Math.round(image.width * scale));
   const height = Math.max(1, Math.round(image.height * scale));
 
@@ -152,9 +155,17 @@ export function disparityAt(map: DepthMap, x: number, y: number): number {
   return sampleDisparity(map.data, map.width, map.height, x, map.rowsBottomUp ? 1 - y : y);
 }
 
-/** One worker for the session, created on first use. */
+/**
+ * The depth worker, created on first use for the backend the device profile
+ * names. On a low-memory profile (a phone) it is torn down after every
+ * estimate: WebAssembly memory never shrinks and a WebGPU device keeps its
+ * buffers while it lives, so a worker kept warm would hold a few hundred
+ * megabytes of the tab's budget for the rest of the session. The price is
+ * a second or two to rebuild the session from the cache next time.
+ */
 export class DepthEstimator {
   private worker: Worker | null = null;
+  private workerBackend: DepthBackend | null = null;
   private nextId = 1;
   private pending: {
     id: number;
@@ -162,19 +173,34 @@ export class DepthEstimator {
     reject: (e: Error) => void;
     onProgress?: (p: DepthProgress) => void;
     rowsBottomUp: boolean;
+    lowMemory: boolean;
   } | null = null;
 
-  private ensureWorker(): Worker {
-    if (this.worker) return this.worker;
-    const w = new Worker(new URL('./depth.worker.ts', import.meta.url), { type: 'module' });
+  private ensureWorker(backend: DepthBackend): Worker {
+    if (this.worker && this.workerBackend === backend) return this.worker;
+    this.terminate();
+    // Two literal URLs, so the bundler sees both entries; a device only ever
+    // loads the one its profile names.
+    const w =
+      backend === 'webgpu'
+        ? new Worker(new URL('./depth-gpu.worker.ts', import.meta.url), { type: 'module' })
+        : new Worker(new URL('./depth-cpu.worker.ts', import.meta.url), { type: 'module' });
     w.onmessage = (e: MessageEvent<DepthResponse>) => this.receive(e.data);
     w.onerror = (e) => {
       const p = this.pending;
       this.pending = null;
+      this.terminate();
       p?.reject(new Error(e.message || 'the depth worker failed to start'));
     };
     this.worker = w;
+    this.workerBackend = backend;
     return w;
+  }
+
+  private terminate() {
+    this.worker?.terminate();
+    this.worker = null;
+    this.workerBackend = null;
   }
 
   private receive(msg: DepthResponse) {
@@ -185,6 +211,7 @@ export class DepthEstimator {
       return;
     }
     this.pending = null;
+    if (p.lowMemory) this.terminate();
     if (msg.type === 'error') {
       p.reject(msg.code === 'not-cached' ? new DepthNotCachedError(msg.message) : new Error(msg.message));
       return;
@@ -204,15 +231,22 @@ export class DepthEstimator {
    * Estimates the depth of `source`. A newer call supersedes an older one,
    * whose promise rejects with DepthCancelledError. With `allowDownload`
    * false, a device without the weights gets DepthNotCachedError instead of a
-   * surprise 50 MB download.
+   * surprise download.
    */
   estimate(
     source: DecodedSource,
-    opts: { allowDownload: boolean; onProgress?: (p: DepthProgress) => void },
+    opts: { allowDownload: boolean; profile: DepthProfile; onProgress?: (p: DepthProgress) => void },
   ): Promise<DepthMap> {
-    const worker = this.ensureWorker();
-    this.pending?.reject(new DepthCancelledError());
-    const guide = buildGuide(source);
+    const { profile } = opts;
+    if (this.pending) {
+      this.pending.reject(new DepthCancelledError());
+      this.pending = null;
+      // A superseded job would otherwise run to completion first, holding
+      // its memory while the new one waits behind it.
+      this.terminate();
+    }
+    const worker = this.ensureWorker(profile.backend);
+    const guide = buildGuide(source, profile.guideMaxEdge);
     const id = this.nextId++;
     return new Promise<DepthMap>((resolve, reject) => {
       this.pending = {
@@ -224,6 +258,7 @@ export class DepthEstimator {
         // alone (renderer.ts, setSource), so a float decode's first row is
         // the bottom of the picture on screen.
         rowsBottomUp: !!source.image.float,
+        lowMemory: profile.lowMemory,
       };
       const req: DepthRequest = {
         type: 'estimate',
@@ -232,6 +267,9 @@ export class DepthEstimator {
         width: guide.width,
         height: guide.height,
         allowDownload: opts.allowDownload,
+        backend: profile.backend,
+        inputSize: profile.inputSize,
+        lowMemory: profile.lowMemory,
       };
       worker.postMessage(req, [guide.rgba.buffer]);
     });
@@ -240,7 +278,6 @@ export class DepthEstimator {
   dispose() {
     this.pending?.reject(new DepthCancelledError());
     this.pending = null;
-    this.worker?.terminate();
-    this.worker = null;
+    this.terminate();
   }
 }

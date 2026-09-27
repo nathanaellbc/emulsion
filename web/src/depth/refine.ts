@@ -19,8 +19,12 @@
 import { DEPTH_MODEL } from './model';
 
 /** `Resize(lower_bound, ensure_multiple_of=14)` from depth_anything_v2/util/transform.py. */
-export function modelInputSize(width: number, height: number): [number, number] {
-  const { inputSize: s, multipleOf: m } = DEPTH_MODEL;
+export function modelInputSize(
+  width: number,
+  height: number,
+  s: number = DEPTH_MODEL.inputSize,
+): [number, number] {
+  const m = DEPTH_MODEL.multipleOf;
   // Lower bound: scale so the *shorter* side lands on the target.
   const scale = Math.max(s / width, s / height);
   const constrain = (x: number) => {

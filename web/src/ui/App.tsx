@@ -29,7 +29,7 @@ import {
   type DepthMap,
   type DepthProgress,
 } from '../depth/estimate';
-import { preferredBackend, VARIANTS, type DepthBackend } from '../depth/model';
+import { depthProfile, VARIANTS, type DepthProfile } from '../depth/model';
 
 /** Where the depth map for the open photograph stands. */
 export type DepthStatus =
@@ -39,8 +39,6 @@ export type DepthStatus =
   | { kind: 'working'; progress: DepthProgress | null }
   | { kind: 'error'; message: string };
 
-/** The runtime binary rides along with the first download (depth/depth.worker.ts). */
-const RUNTIME_MB = 25.5;
 
 const STORAGE_KEY = 'emulsion.recipe.v1';
 
@@ -182,9 +180,10 @@ export function App() {
   const estimatorRef = useRef<DepthEstimator | null>(null);
   /** The source a depth request was made for: a late answer for a previous photograph is dropped. */
   const sourceRef = useRef<DecodedSource | null>(null);
-  const [depthBackend, setDepthBackend] = useState<DepthBackend>('wasm');
+  /** How depth runs on this device; null until probed (model.ts, depthProfile). */
+  const [depthDevice, setDepthDevice] = useState<DepthProfile | null>(null);
   useEffect(() => {
-    void preferredBackend().then(setDepthBackend);
+    void depthProfile().then(setDepthDevice);
     return () => estimatorRef.current?.dispose();
   }, []);
   /** Reset is staged: the first click arms it, the second, within a beat, confirms. */
@@ -327,8 +326,10 @@ export function App() {
       estimatorRef.current ??= new DepthEstimator();
       setDepthStatus({ kind: 'working', progress: null });
       try {
+        const profile = depthDevice ?? (await depthProfile());
         const map = await estimatorRef.current.estimate(src, {
           allowDownload,
+          profile,
           onProgress: (progress) => {
             if (sourceRef.current === src) setDepthStatus({ kind: 'working', progress });
           },
@@ -340,14 +341,15 @@ export function App() {
       } catch (err) {
         if (err instanceof DepthCancelledError || sourceRef.current !== src) return;
         if (err instanceof DepthNotCachedError) {
-          const mb = VARIANTS[depthBackend].bytes / 1e6 + RUNTIME_MB;
+          const v = VARIANTS[(depthDevice ?? (await depthProfile())).backend];
+          const mb = (v.bytes + v.runtimeBytes) / 1e6;
           setDepthStatus({ kind: 'needs-download', megabytes: Math.round(mb) });
           return;
         }
         setDepthStatus({ kind: 'error', message: err instanceof Error ? err.message : String(err) });
       }
     },
-    [depthBackend],
+    [depthDevice],
   );
 
   // The focus view has nothing to show without a depth map.

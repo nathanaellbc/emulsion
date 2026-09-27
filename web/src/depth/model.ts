@@ -40,6 +40,12 @@ export interface ModelVariant {
   file: string;
   bytes: number;
   backend: DepthBackend;
+  /**
+   * The ONNX Runtime binary this backend runs on: the WebGPU build (asyncify,
+   * which also carries the CPU kernels for the fallback) or the plain
+   * WebAssembly one, half its size.
+   */
+  runtimeBytes: number;
 }
 
 /**
@@ -48,9 +54,68 @@ export interface ModelVariant {
  * the fast ones, and fp16 there would be emulated.
  */
 export const VARIANTS: Record<DepthBackend, ModelVariant> = {
-  webgpu: { id: 'fp16', file: 'onnx/model_fp16.onnx', bytes: 49_642_442, backend: 'webgpu' },
-  wasm: { id: 'int8', file: 'onnx/model_quantized.onnx', bytes: 27_258_801, backend: 'wasm' },
+  webgpu: {
+    id: 'fp16',
+    file: 'onnx/model_fp16.onnx',
+    bytes: 49_642_442,
+    backend: 'webgpu',
+    runtimeBytes: 26_781_914,
+  },
+  wasm: {
+    id: 'int8',
+    file: 'onnx/model_quantized.onnx',
+    bytes: 27_258_801,
+    backend: 'wasm',
+    runtimeBytes: 14_239_900,
+  },
 };
+
+/**
+ * How depth estimation runs on this device. A phone's browser tab lives under
+ * a hard memory ceiling — iOS Safari kills the page outright past it, with no
+ * error to catch — and the WebGL render graph is already inside that ceiling
+ * when the network starts. So a phone gets a smaller network input (the
+ * attention matrices scale with the square of the token count: 392 px on the
+ * short side is about a third of 518's), a smaller guide, and a worker that
+ * is torn down after every photograph, because WebAssembly memory never
+ * shrinks and a WebGPU device holds its buffers for as long as it lives.
+ */
+export interface DepthProfile {
+  backend: DepthBackend;
+  /** The short side the network sees, a multiple of 14. */
+  inputSize: number;
+  /** Long edge of the guide the depth is refined to. */
+  guideMaxEdge: number;
+  /** Tear the worker down after each estimate, and keep the runtime's arenas off. */
+  lowMemory: boolean;
+}
+
+/** iPhone, iPod, and the iPad that reports itself as a Mac. Page only. */
+export function isAppleMobile(): boolean {
+  const ua = navigator.userAgent;
+  return (
+    /iPad|iPhone|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
+  );
+}
+
+/**
+ * The profile for this device. Called on the page, not in the worker: it
+ * needs matchMedia.
+ *
+ * iOS runs the CPU path. ONNX Runtime's WebGPU backend on Safari is the
+ * least-tested pairing it has, it would put a second GPU device beside the
+ * page's WebGL context, and its runtime binary is twice the plain one's —
+ * WebKit compiles every byte of it into memory the tab is charged for. The
+ * CPU path is slower (a few seconds at 392 px) and survives.
+ */
+export async function depthProfile(): Promise<DepthProfile> {
+  const coarse = window.matchMedia?.('(pointer: coarse)').matches === true;
+  if (isAppleMobile()) return { backend: 'wasm', inputSize: 392, guideMaxEdge: 1024, lowMemory: true };
+  const backend = await preferredBackend();
+  return coarse
+    ? { backend, inputSize: 392, guideMaxEdge: 1024, lowMemory: true }
+    : { backend, inputSize: DEPTH_MODEL.inputSize, guideMaxEdge: 1536, lowMemory: false };
+}
 
 /** Its own bucket: see the header for why this is not `emulsion-…`. */
 export const DEPTH_CACHE = 'emulsion.depth.v1';
@@ -87,9 +152,16 @@ export async function isModelCached(backend?: DepthBackend): Promise<boolean> {
 }
 
 /**
- * Fetches `url` through the depth cache, reporting progress. A refused cache
- * write (quota, private mode) is not an error — the model still runs, it just
- * downloads again next time.
+ * Fetches `url` through the depth cache, reporting progress, and returns its
+ * bytes — one copy of them.
+ *
+ * On a miss the download is streamed straight into the cache and read back,
+ * rather than gathered in memory and then copied into a Response for the
+ * cache: that way held the chunks, the joined buffer and the cache's copy at
+ * once, three times the model's size, which on a phone was enough on its own
+ * to get the tab killed. A refused cache write (quota, private mode) is not
+ * an error: the file is downloaded again into one preallocated buffer and the
+ * model runs from memory this time.
  */
 export async function fetchCached(
   url: string,
@@ -108,36 +180,57 @@ export async function fetchCached(
   const res = await fetch(url);
   if (!res.ok) throw new Error(`download failed: ${res.status} ${res.statusText} (${url})`);
   const total = Number(res.headers.get('content-length')) || expectedBytes;
-  let buffer: Uint8Array;
-  if (res.body) {
-    const reader = res.body.getReader();
-    const chunks: Uint8Array[] = [];
-    let loaded = 0;
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      chunks.push(value);
-      loaded += value.byteLength;
-      onProgress?.(loaded, total);
-    }
-    buffer = new Uint8Array(loaded);
-    let o = 0;
-    for (const c of chunks) {
-      buffer.set(c, o);
-      o += c.byteLength;
-    }
-  } else {
-    buffer = new Uint8Array(await res.arrayBuffer());
-    onProgress?.(buffer.byteLength, buffer.byteLength);
-  }
 
-  try {
-    await cache?.put(
-      url,
-      new Response(buffer.slice(), { headers: { 'content-type': 'application/octet-stream' } }),
+  if (cache && res.body) {
+    let loaded = 0;
+    const counted = res.body.pipeThrough(
+      new TransformStream<Uint8Array, Uint8Array>({
+        transform(chunk, controller) {
+          loaded += chunk.byteLength;
+          onProgress?.(loaded, total);
+          controller.enqueue(chunk);
+        },
+      }),
     );
-  } catch {
-    // Quota or a storage-less context: run from memory this time.
+    try {
+      await cache.put(url, new Response(counted, { headers: { 'content-type': 'application/octet-stream' } }));
+      const stored = await cache.match(url);
+      if (stored) return await stored.arrayBuffer();
+    } catch {
+      // Quota or a storage-less context: fall through to memory.
+    }
+    const again = await fetch(url);
+    if (!again.ok) throw new Error(`download failed: ${again.status} ${again.statusText} (${url})`);
+    return downloadToMemory(again, total, onProgress);
   }
-  return buffer.buffer as ArrayBuffer;
+  return downloadToMemory(res, total, onProgress);
+}
+
+/** The body into a single buffer, sized from the header and grown only if it lied. */
+async function downloadToMemory(
+  res: Response,
+  total: number,
+  onProgress?: (loaded: number, total: number) => void,
+): Promise<ArrayBuffer> {
+  if (!res.body) {
+    const buf = await res.arrayBuffer();
+    onProgress?.(buf.byteLength, buf.byteLength);
+    return buf;
+  }
+  let buffer = new Uint8Array(Math.max(total, 1));
+  let loaded = 0;
+  const reader = res.body.getReader();
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (loaded + value.byteLength > buffer.byteLength) {
+      const grown = new Uint8Array(Math.max(buffer.byteLength * 2, loaded + value.byteLength));
+      grown.set(buffer.subarray(0, loaded));
+      buffer = grown;
+    }
+    buffer.set(value, loaded);
+    loaded += value.byteLength;
+    onProgress?.(loaded, total);
+  }
+  return loaded === buffer.byteLength ? (buffer.buffer as ArrayBuffer) : buffer.slice(0, loaded).buffer;
 }
