@@ -30,8 +30,8 @@ describe('the foreground controls', () => {
     const p = resolve(withDefocus({ focusDistanceM: 2.5, nearSharpM: 1.25 }), ctx).defocus;
     expect(p.nearDisparity).toBeCloseTo(1.0, 9);
     const coc = cocOf(p);
-    expect(coc(0.6)).toBe(0);
-    expect(coc(0.99)).toBe(0);
+    expect(coc(0.6)).toBeCloseTo(0, 12);
+    expect(coc(0.99)).toBeCloseTo(0, 12);
     // In front of the limit the disc grows exactly as the lens's does from the focal plane.
     expect(coc(1.2)).toBeCloseTo(signedCocPx(0.7, 0.5, p.cocScalePx, 1e9), 9);
     // Behind the focal plane nothing changed.
@@ -41,7 +41,7 @@ describe('the foreground controls', () => {
 
   it('cut the foreground sharp at 0, and leave the background alone', () => {
     const p = resolve(withDefocus({ foreground: 0 }), ctx).defocus;
-    expect(cocOf(p)(0.9)).toBe(0);
+    expect(cocOf(p)(0.9)).toBeCloseTo(0, 12);
     expect(cocOf(p)(0.1)).toBeGreaterThan(0);
     expect(p.nearLimitM).toBe(0);
   });
