@@ -55,6 +55,27 @@ export interface ViewportProps {
 const PEEK_DELAY_MS = 220;
 /** Movement past this is a scroll, a pan or a pinch — never a peek. */
 const PEEK_SLOP_PX = 8;
+/**
+ * A single tap waits this long for a second one before it opens the focused
+ * view, so a double-tap still zooms. The double-tap window matches it.
+ */
+const SINGLE_TAP_MS = 250;
+/** The focused view's margin round the print, px. */
+const LIFT_MARGIN_PX = 12;
+/** Must match the lift transition in peek.css (--dur-move). */
+const LIFT_MS = 560;
+
+/**
+ * The focused view: the print lifted out of the page to fill the screen while
+ * everything else recedes under a dark blur. `rect` is where the picture layer
+ * sat when the view opened — it is pinned there as a fixed box so no scroller
+ * can clip it — and `lift` is the transform that carries it to full screen.
+ */
+interface Lift {
+  rect: { left: number; top: number; width: number; height: number };
+  origin: { x: number; y: number };
+  to: { x: number; y: number; scale: number };
+}
 
 const MODES: { value: ViewMode; label: string; title: string }[] = [
   { value: 'print', label: 'Print', title: 'The finished print' },
@@ -220,6 +241,18 @@ export function Viewport({
   const pan = useRef<{ id: number; down: Point; origin: Zoom } | null>(null);
   const lastTap = useRef<{ t: number; x: number; y: number } | null>(null);
 
+  // --- the focused view ------------------------------------------------------
+  // 'off' in the page; 'on' lifted (or lifting); 'leaving' gliding back, still
+  // pinned until the glide has landed.
+  const [focusPhase, setFocusPhase] = useState<'off' | 'on' | 'leaving'>('off');
+  const [lift, setLift] = useState<Lift | null>(null);
+  /** False for the one frame the layer is pinned in place before it moves. */
+  const [lifted, setLifted] = useState(false);
+  const focusPhaseRef = useRef(focusPhase);
+  focusPhaseRef.current = focusPhase;
+  const singleTapTimer = useRef<number | null>(null);
+  const liftTimer = useRef<number | null>(null);
+
   // --- hold to peek at the original ----------------------------------------
   const onPeekRef = useRef(onPeek);
   onPeekRef.current = onPeek;
@@ -264,6 +297,103 @@ export function Viewport({
     };
   }, []);
 
+  /** Where the picture goes: centred on the screen, as large as it fits. */
+  const measureLift = useCallback((): Lift | null => {
+    const layer = layerRef.current;
+    const canvas = canvasRef.current;
+    if (!layer || !canvas) return null;
+    const l = layer.getBoundingClientRect();
+    const c = canvas.getBoundingClientRect();
+    if (c.width < 1 || c.height < 1) return null;
+    const vv = window.visualViewport;
+    const W = vv?.width ?? window.innerWidth;
+    const H = vv?.height ?? window.innerHeight;
+    const scale = Math.max(
+      1,
+      Math.min((W - 2 * LIFT_MARGIN_PX) / c.width, (H - 2 * LIFT_MARGIN_PX) / c.height),
+    );
+    return {
+      rect: { left: l.left, top: l.top, width: l.width, height: l.height },
+      origin: { x: c.left - l.left + c.width / 2, y: c.top - l.top + c.height / 2 },
+      to: { x: W / 2 - (c.left + c.width / 2), y: H / 2 - (c.top + c.height / 2), scale },
+    };
+  }, [canvasRef]);
+
+  const openFocused = useCallback(() => {
+    if (focusPhaseRef.current === 'on') return;
+    if (liftTimer.current !== null) window.clearTimeout(liftTimer.current);
+    // The lift is measured on the whole print, not a pinch-zoomed corner of it.
+    if (zoomRef.current.scale > 1.001) commit(IDENTITY, false);
+    const next = measureLift();
+    if (!next) return;
+    // Pin first, at exactly where it sits, then move on the next frames: the
+    // transition needs a painted start to run from.
+    setLift(next);
+    setLifted(false);
+    setFocusPhase('on');
+    requestAnimationFrame(() => requestAnimationFrame(() => setLifted(true)));
+  }, [commit, measureLift]);
+
+  const closeFocused = useCallback(() => {
+    if (focusPhaseRef.current !== 'on') return;
+    setFocusPhase('leaving');
+    setLifted(false);
+    if (liftTimer.current !== null) window.clearTimeout(liftTimer.current);
+    liftTimer.current = window.setTimeout(() => {
+      liftTimer.current = null;
+      setFocusPhase('off');
+      setLift(null);
+    }, LIFT_MS);
+  }, []);
+  const closeFocusedRef = useRef(closeFocused);
+  closeFocusedRef.current = closeFocused;
+  const openFocusedRef = useRef(openFocused);
+  openFocusedRef.current = openFocused;
+
+  // Escape closes it; a rotation or a resize re-measures the target so the
+  // print keeps filling the screen it is on.
+  useEffect(() => {
+    if (focusPhase !== 'on') return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') closeFocusedRef.current();
+    };
+    const onResize = () => {
+      setLift((prev) => {
+        if (!prev) return prev;
+        const layer = layerRef.current;
+        const canvas = canvasRef.current;
+        if (!layer || !canvas) return prev;
+        // The pinned box stays put; only where it is carried to changes.
+        const r = prev.rect;
+        const cw = canvas.offsetWidth;
+        const ch = canvas.offsetHeight;
+        const cx = r.left + prev.origin.x;
+        const cy = r.top + prev.origin.y;
+        const vv = window.visualViewport;
+        const W = vv?.width ?? window.innerWidth;
+        const H = vv?.height ?? window.innerHeight;
+        const scale = Math.max(1, Math.min((W - 2 * LIFT_MARGIN_PX) / cw, (H - 2 * LIFT_MARGIN_PX) / ch));
+        return { ...prev, to: { x: W / 2 - cx, y: H / 2 - cy, scale } };
+      });
+    };
+    window.addEventListener('keydown', onKey);
+    window.addEventListener('resize', onResize);
+    window.visualViewport?.addEventListener('resize', onResize);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('resize', onResize);
+      window.visualViewport?.removeEventListener('resize', onResize);
+    };
+  }, [focusPhase, canvasRef]);
+
+  useEffect(
+    () => () => {
+      if (singleTapTimer.current !== null) window.clearTimeout(singleTapTimer.current);
+      if (liftTimer.current !== null) window.clearTimeout(liftTimer.current);
+    },
+    [],
+  );
+
   const onPointerDown = useCallback(
     (e: React.PointerEvent) => {
       if (e.pointerType === 'mouse' && e.button !== 0) return;
@@ -294,6 +424,12 @@ export function Viewport({
         } else {
           commit(zoomRef.current, false);
         }
+      }
+      // Lifted, the print is for looking at: a hold still peeks and a tap puts
+      // it back, but it does not pinch or pan.
+      if (focusPhaseRef.current !== 'off') {
+        e.preventDefault();
+        return;
       }
       if (pointers.current.size === 2) {
         // Second finger down: the pan becomes a pinch, anchored where the
@@ -388,6 +524,12 @@ export function Viewport({
       // double-tap: in to 2.5x around the tap, or back out to the full print.
       const quick = performance.now() - p.t0 < 300 && Math.hypot(p.x - p.x0, p.y - p.y0) < 8;
       if (!quick) return;
+      // Lifted: a tap anywhere on the print puts it back.
+      if (focusPhaseRef.current !== 'off') {
+        lastTap.current = null;
+        closeFocusedRef.current();
+        return;
+      }
       // In the focus view a tap is a focus point, wherever the picture has
       // been zoomed to: the canvas's box already carries the transform.
       const f = focusRef.current;
@@ -401,7 +543,22 @@ export function Viewport({
       const now = performance.now();
       const last = lastTap.current;
       lastTap.current = { t: now, x: p.x, y: p.y };
-      if (!last || now - last.t > 350 || Math.hypot(p.x - last.x, p.y - last.y) > 24) return;
+      if (!last || now - last.t > SINGLE_TAP_MS || Math.hypot(p.x - last.x, p.y - last.y) > 24) {
+        // A first tap. Unless a second follows, it opens the focused view —
+        // except in the focus inspect mode, where a tap is a focus point.
+        if (singleTapTimer.current !== null) window.clearTimeout(singleTapTimer.current);
+        singleTapTimer.current = null;
+        if (!(f && modeRef.current === 'focus')) {
+          singleTapTimer.current = window.setTimeout(() => {
+            singleTapTimer.current = null;
+            openFocusedRef.current();
+          }, SINGLE_TAP_MS);
+        }
+        return;
+      }
+      // The second tap of a double-tap: the first one's focused view is off.
+      if (singleTapTimer.current !== null) window.clearTimeout(singleTapTimer.current);
+      singleTapTimer.current = null;
       lastTap.current = null;
       const z = zoomRef.current;
       if (z.scale > 1.001) {
@@ -502,7 +659,18 @@ export function Viewport({
   const zoomed = zoom.scale > 1.005;
 
   return (
-    <div className="viewport" ref={rootRef}>
+    <div
+      className={`viewport${focusPhase !== 'off' ? ' is-focused' : ''}${lifted ? ' is-lifted' : ''}`}
+      ref={rootRef}
+    >
+      <div
+        className="viewport__backdrop"
+        aria-hidden="true"
+        onPointerDown={(e) => {
+          e.preventDefault();
+          closeFocused();
+        }}
+      />
       <div className="viewport__bar">
         <SegmentedControl
           label="Inspect stage"
@@ -535,8 +703,23 @@ export function Viewport({
       <div className={`viewport__frame${busy ? ' is-busy' : ''}`} ref={frameRef}>
         <div
           ref={layerRef}
-          className={`viewport__zoom${zoomed ? ' is-zoomed' : ''}${animating ? ' is-animating' : ''}`}
-          style={{ transform: `translate3d(${zoom.x}px, ${zoom.y}px, 0) scale(${zoom.scale})` }}
+          className={`viewport__zoom${zoomed ? ' is-zoomed' : ''}${animating ? ' is-animating' : ''}${
+            lift ? ' is-pinned' : ''
+          }`}
+          style={
+            lift
+              ? {
+                  left: lift.rect.left,
+                  top: lift.rect.top,
+                  width: lift.rect.width,
+                  height: lift.rect.height,
+                  transformOrigin: `${lift.origin.x}px ${lift.origin.y}px`,
+                  transform: lifted
+                    ? `translate3d(${lift.to.x}px, ${lift.to.y}px, 0) scale(${lift.to.scale})`
+                    : 'translate3d(0, 0, 0) scale(1)',
+                }
+              : { transform: `translate3d(${zoom.x}px, ${zoom.y}px, 0) scale(${zoom.scale})` }
+          }
           onPointerDown={onPointerDown}
         >
           <canvas ref={canvasRef} className="viewport__canvas" />

@@ -32,3 +32,94 @@
     animation: none;
   }
 }
+
+/*
+ * The focused view (Viewport.tsx). One tap on the print lifts it out of the
+ * page to fill the screen; everything else recedes under a dark blur. Only
+ * transform and opacity move, so the whole thing runs on the compositor.
+ *
+ * The picture layer is pinned as a fixed box where it sat (inline left/top/
+ * width/height from the component) — a fixed box is not clipped by the
+ * scrolling stage it lives in — and carried to full screen by its transform.
+ */
+.viewport.is-focused {
+  z-index: 60;
+  /* Only the backdrop and the print take touches: the page-bound frame and
+     the viewport's own box sit over the backdrop and would swallow the tap
+     that should put the print back. */
+  pointer-events: none;
+}
+
+.viewport__backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  background: rgba(0, 0, 0, 0.55);
+  -webkit-backdrop-filter: blur(28px) saturate(0.7);
+  backdrop-filter: blur(28px) saturate(0.7);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  touch-action: none;
+  /* Hidden only once the fade has finished. */
+  transition:
+    opacity var(--dur-move) var(--ease),
+    visibility 0s linear var(--dur-move);
+}
+
+.viewport.is-lifted .viewport__backdrop {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transition:
+    opacity var(--dur-move) var(--ease),
+    visibility 0s;
+}
+
+.viewport__zoom.is-pinned {
+  position: fixed;
+  pointer-events: auto;
+  z-index: 1;
+  touch-action: none;
+  cursor: zoom-out;
+  transition: transform var(--dur-move) var(--spring);
+}
+
+/* The print's own shadow deepens as it lifts. */
+.viewport.is-focused .viewport__canvas {
+  transition: box-shadow var(--dur-move) var(--ease);
+}
+
+.viewport.is-lifted .viewport__canvas {
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.06), 0 24px 90px rgba(0, 0, 0, 0.75);
+}
+
+/* The picture's own chrome steps aside while it is lifted, and fades back
+   while the print glides home. */
+.viewport__bar,
+.viewport__foot,
+.viewport__grip {
+  transition: opacity var(--dur) var(--ease);
+}
+
+.viewport__zoom-badge {
+  transition:
+    opacity var(--dur) var(--ease),
+    transform var(--dur-move) var(--spring);
+}
+
+.viewport.is-lifted .viewport__bar,
+.viewport.is-lifted .viewport__foot,
+.viewport.is-lifted .viewport__grip,
+.viewport.is-lifted .viewport__zoom-badge {
+  opacity: 0;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .viewport__zoom.is-pinned,
+  .viewport__backdrop,
+  .viewport.is-lifted .viewport__backdrop {
+    transition-duration: 1ms;
+  }
+}
