@@ -146,7 +146,7 @@ body,
 @supports (-webkit-touch-callout: none) {
   @media (display-mode: standalone) and (orientation: portrait) {
     .topbar {
-      padding-top: calc(env(safe-area-inset-top, 0px) + 44px);
+      padding-top: calc(env(safe-area-inset-top, 0px) + 28px);
     }
   }
 }
