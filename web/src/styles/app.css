@@ -135,6 +135,22 @@ body,
   z-index: 60;
 }
 
+/* The band alone did not clear it on a real iPhone: the edge blur still
+   reached the toolbar. The fix confirmed on devices is clearance — keep the
+   chrome out of the zone the blur covers, about 40 pt below the status bar.
+   Whatever lands in that zone is plain ground, and blurred ground looks like
+   ground. Only in the installed app on iOS (-webkit-touch-callout exists only
+   in WebKit on iOS; display-mode: standalone only once added to the Home
+   Screen), and only in portrait: a landscape iPhone hides the status bar and
+   draws no edge. Safari tabs, Android and desktop keep the original inset. */
+@supports (-webkit-touch-callout: none) {
+  @media (display-mode: standalone) and (orientation: portrait) {
+    .topbar {
+      padding-top: calc(env(safe-area-inset-top, 0px) + 44px);
+    }
+  }
+}
+
 /* The shared material of every floating group: regular glass, an even
    hairline, an even soft falloff. */
 .topbar__brand,
