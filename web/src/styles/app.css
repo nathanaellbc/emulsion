@@ -29,20 +29,15 @@
     radial-gradient(ellipse 60% 50% at 50% 100%, rgba(255, 255, 255, 0.02), transparent 70%);
 }
 
-/* In the installed app the status bar above the page is opaque black. The
-   wash from above, and the ground itself, read as a lighter band right
-   under it — a seam where the phone's chrome stops and the app's starts.
-   So the page's top edge starts at the bar's own black and dissolves into
-   the ground across the toolbar row. The wash from above goes: the picture's
-   opaque block below cut it off in a visible lighter band. The fade must be
-   fully dissolved by the row's
-   bottom: on a phone the picture's pinned block below is opaque ground, and a
-   gradient still running there would be cut into a new line at its edge. */
+/* In the installed app the status bar sits directly above the page, painted
+   in the page's own ground (measured on an iPhone: 11,11,11 — not black).
+   Anything but flat ground along the top edge breaks from it: the wash from
+   above read as a lighter band, and a fade from pure black read as a darker
+   one. So the top edge is plain ground, and only the faint wash from below
+   remains. */
 @media (display-mode: standalone) {
   .shell::before {
-    background:
-      linear-gradient(to bottom, #000 0, rgba(0, 0, 0, 0) calc(var(--s3) + var(--toolbar-h))),
-      radial-gradient(ellipse 60% 50% at 50% 100%, rgba(255, 255, 255, 0.02), transparent 70%);
+    background: radial-gradient(ellipse 60% 50% at 50% 100%, rgba(255, 255, 255, 0.02), transparent 70%);
   }
 }
 
