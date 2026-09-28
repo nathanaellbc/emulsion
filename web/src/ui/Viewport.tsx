@@ -56,10 +56,12 @@ const PEEK_DELAY_MS = 220;
 /** Movement past this is a scroll, a pan or a pinch — never a peek. */
 const PEEK_SLOP_PX = 8;
 /**
- * A single tap waits this long for a second one before it opens the focused
- * view, so a double-tap still zooms. The double-tap window matches it.
+ * Two taps this close together are a double-tap. A tap on the page opens the
+ * focused view at once — its second tap then lands in the lifted view and
+ * zooms there — while a tap on the lifted print waits this long before it
+ * puts the print back, so a double-tap can zoom instead.
  */
-const SINGLE_TAP_MS = 250;
+const DOUBLE_TAP_MS = 300;
 /** The focused view's margin round the print, px. */
 const LIFT_MARGIN_PX = 12;
 /** Must match the lift transition in peek.css (--dur-move). */
@@ -239,7 +241,11 @@ export function Viewport({
   const pointers = useRef(new Map<number, Point & { x0: number; y0: number; t0: number }>());
   const pinch = useRef<{ dist: number; mid: Point; centre: Point; origin: Zoom } | null>(null);
   const pan = useRef<{ id: number; down: Point; origin: Zoom } | null>(null);
-  const lastTap = useRef<{ t: number; x: number; y: number } | null>(null);
+  /**
+   * The last tap: when and where on the screen, where in the picture, and
+   * whether it was the tap that lifted the print.
+   */
+  const lastTap = useRef<{ t: number; x: number; y: number; at: Point; lifted: boolean } | null>(null);
 
   // --- the focused view ------------------------------------------------------
   // 'off' in the page; 'on' lifted (or lifting); 'leaving' gliding back, still
@@ -250,6 +256,12 @@ export function Viewport({
   const [lifted, setLifted] = useState(false);
   const focusPhaseRef = useRef(focusPhase);
   focusPhaseRef.current = focusPhase;
+  const liftRef = useRef(lift);
+  liftRef.current = lift;
+  const liftedRef = useRef(lifted);
+  liftedRef.current = lifted;
+  /** The wrapper the lift transform is applied to; the zoom layer sits inside. */
+  const liftBoxRef = useRef<HTMLDivElement>(null);
   const singleTapTimer = useRef<number | null>(null);
   const liftTimer = useRef<number | null>(null);
 
@@ -284,8 +296,11 @@ export function Viewport({
   /** The frame is the untransformed reference: its centre is the transform
       origin and its box is what the translate bounds are measured against. */
   const frameGeometry = useCallback(() => {
-    const el = frameRef.current;
-    const rect = el?.getBoundingClientRect();
+    // The zoom's CSS origin is the layer's own centre, which is the lift
+    // wrapper's: pinned, that is the box it was pinned at (gesture points are
+    // mapped back into that box, see toLocal); otherwise its live rect.
+    const pinned = liftRef.current?.rect;
+    const rect = pinned ?? liftBoxRef.current?.getBoundingClientRect() ?? frameRef.current?.getBoundingClientRect();
     const layer = layerRef.current;
     return {
       centre: {
@@ -295,6 +310,19 @@ export function Viewport({
       w: layer?.clientWidth ?? 1,
       h: layer?.clientHeight ?? 1,
     };
+  }, []);
+
+  /**
+   * A screen point, carried back through the lift into the pinned box's own
+   * coordinates — where the zoom's arithmetic lives. The identity whenever
+   * the print is not lifted, so the page's gestures are untouched.
+   */
+  const toLocal = useCallback((x: number, y: number): Point => {
+    const L = liftRef.current;
+    if (!L || !liftedRef.current) return { x, y };
+    const ox = L.rect.left + L.origin.x;
+    const oy = L.rect.top + L.origin.y;
+    return { x: ox + (x - ox - L.to.x) / L.to.scale, y: oy + (y - oy - L.to.y) / L.to.scale };
   }, []);
 
   /** Where the picture goes: centred on the screen, as large as it fits. */
@@ -336,6 +364,10 @@ export function Viewport({
 
   const closeFocused = useCallback(() => {
     if (focusPhaseRef.current !== 'on') return;
+    if (singleTapTimer.current !== null) window.clearTimeout(singleTapTimer.current);
+    singleTapTimer.current = null;
+    // A zoomed-in print glides home whole, on the same spring as the lift.
+    if (zoomRef.current.scale > 1.001) commit(IDENTITY, true);
     setFocusPhase('leaving');
     setLifted(false);
     if (liftTimer.current !== null) window.clearTimeout(liftTimer.current);
@@ -344,7 +376,7 @@ export function Viewport({
       setFocusPhase('off');
       setLift(null);
     }, LIFT_MS);
-  }, []);
+  }, [commit]);
   const closeFocusedRef = useRef(closeFocused);
   closeFocusedRef.current = closeFocused;
   const openFocusedRef = useRef(openFocused);
@@ -397,11 +429,12 @@ export function Viewport({
   const onPointerDown = useCallback(
     (e: React.PointerEvent) => {
       if (e.pointerType === 'mouse' && e.button !== 0) return;
+      const q = toLocal(e.clientX, e.clientY);
       pointers.current.set(e.pointerId, {
-        x: e.clientX,
-        y: e.clientY,
-        x0: e.clientX,
-        y0: e.clientY,
+        x: q.x,
+        y: q.y,
+        x0: q.x,
+        y0: q.y,
         t0: performance.now(),
       });
       // One still finger may become a peek; a second finger makes it a pinch.
@@ -425,12 +458,8 @@ export function Viewport({
           commit(zoomRef.current, false);
         }
       }
-      // Lifted, the print is for looking at: a hold still peeks and a tap puts
-      // it back, but it does not pinch or pan.
-      if (focusPhaseRef.current !== 'off') {
-        e.preventDefault();
-        return;
-      }
+      // Lifted, nothing behind the print may scroll: every gesture is the print's.
+      if (focusPhaseRef.current !== 'off') e.preventDefault();
       if (pointers.current.size === 2) {
         // Second finger down: the pan becomes a pinch, anchored where the
         // fingers sit now.
@@ -450,21 +479,22 @@ export function Viewport({
         // left to the page, which scrolls the controls.
         pan.current = {
           id: e.pointerId,
-          down: { x: e.clientX, y: e.clientY },
+          down: { x: q.x, y: q.y },
           origin: zoomRef.current,
         };
         e.preventDefault();
       }
     },
-    [commit, frameGeometry],
+    [commit, frameGeometry, toLocal],
   );
 
   useEffect(() => {
     const move = (e: PointerEvent) => {
       const p = pointers.current.get(e.pointerId);
       if (!p) return;
-      p.x = e.clientX;
-      p.y = e.clientY;
+      const q = toLocal(e.clientX, e.clientY);
+      p.x = q.x;
+      p.y = q.y;
       // Moving before the hold lands makes it a scroll, pan or pinch, not a
       // peek. Once the original is showing it stays until the finger lifts.
       if (peekTimer.current !== null && (pointers.current.size > 1 || Math.hypot(p.x - p.x0, p.y - p.y0) > PEEK_SLOP_PX)) {
@@ -524,14 +554,47 @@ export function Viewport({
       // double-tap: in to 2.5x around the tap, or back out to the full print.
       const quick = performance.now() - p.t0 < 300 && Math.hypot(p.x - p.x0, p.y - p.y0) < 8;
       if (!quick) return;
-      // Lifted: a tap anywhere on the print puts it back.
-      if (focusPhaseRef.current !== 'off') {
-        lastTap.current = null;
-        closeFocusedRef.current();
+      const now = performance.now();
+      const last = lastTap.current;
+      // Measured on the screen, not in the picture's coordinates: the first
+      // tap of a double may be the one that lifted the print, and the second
+      // then lands in the lifted view.
+      const double =
+        last !== null &&
+        now - last.t <= DOUBLE_TAP_MS &&
+        Math.hypot(e.clientX - last.x, e.clientY - last.y) < 24;
+      const opening = focusPhaseRef.current === 'off';
+      lastTap.current = double ? null : { t: now, x: e.clientX, y: e.clientY, at: { x: p.x, y: p.y }, lifted: opening };
+      const zoomToggle = () => {
+        const z = zoomRef.current;
+        const { centre, w, h } = frameGeometry();
+        // A double-tap whose first tap lifted the print zooms where that first
+        // tap pointed: by the second, the print has moved under the finger.
+        const at = double && last?.lifted ? last.at : { x: p.x, y: p.y };
+        if (z.scale > 1.001) commit(IDENTITY, true);
+        else commit(clamped(zoomedAround(at, centre, z, DOUBLE_TAP_SCALE), w, h), true);
+      };
+
+      // Lifted: a double-tap zooms in or back out; a single tap puts the print
+      // back, once it is clear no second tap is coming.
+      if (focusPhaseRef.current === 'on') {
+        if (singleTapTimer.current !== null) window.clearTimeout(singleTapTimer.current);
+        singleTapTimer.current = null;
+        if (double) {
+          zoomToggle();
+        } else {
+          singleTapTimer.current = window.setTimeout(() => {
+            singleTapTimer.current = null;
+            closeFocusedRef.current();
+          }, DOUBLE_TAP_MS);
+        }
         return;
       }
+      if (focusPhaseRef.current === 'leaving') return;
+
       // In the focus view a tap is a focus point, wherever the picture has
-      // been zoomed to: the canvas's box already carries the transform.
+      // been zoomed to: the canvas's box already carries the transform. A
+      // double-tap there still zooms in place.
       const f = focusRef.current;
       const canvas = canvasRef.current;
       if (f && modeRef.current === 'focus' && canvas) {
@@ -539,34 +602,21 @@ export function Viewport({
         const x = (p.x - r.left) / r.width;
         const y = (p.y - r.top) / r.height;
         if (x >= 0 && x <= 1 && y >= 0 && y <= 1) f.onPick(x, y);
-      }
-      const now = performance.now();
-      const last = lastTap.current;
-      lastTap.current = { t: now, x: p.x, y: p.y };
-      if (!last || now - last.t > SINGLE_TAP_MS || Math.hypot(p.x - last.x, p.y - last.y) > 24) {
-        // A first tap. Unless a second follows, it opens the focused view —
-        // except in the focus inspect mode, where a tap is a focus point.
-        if (singleTapTimer.current !== null) window.clearTimeout(singleTapTimer.current);
-        singleTapTimer.current = null;
-        if (!(f && modeRef.current === 'focus')) {
-          singleTapTimer.current = window.setTimeout(() => {
-            singleTapTimer.current = null;
-            openFocusedRef.current();
-          }, SINGLE_TAP_MS);
-        }
+        if (double) zoomToggle();
         return;
       }
-      // The second tap of a double-tap: the first one's focused view is off.
-      if (singleTapTimer.current !== null) window.clearTimeout(singleTapTimer.current);
-      singleTapTimer.current = null;
-      lastTap.current = null;
-      const z = zoomRef.current;
-      if (z.scale > 1.001) {
-        commit(IDENTITY, true);
-      } else {
-        const { centre, w, h } = frameGeometry();
-        commit(clamped(zoomedAround({ x: p.x, y: p.y }, centre, z, DOUBLE_TAP_SCALE), w, h), true);
+
+      // A print already zoomed on the page is being inspected there: its
+      // double-tap returns it to the whole print, and a single tap does not
+      // lift it out from under the inspection.
+      if (zoomRef.current.scale > 1.001) {
+        if (double) zoomToggle();
+        return;
       }
+
+      // On the page a tap lifts the print at once. A quick second tap lands
+      // in the lifted view above and zooms there.
+      openFocusedRef.current();
     };
 
     window.addEventListener('pointermove', move);
@@ -577,7 +627,7 @@ export function Viewport({
       window.removeEventListener('pointerup', end);
       window.removeEventListener('pointercancel', end);
     };
-  }, [commit, frameGeometry, canvasRef]);
+  }, [commit, frameGeometry, canvasRef, toLocal]);
 
   // The keyboard's peek: hold backslash (Lightroom's before/after key). Not
   // while typing into a field, and a key repeat is one hold, not many.
@@ -609,26 +659,34 @@ export function Viewport({
 
   // The wheel zooms with the trackpad's pinch (ctrl+wheel) and pans the
   // zoomed picture otherwise; at scale 1 it is left for the page.
+  // Lifted, there is no page behind to scroll, so the plain wheel zooms too —
+  // over the print or the dark around it — and the cursor is mapped back
+  // through the lift. Listened for on the viewport, which holds the backdrop.
   useEffect(() => {
-    const el = frameRef.current;
+    const el = rootRef.current;
     if (!el) return;
     const onWheel = (e: WheelEvent) => {
-      if (e.ctrlKey || e.metaKey) {
+      const lifted = focusPhaseRef.current === 'on';
+      if (!lifted && !frameRef.current?.contains(e.target as Node)) return;
+      // A zoomed print pans with a plain two-finger scroll; pinch always zooms.
+      const pans = zoomRef.current.scale > 1 && !(e.ctrlKey || e.metaKey);
+      if (lifted ? !pans : e.ctrlKey || e.metaKey) {
         e.preventDefault();
         const prev = zoomRef.current;
         const { centre, w, h } = frameGeometry();
         const scale = Math.min(ZOOM_MAX, Math.max(1, prev.scale * Math.exp(-e.deltaY * 0.0022)));
-        commit(clamped(zoomedAround({ x: e.clientX, y: e.clientY }, centre, prev, scale), w, h));
+        commit(clamped(zoomedAround(toLocal(e.clientX, e.clientY), centre, prev, scale), w, h));
       } else if (zoomRef.current.scale > 1) {
         e.preventDefault();
         const { w, h } = frameGeometry();
         const z = zoomRef.current;
-        commit(clamped({ ...z, x: z.x - e.deltaX, y: z.y - e.deltaY }, w, h));
+        const k = lifted ? liftRef.current?.to.scale ?? 1 : 1;
+        commit(clamped({ ...z, x: z.x - e.deltaX / k, y: z.y - e.deltaY / k }, w, h));
       }
     };
     el.addEventListener('wheel', onWheel, { passive: false });
     return () => el.removeEventListener('wheel', onWheel);
-  }, [commit, frameGeometry]);
+  }, [commit, frameGeometry, toLocal]);
 
   // A new photograph arrives unzoomed; the zoom belongs to the picture.
   useEffect(() => {
@@ -666,10 +724,10 @@ export function Viewport({
       <div
         className="viewport__backdrop"
         aria-hidden="true"
-        onPointerDown={(e) => {
-          e.preventDefault();
-          closeFocused();
-        }}
+        // A tap, not a touch: the first contact of a pinch or a stray swipe
+        // must not throw the print back.
+        onClick={() => closeFocused()}
+        onPointerDown={(e) => e.preventDefault()}
       />
       <div className="viewport__bar">
         <SegmentedControl
@@ -702,10 +760,8 @@ export function Viewport({
 
       <div className={`viewport__frame${busy ? ' is-busy' : ''}`} ref={frameRef}>
         <div
-          ref={layerRef}
-          className={`viewport__zoom${zoomed ? ' is-zoomed' : ''}${animating ? ' is-animating' : ''}${
-            lift ? ' is-pinned' : ''
-          }`}
+          ref={liftBoxRef}
+          className={`viewport__lift${lift ? ' is-pinned' : ''}`}
           style={
             lift
               ? {
@@ -718,8 +774,13 @@ export function Viewport({
                     ? `translate3d(${lift.to.x}px, ${lift.to.y}px, 0) scale(${lift.to.scale})`
                     : 'translate3d(0, 0, 0) scale(1)',
                 }
-              : { transform: `translate3d(${zoom.x}px, ${zoom.y}px, 0) scale(${zoom.scale})` }
+              : undefined
           }
+        >
+        <div
+          ref={layerRef}
+          className={`viewport__zoom${zoomed ? ' is-zoomed' : ''}${animating ? ' is-animating' : ''}`}
+          style={{ transform: `translate3d(${zoom.x}px, ${zoom.y}px, 0) scale(${zoom.scale})` }}
           onPointerDown={onPointerDown}
         >
           <canvas ref={canvasRef} className="viewport__canvas" />
@@ -778,6 +839,7 @@ export function Viewport({
               </span>
             </>
           ) : null}
+        </div>
         </div>
         {/* The badge stays on the frame, not the picture layer: it would
             otherwise be carried off-screen by the very zoom it resets. */}

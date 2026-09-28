@@ -44,6 +44,10 @@
  */
 .viewport.is-focused {
   z-index: 60;
+  /* The phone's pinned picture block is opaque ground; lifted, that would sit
+     inside the blur as a hard-edged slab. The page behind shows through it
+     instead, blurred like the rest. */
+  background: transparent;
   /* Only the backdrop and the print take touches: the page-bound frame and
      the viewport's own box sit over the backdrop and would swallow the tap
      that should put the print back. */
@@ -76,13 +80,34 @@
     visibility 0s;
 }
 
-.viewport__zoom.is-pinned {
+/* The wrapper the lift moves; the zoom layer inside it keeps its own
+   transform, so the print zooms and pans within the lifted view. */
+.viewport__lift {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
+.viewport__lift.is-pinned {
   position: fixed;
-  pointer-events: auto;
   z-index: 1;
-  touch-action: none;
-  cursor: zoom-out;
+  pointer-events: auto;
+  will-change: transform;
   transition: transform var(--dur-move) var(--spring);
+}
+
+.viewport.is-focused .viewport__zoom {
+  touch-action: none;
+  cursor: zoom-in;
+}
+
+.viewport.is-focused .viewport__zoom.is-zoomed {
+  cursor: grab;
 }
 
 /* The print's own shadow deepens as it lifts. */
@@ -117,7 +142,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .viewport__zoom.is-pinned,
+  .viewport__lift.is-pinned,
   .viewport__backdrop,
   .viewport.is-lifted .viewport__backdrop {
     transition-duration: 1ms;
