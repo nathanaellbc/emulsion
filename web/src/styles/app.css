@@ -2749,7 +2749,7 @@ body,
      padding (16), the caption strip (44 + 8) and the grip (22). */
   .stage {
     grid-template-rows:
-      var(--picture-h, clamp(160px, calc((100vw - 2 * var(--s3)) / var(--print-aspect, 1.5) + 90px), 68svh))
+      var(--picture-h, clamp(160px, calc((100vw - 2 * var(--s3)) / var(--print-aspect, 1.5) + 90px), 60svh))
       1fr;
   }
 
