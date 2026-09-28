@@ -111,46 +111,6 @@ body,
   z-index: 5;
 }
 
-/* The status-bar band. iOS 26 draws its Liquid Glass "scroll edge" over the
-   top of a standalone web app with a black-translucent status bar: a
-   progressive blur that reaches some 40 pt past the status bar, straight
-   across the brand and the toolbar, so they read smeared and cut off at the
-   top. No CSS property or meta tag switches it off. What WebKit does honour
-   is a fixed box on the top edge: it hit-tests the edge's midpoint a few
-   points down, and when it finds a position: fixed box spanning (nearly) the
-   full width, it drops the blur and fills the status bar with that box's
-   colour instead. This is that box — opaque ground, exactly the inset tall,
-   so it sits wholly under the clock and never over the chrome, and it is
-   zero-height everywhere there is no inset (desktop, Android, landscape). */
-#root::before {
-  content: '';
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: env(safe-area-inset-top, 0px);
-  background: var(--ground);
-  pointer-events: none;
-  /* Above the page, below the export sheet (70), which is modal anyway. */
-  z-index: 60;
-}
-
-/* The band alone did not clear it on a real iPhone: the edge blur still
-   reached the toolbar. The fix confirmed on devices is clearance — keep the
-   chrome out of the zone the blur covers, about 40 pt below the status bar.
-   Whatever lands in that zone is plain ground, and blurred ground looks like
-   ground. Only in the installed app on iOS (-webkit-touch-callout exists only
-   in WebKit on iOS; display-mode: standalone only once added to the Home
-   Screen), and only in portrait: a landscape iPhone hides the status bar and
-   draws no edge. Safari tabs, Android and desktop keep the original inset. */
-@supports (-webkit-touch-callout: none) {
-  @media (display-mode: standalone) and (orientation: portrait) {
-    .topbar {
-      padding-top: calc(env(safe-area-inset-top, 0px) + 28px);
-    }
-  }
-}
-
 /* The shared material of every floating group: regular glass, an even
    hairline, an even soft falloff. */
 .topbar__brand,

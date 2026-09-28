@@ -18,9 +18,15 @@
     <link rel="manifest" href="/manifest.webmanifest" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <!-- "black", not "black-translucent": iOS 26 draws a Liquid Glass
+        scroll-edge blur over any page that extends under a translucent status
+        bar, and it reaches ~40 pt into the page, smearing the toolbar. With an
+        opaque black bar the page starts below it, there is no edge to blur,
+        and the bar is all but the ground's own colour. iOS reads this tag only
+        when the app is added to the Home Screen: remove and re-add to see it. -->
+    <meta name="apple-mobile-web-app-status-bar-style" content="black" />
     <meta name="apple-mobile-web-app-title" content="EMULSION" />
-    <meta name="theme_color" content="#060608" />
+    <meta name="theme-color" content="#060608" />
   </head>
   <body>
     <div id="root"></div>
