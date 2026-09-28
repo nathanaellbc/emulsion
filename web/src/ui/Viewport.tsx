@@ -375,7 +375,8 @@ export function Viewport({
       liftTimer.current = null;
       setFocusPhase('off');
       setLift(null);
-    }, LIFT_MS);
+      // Unpinned a beat after the glide lands, never on its last frame.
+    }, LIFT_MS + 80);
   }, [commit]);
   const closeFocusedRef = useRef(closeFocused);
   closeFocusedRef.current = closeFocused;

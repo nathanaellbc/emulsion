@@ -44,23 +44,35 @@
  */
 .viewport.is-focused {
   z-index: 60;
-  /* The phone's pinned picture block is opaque ground; lifted, that would sit
-     inside the blur as a hard-edged slab. The page behind shows through it
-     instead, blurred like the rest. */
-  background: transparent;
   /* Only the backdrop and the print take touches: the page-bound frame and
      the viewport's own box sit over the backdrop and would swallow the tap
      that should put the print back. */
   pointer-events: none;
 }
 
+/* The phone's pinned picture block is opaque ground; lifted, that would sit
+   inside the blur as a hard-edged slab, so it clears — but on the same fade
+   as the backdrop, both ways. Switching it at once showed the controls
+   scrolled beneath it for a frame at either end: the blink. */
+.viewport {
+  transition: background-color var(--dur-move) var(--ease);
+}
+
+.viewport.is-lifted {
+  background-color: transparent;
+}
+
+/* The blur deepens as the dark comes up rather than arriving whole: a backdrop
+   filter switched on at full strength is composited a frame late on iOS and
+   flashes the sharp page. Opacity rides along, so a browser that cannot
+   animate the filter still fades. */
 .viewport__backdrop {
   position: fixed;
   inset: 0;
   z-index: 0;
-  background: rgba(0, 0, 0, 0.55);
-  -webkit-backdrop-filter: blur(28px) saturate(0.7);
-  backdrop-filter: blur(28px) saturate(0.7);
+  background-color: rgba(0, 0, 0, 0);
+  -webkit-backdrop-filter: blur(0px) saturate(1);
+  backdrop-filter: blur(0px) saturate(1);
   opacity: 0;
   visibility: hidden;
   pointer-events: none;
@@ -68,21 +80,33 @@
   /* Hidden only once the fade has finished. */
   transition:
     opacity var(--dur-move) var(--ease),
+    background-color var(--dur-move) var(--ease),
+    -webkit-backdrop-filter var(--dur-move) var(--ease),
+    backdrop-filter var(--dur-move) var(--ease),
     visibility 0s linear var(--dur-move);
 }
 
 .viewport.is-lifted .viewport__backdrop {
+  background-color: rgba(0, 0, 0, 0.55);
+  -webkit-backdrop-filter: blur(28px) saturate(0.7);
+  backdrop-filter: blur(28px) saturate(0.7);
   opacity: 1;
   visibility: visible;
   pointer-events: auto;
   transition:
     opacity var(--dur-move) var(--ease),
+    background-color var(--dur-move) var(--ease),
+    -webkit-backdrop-filter var(--dur-move) var(--ease),
+    backdrop-filter var(--dur-move) var(--ease),
     visibility 0s;
 }
 
 /* The wrapper the lift moves; the zoom layer inside it keeps its own
    transform, so the print zooms and pans within the lifted view. */
 .viewport__lift {
+  /* Its own compositor layer from the start: promoting the layer that holds
+     the WebGL canvas at the moment of the lift costs iOS a blank frame. */
+  will-change: transform;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr);
@@ -97,7 +121,6 @@
   position: fixed;
   z-index: 1;
   pointer-events: auto;
-  will-change: transform;
   transition: transform var(--dur-move) var(--spring);
 }
 
@@ -142,6 +165,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .viewport,
   .viewport__lift.is-pinned,
   .viewport__backdrop,
   .viewport.is-lifted .viewport__backdrop {
