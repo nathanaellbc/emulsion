@@ -459,9 +459,45 @@ function LensSection({
             hint="In third stops. Each full stop takes the blur’s diameter down by a factor of √2."
             onChange={(v) => update((draft) => (draft.defocus.fNumber = F_STOPS[Math.round(v)]!))}
           />
+          <Slider
+            label="Keep sharp from"
+            value={Math.log10(d.nearSharpM ?? d.focusDistanceM)}
+            min={Math.log10(0.2)}
+            max={Math.log10(d.focusDistanceM)}
+            step={0.005}
+            format={(v) =>
+              d.nearSharpM === null || Math.pow(10, v) >= d.focusDistanceM * 0.995
+                ? 'Focus plane'
+                : fmtMetres(Math.pow(10, v))
+            }
+            detents={[Math.log10(d.focusDistanceM)]}
+            disabled={d.foreground <= 1e-4}
+            hint="The near limit of the sharp zone. Everything between this distance and the focus point stays sharp, and the foreground only starts to blur in front of it. At the right end it is the lens's own behaviour: blur starts at the focal plane."
+            onChange={(v) =>
+              update((draft) => {
+                const m = Math.pow(10, v);
+                draft.defocus.nearSharpM = m >= draft.defocus.focusDistanceM * 0.995 ? null : m;
+              })
+            }
+          />
+          <Slider
+            label="Foreground blur"
+            value={d.foreground}
+            min={0}
+            max={1}
+            step={0.01}
+            format={(v) => (v < 0.005 ? 'Cut — sharp' : v > 0.995 ? 'Lens' : `${Math.round(v * 100)}%`)}
+            detents={[0, 1]}
+            hint="How much of the lens's blur the foreground — anything nearer than the focus — receives. 100% is the lens; lower softens it; 0 cuts it off entirely and keeps the foreground sharp. The background is not affected."
+            onChange={(v) => update((draft) => (draft.defocus.foreground = v))}
+          />
 
           <div className="readout readout--pairs">
-            <Stat label="Near" value={fmtMetres(r.nearLimitM)} title="The nearest distance that is acceptably sharp" />
+            <Stat
+              label="Near"
+              value={r.nearLimitM <= 0 ? 'Cut' : fmtMetres(r.nearLimitM)}
+              title="The nearest distance that is acceptably sharp, after the near-limit and foreground settings"
+            />
             <Stat label="Far" value={fmtMetres(r.farLimitM)} title="The farthest distance that is acceptably sharp" />
             <Stat
               label="Hyperfocal"

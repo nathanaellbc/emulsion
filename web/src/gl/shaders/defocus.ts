@@ -59,6 +59,8 @@ uniform bool  uDepthFlip;
 uniform float uFocusDisparity;
 uniform float uCocScale;   // CoC diameter of a subject at infinity, render px
 uniform float uMaxCoc;     // largest diameter drawn, render px
+uniform float uNearDisparity; // near sharp limit (>= focus disparity)
+uniform float uForeground;    // share of the foreground blur: 1 lens, 0 cut
 uniform vec4  uTile;       // this render's place in the picture (passes.ts, FRAG_PREPARE)
 
 /// A render uv to the whole picture's uv — the identity outside a tiled export.
@@ -76,7 +78,14 @@ float disparityAt(vec2 uv) {
 /// (core/defocus.ts, signedCocPx).
 float signedCoc(float d) {
   float df = max(uFocusDisparity, MIN_FOCUS_DISPARITY);
-  return clamp(uCocScale * (1.0 - d / df), -uMaxCoc, uMaxCoc);
+  float c = uCocScale * (1.0 - d / df);
+  if (c < 0.0) {
+    // In front of the focal plane: held sharp back to the near limit, then
+    // growing at the lens's rate from there, scaled by the foreground amount.
+    float dn = max(uNearDisparity, df);
+    c = -uCocScale * max(d - dn, 0.0) * uForeground / df;
+  }
+  return clamp(c, -uMaxCoc, uMaxCoc);
 }
 `;
 

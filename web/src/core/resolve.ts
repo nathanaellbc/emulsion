@@ -17,6 +17,7 @@ import {
   acceptableCocMm,
   cocAtInfinityMm,
   depthOfField,
+  nearSharpDisparity,
 } from './defocus';
 import { activity, modulate } from './development';
 import type { CameraDevelopParams } from './develop';
@@ -106,6 +107,10 @@ export interface DefocusResolved {
   cocScalePx: number;
   /** Normalised disparity at the focus point, floored at MIN_FOCUS_DISPARITY. */
   focusDisparity: number;
+  /** Disparity of the near sharp limit (>= focusDisparity; equal when unset). */
+  nearDisparity: number;
+  /** Share of the lens's foreground blur applied: 1 physical, 0 cut sharp. */
+  foreground: number;
   /** The gather's reach: the largest CoC diameter drawn, render pixels. */
   maxCocPx: number;
   /** Permissible CoC for this frame, on the film and in render pixels. */
@@ -389,17 +394,35 @@ function resolveDefocus(
   const dof = depthOfField(f, d.fNumber, zfMm, cAccMm);
   const mmToPx = 1000 / pitchUm;
   const hasDepth = ctx.focusDisparity !== null && ctx.focusDisparity !== undefined;
+  const focusDisparity = Math.max(ctx.focusDisparity ?? 1, MIN_FOCUS_DISPARITY);
+  const nearSharpMm = d.nearSharpM === null ? null : d.nearSharpM * 1000;
+  const nearDisparity = nearSharpDisparity(focusDisparity, zfMm, nearSharpMm);
+  const cocScalePx = cocAtInfinityMm(f, d.fNumber, zfMm) * mmToPx;
+  // The near limit of acceptable sharpness, after the editorial controls: the
+  // lens's own limit when they are at rest; otherwise where the reshaped
+  // foreground disc reaches the permissible CoC — on the disparity scale,
+  // where the disc grows linearly — or nothing at all when the foreground is
+  // cut entirely.
+  let nearLimitMm = dof.nearMm;
+  if (d.foreground <= 1e-4) {
+    nearLimitMm = 0;
+  } else if (nearSharpMm !== null || d.foreground < 1) {
+    const dLimit = nearDisparity + (focusDisparity * cAccMm * mmToPx) / (cocScalePx * d.foreground);
+    nearLimitMm = Math.min((zfMm * focusDisparity) / dLimit, zfMm);
+  }
   return {
     enabled: d.enabled && hasDepth,
     focalLengthMm: f,
     fNumber: d.fNumber,
     focusDistanceM: zfMm / 1000,
-    cocScalePx: cocAtInfinityMm(f, d.fNumber, zfMm) * mmToPx,
-    focusDisparity: Math.max(ctx.focusDisparity ?? 1, MIN_FOCUS_DISPARITY),
+    cocScalePx,
+    focusDisparity,
+    nearDisparity,
+    foreground: d.foreground,
     maxCocPx: MAX_COC_FRACTION * longEdgePx,
     acceptableCocMm: cAccMm,
     acceptableCocPx: cAccMm * mmToPx,
-    nearLimitM: dof.nearMm / 1000,
+    nearLimitM: nearLimitMm / 1000,
     farLimitM: dof.farMm / 1000,
     hyperfocalM: dof.hyperfocalMm / 1000,
     blades: d.blades,

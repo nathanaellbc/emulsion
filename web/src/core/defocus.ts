@@ -115,8 +115,34 @@ export function depthOfField(
  * host mirror of the shader's `signedCoc`: positive behind the focal plane,
  * negative in front, clamped to the gather's reach.
  */
-export function signedCocPx(d: number, focusDisparity: number, scalePx: number, maxPx: number): number {
+export function signedCocPx(
+  d: number,
+  focusDisparity: number,
+  scalePx: number,
+  maxPx: number,
+  nearDisparity = focusDisparity,
+  foreground = 1,
+): number {
   const df = Math.max(focusDisparity, MIN_FOCUS_DISPARITY);
-  const c = scalePx * (1 - d / df);
+  let c = scalePx * (1 - d / df);
+  if (c < 0) {
+    // In front of the focal plane. The sharp zone runs from the focal plane
+    // to the near limit's disparity dn (>= df); in front of it the disc grows
+    // at the lens's own rate, measured from dn instead of df, scaled by the
+    // foreground amount. dn = df and foreground = 1 is the thin lens exactly.
+    const dn = Math.max(nearDisparity, df);
+    c = (-scalePx * Math.max(d - dn, 0) * foreground) / df;
+  }
   return Math.max(-maxPx, Math.min(maxPx, c));
+}
+
+/**
+ * The disparity of the near sharp limit: 1/z is linear in d with the focus
+ * point at d_f, so a subject at z_n sits at d_f · z_f / z_n. At or behind the
+ * focal plane it is d_f itself — no zone.
+ */
+export function nearSharpDisparity(focusDisparity: number, focusMm: number, nearSharpMm: number | null): number {
+  const df = Math.max(focusDisparity, MIN_FOCUS_DISPARITY);
+  if (nearSharpMm === null || nearSharpMm >= focusMm) return df;
+  return (df * focusMm) / Math.max(nearSharpMm, 1);
 }

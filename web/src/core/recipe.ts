@@ -204,6 +204,18 @@ export interface DefocusStage {
   bladeCurvature: number;
   /** Optical vignetting: 0 none, 1 the barrel clips the pupil hard at the corners. */
   catEye: number;
+  /**
+   * The near limit of the sharp zone, metres: everything between it and the
+   * focus distance is held sharp, and the foreground blur only starts in front
+   * of it. null is the lens's own behaviour — blur starts at the focal plane.
+   * An editorial control, not optics: a real lens has one focal plane.
+   */
+  nearSharpM: number | null;
+  /**
+   * How much of the lens's foreground blur is applied: 1 the physical amount,
+   * 0 none — the foreground cut sharp. The background is untouched.
+   */
+  foreground: number;
 }
 
 export interface Recipe {
@@ -244,6 +256,8 @@ export function defaultDefocusStage(): DefocusStage {
     blades: 0,
     bladeCurvature: 0.5,
     catEye: 0.35,
+    nearSharpM: null,
+    foreground: 1,
   };
 }
 
@@ -426,6 +440,13 @@ export function clampRecipe(r: Recipe): Recipe {
         blades: blades < 5 ? 0 : Math.min(blades, 9),
         bladeCurvature: cl(d.bladeCurvature, 0, 1),
         catEye: cl(d.catEye, 0, 1),
+        // Only meaningful in front of the focal plane; at or past it the zone
+        // is empty and the setting is the lens's own behaviour.
+        nearSharpM: (() => {
+          const n = clampOptional(d.nearSharpM, 0.1, 1000);
+          return n === null || n >= d.focusDistanceM ? null : n;
+        })(),
+        foreground: cl(Number.isFinite(d.foreground) ? d.foreground : 1, 0, 1),
       };
     })(),
     output: { surroundExponent: cl(r.output.surroundExponent, 0.8, 1.2) },

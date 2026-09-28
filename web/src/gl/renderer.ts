@@ -557,7 +557,9 @@ export class Renderer {
       .int('uDepthFlip', this.sourceFlipY ? 1 : 0)
       .float('uFocusDisparity', d.focusDisparity)
       .float('uCocScale', d.cocScalePx)
-      .float('uMaxCoc', d.maxCocPx);
+      .float('uMaxCoc', d.maxCocPx)
+      .float('uNearDisparity', d.nearDisparity)
+      .float('uForeground', d.foreground);
     const [tx, ty, tw, th] = this.tileRect();
     p.vec4('uTile', tx, ty, tw, th);
   }
