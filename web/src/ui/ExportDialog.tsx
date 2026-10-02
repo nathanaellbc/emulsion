@@ -31,6 +31,12 @@ import type { Recipe } from '../core/recipe';
 import { loadedPrintLut } from '../core/printLuts';
 import type { DecodedSource } from '../io/decode';
 import {
+  applyMetadata,
+  extractExifBlock,
+  formatCarriesExif,
+  synthesizedExifBlock,
+} from '../io/metadata';
+import {
   canShareImages,
   detectFormats,
   encodeImage,
@@ -43,7 +49,7 @@ import {
 } from '../io/export';
 import { ExportCancelledError, type Renderer, type ViewOptions } from '../gl/renderer';
 import { isAppleMobile } from '../depth/model';
-import { Choice, Slider } from './controls';
+import { Choice, Slider, Toggle } from './controls';
 
 const STORAGE_KEY = 'emulsion.export.v1';
 
@@ -67,6 +73,8 @@ interface ExportPrefs {
   quality: number;
   /** null = the source's own width. */
   longEdge: number | null;
+  /** Reattach the source file's EXIF to the export. */
+  keepMeta: boolean;
 }
 
 export interface ExportDialogProps {
@@ -89,13 +97,14 @@ function loadPrefs(): ExportPrefs {
         formatId: (p.formatId ?? 'png') as ExportFormatId,
         quality: typeof p.quality === 'number' ? p.quality : DEFAULT_QUALITY,
         longEdge: typeof p.longEdge === 'number' ? p.longEdge : null,
+        keepMeta: p.keepMeta ?? true,
       };
     }
   } catch {
     // A corrupt stored preference is not worth a broken export.
   }
   // The photograph's own size is the default: nothing is thrown away unless asked.
-  return { formatId: 'png', quality: DEFAULT_QUALITY, longEdge: null };
+  return { formatId: 'png', quality: DEFAULT_QUALITY, longEdge: null, keepMeta: true };
 }
 
 export function ExportDialog({
@@ -120,6 +129,32 @@ export function ExportDialog({
   const [formats, setFormats] = useState<readonly ExportFormat[] | null>(null);
   const [prefs, setPrefs] = useState<ExportPrefs>(loadPrefs);
   const [blob, setBlob] = useState<Blob | null>(null);
+  /** The source file's EXIF, orientation-normalised, ready to reattach. */
+  const [exif, setExif] = useState<Uint8Array | null>(null);
+
+  // The source file's own EXIF block, or for a RAW whose container yields
+  // nothing parseable, a minimal one synthesised from what LibRaw reported.
+  // Extracted while the settings are chosen, so the splice never waits on it.
+  useEffect(() => {
+    let alive = true;
+    void extractExifBlock(source.file).then((block) => {
+      if (!alive) return;
+      if (block) setExif(block);
+      else if (source.kind === 'raw')
+        setExif(
+          synthesizedExifBlock({
+            camera: source.camera,
+            iso: source.iso,
+            shutter: source.shutter,
+            aperture: source.aperture,
+            focalLength: source.focalLength,
+          }),
+        );
+    });
+    return () => {
+      alive = false;
+    };
+  }, [source]);
   const [rendering, setRendering] = useState(true);
   /** Tiles done / total while a render is in flight. */
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
@@ -379,7 +414,8 @@ export function ExportDialog({
 
   // Encode from the canvas when a render has landed or format/quality moved.
   // Debounced: the quality slider fires continuously and only the settled
-  // position is worth encoding.
+  // position is worth encoding. The metadata splice happens inside this step,
+  // so the measured size the quality control shows is the spliced file's own.
   useEffect(() => {
     const f = format;
     const canvas = canvasRef.current;
@@ -387,7 +423,9 @@ export function ExportDialog({
     let alive = true;
     setEncoding(true);
     const t = window.setTimeout(() => {
+      const keep = prefs.keepMeta && exif && formatCarriesExif(f) ? exif : null;
       void encodeImage(canvas, f, prefs.quality / 100)
+        .then((b) => applyMetadata(b, f, keep))
         .then((b) => {
           if (!alive) return;
           setBlob(b);
@@ -405,7 +443,7 @@ export function ExportDialog({
       alive = false;
       window.clearTimeout(t);
     };
-  }, [format, prefs.quality, rendering]);
+  }, [format, prefs.quality, rendering, prefs.keepMeta, exif]);
 
   const fileName = format
     ? exportFileName(
@@ -528,6 +566,19 @@ export function ExportDialog({
               detents={[60, 80, 90, 100]}
               hint="The size is measured, not estimated: the print is re-encoded as the slider settles, so the number shown is the file the button produces."
               onChange={(v) => setPrefs((p) => ({ ...p, quality: v }))}
+            />
+          ) : null}
+
+          {exif ? (
+            <Toggle
+              label="Keep photo metadata"
+              checked={prefs.keepMeta}
+              onChange={(v) => setPrefs((p) => ({ ...p, keepMeta: v }))}
+              hint={
+                format && !formatCarriesExif(format)
+                  ? 'this browser cannot write EXIF into this format; PNG or JPEG keeps it'
+                  : 'camera, lens, exposure and capture time, with orientation corrected'
+              }
             />
           ) : null}
 

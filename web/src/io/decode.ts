@@ -69,6 +69,8 @@ export interface DecodedSource {
   /** What the file was and how it was read, for the provenance line in the UI. */
   kind: 'raw' | 'standard';
   fileName: string;
+  /** The original file, kept so its metadata can travel with the export. */
+  file: File;
   camera?: string;
   iso?: number;
   shutter?: number;
@@ -153,6 +155,7 @@ async function decodeRaw(file: File): Promise<DecodedSource> {
       space: 'acesAP0',
       kind: 'raw',
       fileName: file.name,
+      file,
       camera: meta ? `${meta.camera_make ?? ''} ${meta.camera_model ?? ''}`.trim() : undefined,
       iso: meta?.iso_speed,
       shutter: meta?.shutter,
@@ -221,6 +224,7 @@ async function decodeStandard(file: File): Promise<DecodedSource> {
     space: 'srgb',
     kind: 'standard',
     fileName: file.name,
+    file,
     caveat:
       'This file is display-referred: a tone curve, white balance and gamut mapping were baked in before EMULSION saw it. The chain runs on what survived. A RAW file gives the negative something closer to what a negative actually receives.',
   };

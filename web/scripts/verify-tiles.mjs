@@ -47,7 +47,9 @@ async function exportPixels(tileSide) {
     globalThis.__emulsionTileSide = s ?? undefined;
   }, tileSide);
   await page.getByRole('button', { name: 'Export print' }).click();
-  await page.locator('.export__opt', { hasText: /Source|Max/ }).click();
+  // Forced: the sheet's spring entrance never reads as "stable" under
+  // SwiftShader, and Source is the default detent anyway.
+  await page.locator('.export__opt', { hasText: /Source|Max/ }).click({ force: true });
   // Rendered and encoded: the primary action carries a byte count.
   await page.waitForFunction(
     () => /\d+(\.\d+)?\s*(KB|MB|kB|B)/.test(document.querySelector('.export__save')?.textContent ?? ''),
@@ -62,7 +64,7 @@ async function exportPixels(tileSide) {
     const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
     return { w: c.width, h: c.height, data: Array.from(d) };
   });
-  await page.getByRole('button', { name: 'Cancel' }).click();
+  await page.getByRole('button', { name: 'Cancel' }).click({ force: true });
   await page.waitForTimeout(500);
   return px;
 }
